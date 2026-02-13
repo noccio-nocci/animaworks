@@ -1099,6 +1099,9 @@ def get_cli_guide() -> str:
     """Return CLI usage guide for image generation tools."""
     return """\
 ### 画像・3Dモデル生成 (image_gen)
+
+A2モードのツール名: `generate_character_assets` / `generate_fullbody` / `generate_bustup` 等
+
 ```bash
 # 全6ステップ一括生成（推奨）
 animaworks-tool image_gen pipeline "1girl, black hair, ..." --negative "lowres, bad anatomy, ..." --person-dir <person_dir> -j
