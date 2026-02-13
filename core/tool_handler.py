@@ -32,6 +32,9 @@ logger = logging.getLogger("animaworks.tool_handler")
 # Type alias for the delegate callback injected by server/app.py.
 DelegateFn = Callable[[str, str, str | None], Coroutine[Any, Any, str]]
 
+# Type alias for the message-sent callback (from, to, content).
+OnMessageSentFn = Callable[[str, str, str], None]
+
 # Default delegation timeout in seconds.
 _DELEGATE_TIMEOUT_S: int = 300
 
@@ -53,11 +56,13 @@ class ToolHandler:
         messenger: Messenger | None = None,
         tool_registry: list[str] | None = None,
         delegate_fn: DelegateFn | None = None,
+        on_message_sent: OnMessageSentFn | None = None,
     ) -> None:
         self._person_dir = person_dir
         self._memory = memory
         self._messenger = messenger
         self._delegate_fn = delegate_fn
+        self._on_message_sent = on_message_sent
         self._external = ExternalToolDispatcher(tool_registry or [])
 
     # ── Delegate callback property ───────────────────────────
@@ -69,6 +74,14 @@ class ToolHandler:
     @delegate_fn.setter
     def delegate_fn(self, fn: DelegateFn | None) -> None:
         self._delegate_fn = fn
+
+    @property
+    def on_message_sent(self) -> OnMessageSentFn | None:
+        return self._on_message_sent
+
+    @on_message_sent.setter
+    def on_message_sent(self, fn: OnMessageSentFn | None) -> None:
+        self._on_message_sent = fn
 
     # ── Main dispatch ────────────────────────────────────────
 
@@ -191,6 +204,15 @@ class ToolHandler:
             reply_to=args.get("reply_to", ""),
         )
         logger.info("send_message to=%s thread=%s", args["to"], msg.thread_id)
+
+        if self._on_message_sent:
+            try:
+                self._on_message_sent(
+                    self._messenger.person_name, args["to"], args["content"],
+                )
+            except Exception:
+                logger.exception("on_message_sent callback failed")
+
         return f"Message sent to {args['to']} (id: {msg.id}, thread: {msg.thread_id})"
 
     # ── File operation handlers ──────────────────────────────
