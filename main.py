@@ -617,6 +617,40 @@ def cmd_send(args: argparse.Namespace) -> None:
         reply_to=args.reply_to or "",
     )
     print(f"Sent: {msg.from_person} -> {msg.to_person} (id: {msg.id}, thread: {msg.thread_id})")
+    _notify_server_message_sent(args.from_person, args.to_person, args.message)
+
+
+def _notify_server_message_sent(
+    from_person: str, to_person: str, content: str
+) -> None:
+    """Notify the running server about a CLI-sent message.
+
+    Triggers WebSocket broadcast and reply tracking.
+    Fails silently if the server is not running.
+    """
+    pid = _read_pid()
+    if pid is None or not _is_process_alive(pid):
+        return
+
+    server_url = os.environ.get("ANIMAWORKS_SERVER_URL", "http://localhost:18500")
+    try:
+        import httpx
+
+        resp = httpx.post(
+            f"{server_url}/api/internal/message-sent",
+            json={
+                "from_person": from_person,
+                "to_person": to_person,
+                "content": content[:200],
+            },
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            logger.debug("Server notified of CLI send: %s -> %s", from_person, to_person)
+        else:
+            logger.debug("Server notification failed: %s", resp.status_code)
+    except Exception:
+        logger.debug("Could not notify server of CLI message send", exc_info=True)
 
 
 # ── List ───────────────────────────────────────────────────

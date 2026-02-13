@@ -42,12 +42,19 @@ class LifecycleManager:
         self._ws_broadcast: BroadcastFn | None = None
         self._inbox_watcher_task: asyncio.Task | None = None
         self._pending_triggers: set[str] = set()
+        self._deferred_inbox: set[str] = set()
 
     def set_broadcast(self, fn: BroadcastFn) -> None:
         self._ws_broadcast = fn
 
     def register_person(self, person: DigitalPerson) -> None:
         self.persons[person.name] = person
+        # Wire up lock-release callback for deferred inbox processing
+        person.set_on_lock_released(
+            lambda n=person.name: asyncio.ensure_future(
+                self._on_person_lock_released(n)
+            )
+        )
         self._setup_heartbeat(person)
         self._setup_cron_tasks(person)
         logger.info("Registered '%s' with lifecycle manager", person.name)
@@ -56,6 +63,7 @@ class LifecycleManager:
         """Remove a person and all their scheduled jobs."""
         self.persons.pop(name, None)
         self._pending_triggers.discard(name)
+        self._deferred_inbox.discard(name)
         # Remove all scheduler jobs belonging to this person
         for job in self.scheduler.get_jobs():
             if job.id.startswith(f"{name}_"):
@@ -168,11 +176,29 @@ class LifecycleManager:
                 if not person.messenger.has_unread():
                     continue
                 if person._lock.locked():
+                    self._deferred_inbox.add(name)
                     continue
                 self._pending_triggers.add(name)
                 asyncio.create_task(
                     self._message_triggered_heartbeat(name)
                 )
+
+    async def _on_person_lock_released(self, name: str) -> None:
+        """Check deferred inbox after a person's lock is released."""
+        if name not in self._deferred_inbox:
+            return
+        self._deferred_inbox.discard(name)
+
+        person = self.persons.get(name)
+        if not person:
+            return
+        if not person.messenger.has_unread():
+            return
+        if name in self._pending_triggers:
+            return
+
+        self._pending_triggers.add(name)
+        asyncio.create_task(self._message_triggered_heartbeat(name))
 
     async def _message_triggered_heartbeat(self, name: str) -> None:
         person = self.persons.get(name)

@@ -806,5 +806,42 @@ def create_router() -> APIRouter:
         except WebSocketDisconnect:
             ws_manager.disconnect(websocket)
 
+    # ── Internal API (CLI → server notifications) ───────────
+
+    class MessageSentNotification(BaseModel):
+        from_person: str
+        to_person: str
+        content: str = ""
+
+    @api.post("/internal/message-sent")
+    async def internal_message_sent(
+        body: MessageSentNotification, request: Request
+    ):
+        """Notify the server that a message was sent via CLI.
+
+        Triggers WebSocket broadcast and updates reply tracking so that
+        selective archival (Fix 2) works for CLI-sent messages too.
+        """
+        ws = request.app.state.ws_manager
+        await ws.broadcast(
+            {
+                "type": "person.interaction",
+                "data": {
+                    "from_person": body.from_person,
+                    "to_person": body.to_person,
+                    "type": "message",
+                    "summary": body.content[:200],
+                },
+            }
+        )
+
+        # Update replied_to tracking if the sender is a managed person
+        persons = request.app.state.persons
+        person = persons.get(body.from_person)
+        if person:
+            person.agent.replied_to.add(body.to_person)
+
+        return {"status": "ok"}
+
     router.include_router(api)
     return router

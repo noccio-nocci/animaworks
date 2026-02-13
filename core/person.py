@@ -45,6 +45,7 @@ class DigitalPerson:
         self._current_task = ""
         self._last_heartbeat: datetime | None = None
         self._last_activity: datetime | None = None
+        self._on_lock_released: Callable[[], None] | None = None
 
         logger.info("DigitalPerson '%s' initialized from %s", self.name, person_dir)
 
@@ -57,6 +58,17 @@ class DigitalPerson:
     ) -> None:
         """Inject a callback fired after this person sends a message."""
         self.agent.set_on_message_sent(fn)
+
+    def set_on_lock_released(self, fn: Callable[[], None]) -> None:
+        """Inject a callback invoked when the person's lock is released."""
+        self._on_lock_released = fn
+
+    def _notify_lock_released(self) -> None:
+        if self._on_lock_released:
+            try:
+                self._on_lock_released()
+            except Exception:
+                logger.exception("[%s] on_lock_released callback failed", self.name)
 
     @property
     def needs_bootstrap(self) -> bool:
@@ -81,37 +93,40 @@ class DigitalPerson:
             "[%s] process_message START from=%s content_len=%d",
             self.name, from_person, len(content),
         )
-        async with self._lock:
-            self._status = "thinking"
-            self._current_task = f"Responding to {from_person}"
+        try:
+            async with self._lock:
+                self._status = "thinking"
+                self._current_task = f"Responding to {from_person}"
 
-            # Build history-aware prompt via conversation memory
-            conv_memory = ConversationMemory(self.person_dir, self.model_config)
-            await conv_memory.compress_if_needed()
-            prompt = conv_memory.build_chat_prompt(content, from_person)
+                # Build history-aware prompt via conversation memory
+                conv_memory = ConversationMemory(self.person_dir, self.model_config)
+                await conv_memory.compress_if_needed()
+                prompt = conv_memory.build_chat_prompt(content, from_person)
 
-            try:
-                result = await self.agent.run_cycle(
-                    prompt, trigger=f"message:{from_person}"
-                )
-                self._last_activity = datetime.now()
+                try:
+                    result = await self.agent.run_cycle(
+                        prompt, trigger=f"message:{from_person}"
+                    )
+                    self._last_activity = datetime.now()
 
-                # Record the exchange in conversation memory
-                conv_memory.append_turn("human", content)
-                conv_memory.append_turn("assistant", result.summary)
-                conv_memory.save()
+                    # Record the exchange in conversation memory
+                    conv_memory.append_turn("human", content)
+                    conv_memory.append_turn("assistant", result.summary)
+                    conv_memory.save()
 
-                logger.info(
-                    "[%s] process_message END duration_ms=%d",
-                    self.name, result.duration_ms,
-                )
-                return result.summary
-            except Exception:
-                logger.exception("[%s] process_message FAILED", self.name)
-                raise
-            finally:
-                self._status = "idle"
-                self._current_task = ""
+                    logger.info(
+                        "[%s] process_message END duration_ms=%d",
+                        self.name, result.duration_ms,
+                    )
+                    return result.summary
+                except Exception:
+                    logger.exception("[%s] process_message FAILED", self.name)
+                    raise
+                finally:
+                    self._status = "idle"
+                    self._current_task = ""
+        finally:
+            self._notify_lock_released()
 
     async def process_message_stream(
         self, content: str, from_person: str = "human"
@@ -124,117 +139,146 @@ class DigitalPerson:
             "[%s] process_message_stream START from=%s content_len=%d",
             self.name, from_person, len(content),
         )
-        async with self._lock:
-            self._status = "thinking"
-            self._current_task = f"Responding to {from_person}"
+        try:
+            async with self._lock:
+                self._status = "thinking"
+                self._current_task = f"Responding to {from_person}"
 
-            # Build history-aware prompt via conversation memory
-            conv_memory = ConversationMemory(self.person_dir, self.model_config)
-            await conv_memory.compress_if_needed()
-            prompt = conv_memory.build_chat_prompt(content, from_person)
+                # Build history-aware prompt via conversation memory
+                conv_memory = ConversationMemory(self.person_dir, self.model_config)
+                await conv_memory.compress_if_needed()
+                prompt = conv_memory.build_chat_prompt(content, from_person)
 
-            try:
-                async for chunk in self.agent.run_cycle_streaming(
-                    prompt, trigger=f"message:{from_person}"
-                ):
-                    if chunk.get("type") == "cycle_done":
-                        self._last_activity = datetime.now()
-                        # Record the exchange in conversation memory
-                        cycle_result = chunk.get("cycle_result", {})
-                        summary = cycle_result.get("summary", "")
-                        conv_memory.append_turn("human", content)
-                        conv_memory.append_turn("assistant", summary)
-                        conv_memory.save()
-                        logger.info(
-                            "[%s] process_message_stream END",
-                            self.name,
-                        )
-                    yield chunk
-            except Exception:
-                logger.exception("[%s] process_message_stream FAILED", self.name)
-                yield {"type": "error", "message": "Internal error"}
-            finally:
-                self._status = "idle"
-                self._current_task = ""
+                try:
+                    async for chunk in self.agent.run_cycle_streaming(
+                        prompt, trigger=f"message:{from_person}"
+                    ):
+                        if chunk.get("type") == "cycle_done":
+                            self._last_activity = datetime.now()
+                            # Record the exchange in conversation memory
+                            cycle_result = chunk.get("cycle_result", {})
+                            summary = cycle_result.get("summary", "")
+                            conv_memory.append_turn("human", content)
+                            conv_memory.append_turn("assistant", summary)
+                            conv_memory.save()
+                            logger.info(
+                                "[%s] process_message_stream END",
+                                self.name,
+                            )
+                        yield chunk
+                except Exception:
+                    logger.exception("[%s] process_message_stream FAILED", self.name)
+                    yield {"type": "error", "message": "Internal error"}
+                finally:
+                    self._status = "idle"
+                    self._current_task = ""
+        finally:
+            self._notify_lock_released()
 
     async def run_heartbeat(self) -> CycleResult:
         logger.info("[%s] run_heartbeat START", self.name)
-        async with self._lock:
-            self._status = "checking"
-            self._last_heartbeat = datetime.now()
+        try:
+            async with self._lock:
+                self._status = "checking"
+                self._last_heartbeat = datetime.now()
 
-            hb_config = self.memory.read_heartbeat_config()
-            checklist = hb_config or load_prompt("heartbeat_default_checklist")
-            parts = [load_prompt("heartbeat", checklist=checklist)]
+                hb_config = self.memory.read_heartbeat_config()
+                checklist = hb_config or load_prompt("heartbeat_default_checklist")
+                parts = [load_prompt("heartbeat", checklist=checklist)]
 
-            # Read unread messages but do NOT archive yet.
-            # Messages stay in inbox until the agent successfully processes them.
-            unread_count = 0
-            if self.messenger.has_unread():
-                messages = self.messenger.receive()
-                unread_count = len(messages)
-                logger.info(
-                    "[%s] Processing %d unread messages in heartbeat",
-                    self.name, unread_count,
-                )
-                summary = "\n".join(
-                    f"- {m.from_person}: {m.content[:800]}" for m in messages
-                )
-                parts.append(load_prompt("unread_messages", summary=summary))
-
-            try:
-                result = await self.agent.run_cycle(
-                    "\n\n".join(parts), trigger="heartbeat"
-                )
-                self._last_activity = datetime.now()
-
-                # Archive messages only after the agent has successfully processed them.
-                if unread_count > 0:
-                    archived = self.messenger.archive_all()
+                # Read unread messages but do NOT archive yet.
+                # Messages stay in inbox until the agent replies to each sender.
+                unread_count = 0
+                senders: set[str] = set()
+                if self.messenger.has_unread():
+                    messages = self.messenger.receive()
+                    unread_count = len(messages)
+                    senders = {m.from_person for m in messages}
                     logger.info(
-                        "[%s] Archived %d messages after successful heartbeat",
-                        self.name, archived,
+                        "[%s] Processing %d unread messages in heartbeat (senders: %s)",
+                        self.name, unread_count, ", ".join(senders),
                     )
+                    summary = "\n".join(
+                        f"- {m.from_person}: {m.content[:800]}" for m in messages
+                    )
+                    parts.append(load_prompt("unread_messages", summary=summary))
 
-                logger.info(
-                    "[%s] run_heartbeat END duration_ms=%d unread_processed=%d",
-                    self.name, result.duration_ms, unread_count,
-                )
-                return result
-            except Exception:
-                logger.exception("[%s] run_heartbeat FAILED", self.name)
-                raise
-            finally:
-                self._status = "idle"
-                self._current_task = ""
+                try:
+                    # Reset reply tracking before the cycle
+                    self.agent.reset_reply_tracking()
+
+                    result = await self.agent.run_cycle(
+                        "\n\n".join(parts), trigger="heartbeat"
+                    )
+                    self._last_activity = datetime.now()
+
+                    # Selective archival: only archive messages from senders
+                    # the agent actually replied to.
+                    if unread_count > 0:
+                        replied_to = self.agent.replied_to
+                        replied_senders = senders & replied_to
+                        if replied_senders:
+                            total_archived = 0
+                            for sender in replied_senders:
+                                archived = self.messenger.archive_from(sender)
+                                total_archived += archived
+                            logger.info(
+                                "[%s] Archived %d messages (replied to: %s)",
+                                self.name, total_archived,
+                                ", ".join(replied_senders),
+                            )
+                        unreplied = senders - replied_to
+                        if unreplied:
+                            logger.warning(
+                                "[%s] No replies sent to %s; "
+                                "their messages remain in inbox",
+                                self.name, ", ".join(unreplied),
+                            )
+
+                    logger.info(
+                        "[%s] run_heartbeat END duration_ms=%d unread_processed=%d",
+                        self.name, result.duration_ms, unread_count,
+                    )
+                    return result
+                except Exception:
+                    logger.exception("[%s] run_heartbeat FAILED", self.name)
+                    raise
+                finally:
+                    self._status = "idle"
+                    self._current_task = ""
+        finally:
+            self._notify_lock_released()
 
     async def run_cron_task(
         self, task_name: str, description: str
     ) -> CycleResult:
         logger.info("[%s] run_cron_task START task=%s", self.name, task_name)
-        async with self._lock:
-            self._status = "working"
-            self._current_task = task_name
+        try:
+            async with self._lock:
+                self._status = "working"
+                self._current_task = task_name
 
-            prompt = load_prompt(
-                "cron_task", task_name=task_name, description=description
-            )
+                prompt = load_prompt(
+                    "cron_task", task_name=task_name, description=description
+                )
 
-            try:
-                result = await self.agent.run_cycle(
-                    prompt, trigger=f"cron:{task_name}"
-                )
-                self._last_activity = datetime.now()
-                logger.info(
-                    "[%s] run_cron_task END task=%s duration_ms=%d",
-                    self.name, task_name, result.duration_ms,
-                )
-                return result
-            except Exception:
-                logger.exception(
-                    "[%s] run_cron_task FAILED task=%s", self.name, task_name,
-                )
-                raise
-            finally:
-                self._status = "idle"
-                self._current_task = ""
+                try:
+                    result = await self.agent.run_cycle(
+                        prompt, trigger=f"cron:{task_name}"
+                    )
+                    self._last_activity = datetime.now()
+                    logger.info(
+                        "[%s] run_cron_task END task=%s duration_ms=%d",
+                        self.name, task_name, result.duration_ms,
+                    )
+                    return result
+                except Exception:
+                    logger.exception(
+                        "[%s] run_cron_task FAILED task=%s", self.name, task_name,
+                    )
+                    raise
+                finally:
+                    self._status = "idle"
+                    self._current_task = ""
+        finally:
+            self._notify_lock_released()
