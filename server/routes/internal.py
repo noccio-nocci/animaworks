@@ -8,6 +8,8 @@ import logging
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from server.events import emit
+
 logger = logging.getLogger("animaworks.routes.internal")
 
 
@@ -29,18 +31,12 @@ def create_internal_router() -> APIRouter:
         Triggers WebSocket broadcast and updates reply tracking so that
         selective archival (Fix 2) works for CLI-sent messages too.
         """
-        ws = request.app.state.ws_manager
-        await ws.broadcast(
-            {
-                "type": "person.interaction",
-                "data": {
-                    "from_person": body.from_person,
-                    "to_person": body.to_person,
-                    "type": "message",
-                    "summary": body.content[:200],
-                },
-            }
-        )
+        await emit(request, "person.interaction", {
+            "from_person": body.from_person,
+            "to_person": body.to_person,
+            "type": "message",
+            "summary": body.content[:200],
+        })
 
         # Update replied_to tracking if the sender is a managed person
         persons = request.app.state.persons

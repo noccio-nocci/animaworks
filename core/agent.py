@@ -7,7 +7,7 @@ from __future__ import annotations
 # See LICENSES/AGPL-3.0.txt for the full license text.
 
 
-"""AgentCore — orchestrator for Digital Person execution cycles.
+"""AgentCore -- orchestrator for Digital Person execution cycles.
 
 This module is intentionally slim: it owns only the execution mode routing,
 session chaining orchestration, and lifecycle coordination.  Actual LLM
@@ -41,6 +41,7 @@ class AgentCore:
 
     Delegates actual LLM execution to an appropriate Executor:
       - A1 (autonomous, Claude):      ``AgentSDKExecutor``
+      - A1 fallback (no Agent SDK):   ``AnthropicFallbackExecutor``
       - A2 (autonomous, non-Claude):   ``LiteLLMExecutor``
       - B  (assisted):                 ``AssistedExecutor``
     """
@@ -111,8 +112,8 @@ class AgentCore:
         """Determine the effective execution mode: ``a1``, ``a2``, or ``b``.
 
         Auto-detection logic (when ``execution_mode`` is None):
-          - Claude model + Agent SDK available → a1
-          - Non-Claude model → a2
+          - Claude model + Agent SDK available -> a1
+          - Non-Claude model -> a2
         """
         explicit = self.model_config.execution_mode
         if explicit == "assisted":
@@ -145,13 +146,13 @@ class AgentCore:
     def _init_tool_registry(self) -> list[str]:
         """Initialize tool registry with tools allowed in permissions.md.
 
-        Parses the ``外部ツール`` section and accepts common affirmative
+        Parses the external tools section and accepts common affirmative
         values: ``OK``, ``yes``, ``enabled``, ``true`` (case-insensitive).
         """
         try:
             from core.tools import TOOL_MODULES
             permissions = self.memory.read_permissions() if self.memory else ""
-            if "外部ツール" not in permissions:
+            if "\u5916\u90e8\u30c4\u30fc\u30eb" not in permissions:
                 return []
             allowed = []
             for line in permissions.splitlines():
@@ -173,21 +174,66 @@ class AgentCore:
             return {}
 
     def _create_executor(self):
-        """Factory: create the appropriate executor for the resolved mode."""
+        """Factory: create the appropriate executor for the resolved mode.
+
+        For mode A1 (Agent SDK), falls back gracefully:
+          1. Try ``AgentSDKExecutor`` (requires ``claude_agent_sdk``)
+          2. If ImportError, try ``AnthropicFallbackExecutor`` (requires ``anthropic``)
+          3. If that also fails, fall back to ``LiteLLMExecutor`` with the
+             ``anthropic/`` provider prefix
+        """
         from core.execution import (
-            AgentSDKExecutor,
+            AnthropicFallbackExecutor,
             AssistedExecutor,
             LiteLLMExecutor,
         )
 
         mode = self._resolve_execution_mode()
+
         if mode == "a1":
-            return AgentSDKExecutor(
+            # ── Try Agent SDK first ──────────────────────────
+            try:
+                from core.execution.agent_sdk import AgentSDKExecutor
+                return AgentSDKExecutor(
+                    model_config=self.model_config,
+                    person_dir=self.person_dir,
+                    tool_registry=self._tool_registry,
+                    personal_tools=self._personal_tools,
+                )
+            except ImportError:
+                logger.warning(
+                    "AgentSDKExecutor unavailable (claude_agent_sdk not installed), "
+                    "trying AnthropicFallbackExecutor"
+                )
+
+            # ── Try Anthropic SDK fallback ────────────────────
+            try:
+                import anthropic  # noqa: F401
+                logger.info("Using AnthropicFallbackExecutor for Claude model")
+                return AnthropicFallbackExecutor(
+                    model_config=self.model_config,
+                    person_dir=self.person_dir,
+                    tool_handler=self._tool_handler,
+                    tool_registry=self._tool_registry,
+                    memory=self.memory,
+                    personal_tools=self._personal_tools,
+                )
+            except ImportError:
+                logger.warning(
+                    "AnthropicFallbackExecutor also unavailable (anthropic not installed), "
+                    "falling back to LiteLLM with anthropic provider"
+                )
+
+            # ── Last resort: LiteLLM with anthropic provider ─
+            return LiteLLMExecutor(
                 model_config=self.model_config,
                 person_dir=self.person_dir,
+                tool_handler=self._tool_handler,
                 tool_registry=self._tool_registry,
+                memory=self.memory,
                 personal_tools=self._personal_tools,
             )
+
         if mode == "a2":
             return LiteLLMExecutor(
                 model_config=self.model_config,
@@ -197,6 +243,7 @@ class AgentCore:
                 memory=self.memory,
                 personal_tools=self._personal_tools,
             )
+
         # mode == "b"
         return AssistedExecutor(
             model_config=self.model_config,
@@ -219,9 +266,9 @@ class AgentCore:
         """Run one agent cycle with autonomous memory search.
 
         Routing:
-          - Mode B  (assisted):  ``AssistedExecutor``  — 1-shot, no tools
-          - Mode A2 (autonomous): ``LiteLLMExecutor`` — LiteLLM + tool_use
-          - Mode A1 (autonomous): ``AgentSDKExecutor`` — Claude Agent SDK
+          - Mode B  (assisted):  ``AssistedExecutor``  -- 1-shot, no tools
+          - Mode A2 (autonomous): ``LiteLLMExecutor`` -- LiteLLM + tool_use
+          - Mode A1 (autonomous): ``AgentSDKExecutor`` -- Claude Agent SDK
 
         If the context threshold is crossed (A1 only), the session is
         externalized to short-term memory and automatically continued.
@@ -386,8 +433,8 @@ class AgentCore:
             trigger, len(prompt), mode,
         )
 
-        # Mode B / A2: no streaming support — yield complete text
-        if mode in ("b", "a2"):
+        # Non-streaming executors: fall back to blocking execution
+        if not self._executor.supports_streaming:
             async with self._agent_lock:
                 cycle = await self._run_cycle_inner(prompt, trigger)
             yield {"type": "text_delta", "text": cycle.summary}
@@ -397,11 +444,7 @@ class AgentCore:
             }
             return
 
-        # ── Mode A1 streaming ─────────────────────────────
-        from core.execution.agent_sdk import AgentSDKExecutor
-
-        assert isinstance(self._executor, AgentSDKExecutor)
-
+        # ── Streaming executor (A1 Agent SDK) ─────────────
         shortterm = ShortTermMemory(self.person_dir)
         tracker = ContextTracker(
             model=self.model_config.model,

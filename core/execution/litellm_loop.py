@@ -17,17 +17,17 @@ context threshold is crossed mid-conversation.
 
 import json as _json
 import logging
-from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from core.prompt.context import ContextTracker
+from core.execution._session import build_continuation_prompt, handle_session_chaining
 from core.execution.base import BaseExecutor, ExecutionResult
 from core.memory import MemoryManager
-from core.paths import load_prompt
-from core.prompt.builder import build_system_prompt, inject_shortterm
+from core.prompt.builder import build_system_prompt
 from core.schemas import ModelConfig
-from core.memory.shortterm import SessionState, ShortTermMemory
+from core.memory.shortterm import ShortTermMemory
 from core.tooling.handler import ToolHandler
 from core.tooling.guide import load_tool_schemas
 from core.tooling.schemas import (
@@ -130,48 +130,35 @@ class LiteLLMExecutor(BaseExecutor):
                     "input_tokens": response.usage.prompt_tokens or 0,
                     "output_tokens": response.usage.completion_tokens or 0,
                 }
-                threshold_crossed = tracker.update_from_usage(usage_dict)
-                if (
-                    threshold_crossed
-                    and chain_count < self._model_config.max_chains
-                    and shortterm is not None
-                ):
-                    chain_count += 1
-                    logger.info(
-                        "A2: context threshold crossed at %.1f%%, "
-                        "restarting (chain %d/%d)",
-                        tracker.usage_ratio * 100,
-                        chain_count,
-                        self._model_config.max_chains,
-                    )
-                    current_text = message.content or ""
+                tracker.update_from_usage(usage_dict)
+
+                current_text = message.content or ""
+                new_sys, chain_count = await handle_session_chaining(
+                    tracker=tracker,
+                    shortterm=shortterm,
+                    memory=self._memory,
+                    current_text=current_text,
+                    system_prompt_builder=partial(
+                        build_system_prompt,
+                        self._memory,
+                        tool_registry=self._tool_registry,
+                        personal_tools=self._personal_tools,
+                    ),
+                    max_chains=self._model_config.max_chains,
+                    chain_count=chain_count,
+                    session_id="litellm-a2",
+                    trigger="a2_tool_loop",
+                    original_prompt=prompt,
+                    accumulated_response="\n".join(all_response_text),
+                    turn_count=iteration,
+                )
+                if new_sys is not None:
                     if current_text:
                         all_response_text.append(current_text)
-                    shortterm.save(
-                        SessionState(
-                            session_id="litellm-a2",
-                            timestamp=datetime.now().isoformat(),
-                            trigger="a2_tool_loop",
-                            original_prompt=prompt,
-                            accumulated_response="\n".join(all_response_text),
-                            context_usage_ratio=tracker.usage_ratio,
-                            turn_count=iteration,
-                        )
-                    )
-                    tracker.reset()
-                    system_prompt = inject_shortterm(
-                        build_system_prompt(
-                            self._memory,
-                            tool_registry=self._tool_registry,
-                            personal_tools=self._personal_tools,
-                        ),
-                        shortterm,
-                    )
                     messages = [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": load_prompt("session_continuation")},
+                        {"role": "system", "content": new_sys},
+                        {"role": "user", "content": build_continuation_prompt()},
                     ]
-                    shortterm.clear()
                     continue
 
             # ── Check for tool calls ──────────────────────────

@@ -7,7 +7,9 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from server.dependencies import get_person
 
 logger = logging.getLogger("animaworks.routes.persons")
 
@@ -41,10 +43,7 @@ def create_persons_router() -> APIRouter:
         return result
 
     @router.get("/persons/{name}")
-    async def get_person(name: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def get_person_detail(name: str, person=Depends(get_person)):
         return {
             "status": person.status.model_dump(),
             "identity": person.memory.read_identity(),
@@ -57,10 +56,7 @@ def create_persons_router() -> APIRouter:
         }
 
     @router.post("/persons/{name}/trigger")
-    async def trigger_heartbeat(name: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def trigger_heartbeat(name: str, person=Depends(get_person)):
         result = await person.run_heartbeat()
         return result.model_dump()
 

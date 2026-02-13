@@ -72,20 +72,21 @@ def cmd_list(args: argparse.Namespace) -> None:
     if args.local:
         _list_local()
     else:
-        import httpx
+        from cli._gateway import gateway_request_or_none
 
-        gateway = args.gateway_url or os.environ.get(
-            "ANIMAWORKS_GATEWAY_URL", "http://localhost:18500"
+        data = gateway_request_or_none(
+            args, "GET", "/api/persons", timeout=10.0
         )
-        try:
-            resp = httpx.get(f"{gateway}/api/persons", timeout=10.0)
-            for p in resp.json():
+        if data is None:
+            print("Gateway not reachable, falling back to filesystem...")
+            _list_local()
+        elif isinstance(data, list):
+            for p in data:
                 name = p.get("name", "unknown")
                 status = p.get("status", "unknown")
                 print(f"  {name} ({status})")
-        except httpx.ConnectError:
-            print("Gateway not reachable, falling back to filesystem...")
-            _list_local()
+        else:
+            print(data)
 
 
 def _list_local() -> None:
@@ -107,18 +108,13 @@ def _list_local() -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     """Show system status."""
-    import httpx
+    from cli._gateway import gateway_request
 
-    url = args.gateway_url or os.environ.get(
-        "ANIMAWORKS_GATEWAY_URL", "http://localhost:18500"
-    )
-    try:
-        resp = httpx.get(f"{url}/api/system/status", timeout=10.0)
-        data = resp.json()
+    data = gateway_request(args, "GET", "/api/system/status", timeout=10.0)
+    if isinstance(data, dict):
         print(f"Persons: {data.get('persons', 0)}")
         print(f"Scheduler: {'running' if data.get('scheduler_running') else 'stopped'}")
         for j in data.get("jobs", []):
             print(f"  [{j['id']}] {j['name']} -> next: {j['next_run']}")
-    except httpx.ConnectError:
-        print(f"Cannot connect to server at {url}.")
-        sys.exit(1)
+    else:
+        print(data)

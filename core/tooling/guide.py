@@ -7,13 +7,7 @@ from __future__ import annotations
 # See LICENSES/AGPL-3.0.txt for the full license text.
 
 
-"""Dynamic tool guide generation for A1 (CLI) and A2 (schema) modes.
-
-Replaces the static ``tools_guide.md`` template with dynamically generated
-content derived from the same ``get_tool_schemas()`` functions used by A2
-mode.  Both execution modes now share a single source of truth for tool
-metadata.
-"""
+"""Dynamic tool guide generation for A1 (CLI) and A2 (schema) modes."""
 
 import importlib
 import importlib.util
@@ -28,21 +22,7 @@ def build_tools_guide(
     tool_registry: list[str],
     personal_tools: dict[str, str] | None = None,
 ) -> str:
-    """Build a markdown CLI guide for allowed tools.
-
-    Iterates over *tool_registry*, imports each module, and either:
-
-    1. Calls ``get_cli_guide()`` if the module provides one, or
-    2. Auto-generates from ``get_tool_schemas()`` (fallback).
-
-    Args:
-        tool_registry: Allowed tool names (e.g. ``["web_search", "image_gen"]``).
-        personal_tools: Mapping of personal tool name → absolute file path.
-
-    Returns:
-        Markdown string suitable for system prompt injection.
-        Empty string if no tools are allowed.
-    """
+    """Build a markdown CLI guide for allowed tools."""
     if not tool_registry and not personal_tools:
         return ""
 
@@ -57,7 +37,6 @@ def build_tools_guide(
         "",
     ]
 
-    # Core tools
     for tool_name in sorted(tool_registry):
         if tool_name not in TOOL_MODULES:
             continue
@@ -66,7 +45,6 @@ def build_tools_guide(
             parts.append(guide)
             parts.append("")
 
-    # Personal tools
     if personal_tools:
         for tool_name in sorted(personal_tools):
             guide = _guide_from_file(tool_name, personal_tools[tool_name])
@@ -90,41 +68,15 @@ def load_tool_schemas(
 ) -> list[dict[str, Any]]:
     """Load structured schemas for A2 mode.
 
-    Thin wrapper around ``tool_schemas.load_external_schemas()`` that also
-    handles personal tool modules.
-
-    Args:
-        tool_registry: Allowed core tool names.
-        personal_tools: Mapping of personal tool name → absolute file path.
-
-    Returns:
-        List of canonical-format tool schemas.
+    Delegates to ``schemas.load_all_tool_schemas()`` which handles both
+    core and personal tool modules with consistent normalisation.
     """
-    from core.tooling.schemas import load_external_schemas
+    from core.tooling.schemas import load_all_tool_schemas
 
-    schemas = load_external_schemas(tool_registry)
-
-    if personal_tools:
-        for tool_name, file_path in personal_tools.items():
-            try:
-                mod = _import_file(tool_name, file_path)
-                if not hasattr(mod, "get_tool_schemas"):
-                    continue
-                for s in mod.get_tool_schemas():
-                    schemas.append({
-                        "name": s["name"],
-                        "description": s.get("description", ""),
-                        "parameters": s.get(
-                            "input_schema", s.get("parameters", {}),
-                        ),
-                    })
-            except Exception:
-                logger.debug(
-                    "Failed to load personal tool schemas: %s",
-                    tool_name, exc_info=True,
-                )
-
-    return schemas
+    return load_all_tool_schemas(
+        tool_registry=tool_registry,
+        personal_tools=personal_tools,
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────

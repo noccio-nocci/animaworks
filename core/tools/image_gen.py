@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from core.tools._base import ToolConfigError, get_env_or_fail, logger
+from core.tools._retry import retry_with_backoff
 
 # ── Constants ──────────────────────────────────────────────
 
@@ -86,38 +87,35 @@ def _retry(
     delay: float = 5.0,
     retryable_codes: set[int] | None = None,
 ) -> Any:
-    """Execute *fn* with simple retry on transient HTTP errors."""
+    """Execute *fn* with simple retry on transient HTTP errors.
+
+    Delegates to the shared :func:`retry_with_backoff` utility while
+    preserving the original filtering logic for non-retryable HTTP
+    status codes.
+    """
     codes = retryable_codes or _RETRYABLE_CODES
-    last_exc: Exception | None = None
-    for attempt in range(1 + max_retries):
+
+    class _NonRetryableHTTPError(Exception):
+        """Wrapper for HTTP errors with non-retryable status codes."""
+
+    def _guarded() -> Any:
         try:
             return fn()
         except httpx.HTTPStatusError as exc:
-            last_exc = exc
             if exc.response.status_code not in codes:
-                raise
-            if attempt < max_retries:
-                wait = delay * (2 ** attempt)
-                logger.warning(
-                    "Retryable HTTP %s for %s – retry %d after %.0fs",
-                    exc.response.status_code,
-                    exc.request.url,
-                    attempt + 1,
-                    wait,
-                )
-                time.sleep(wait)
-        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
-            last_exc = exc
-            if attempt < max_retries:
-                wait = delay * (2 ** attempt)
-                logger.warning(
-                    "Network error %s – retry %d after %.0fs",
-                    exc,
-                    attempt + 1,
-                    wait,
-                )
-                time.sleep(wait)
-    raise last_exc  # type: ignore[misc]
+                raise _NonRetryableHTTPError from exc
+            raise
+
+    try:
+        return retry_with_backoff(
+            _guarded,
+            max_retries=max_retries,
+            base_delay=delay,
+            max_delay=300.0,
+            retry_on=(httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout),
+        )
+    except _NonRetryableHTTPError as exc:
+        raise exc.__cause__ from None  # type: ignore[misc]
 
 
 def _image_to_data_uri(image_bytes: bytes, mime: str = "image/png") -> str:

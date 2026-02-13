@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 import sys
 
 
@@ -80,22 +79,16 @@ def cmd_chat(args: argparse.Namespace) -> None:
         )
         print(response)
     else:
-        import httpx
+        from cli._gateway import gateway_request
 
-        gateway = args.gateway_url or os.environ.get(
-            "ANIMAWORKS_GATEWAY_URL", "http://localhost:18500"
+        data = gateway_request(
+            args,
+            "POST",
+            f"/api/persons/{args.person}/chat",
+            json={"message": args.message, "from_person": args.from_person},
+            timeout=300.0,
         )
-        try:
-            resp = httpx.post(
-                f"{gateway}/api/persons/{args.person}/chat",
-                json={"message": args.message, "from_person": args.from_person},
-                timeout=300.0,
-            )
-            data = resp.json()
-            print(data.get("response", data.get("error", "Unknown error")))
-        except httpx.ConnectError:
-            print(f"Cannot connect to gateway at {gateway}. Use --local for direct mode.")
-            sys.exit(1)
+        print(data.get("response", data.get("error", "Unknown error")))
 
 
 # ── Heartbeat ──────────────────────────────────────────────
@@ -118,17 +111,12 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         result = asyncio.run(person.run_heartbeat())
         print(f"[{result.action}] {result.summary[:500]}")
     else:
-        import httpx
+        from cli._gateway import gateway_request
 
-        gateway = args.gateway_url or os.environ.get(
-            "ANIMAWORKS_GATEWAY_URL", "http://localhost:18500"
+        data = gateway_request(
+            args,
+            "POST",
+            f"/api/persons/{args.person}/trigger",
+            timeout=120.0,
         )
-        try:
-            resp = httpx.post(
-                f"{gateway}/api/persons/{args.person}/trigger",
-                timeout=120.0,
-            )
-            print(resp.json())
-        except httpx.ConnectError:
-            print(f"Cannot connect to gateway at {gateway}. Use --local for direct mode.")
-            sys.exit(1)
+        print(data)

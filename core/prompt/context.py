@@ -53,7 +53,7 @@ _DEFAULT_CONTEXT_WINDOW = 128_000
 def _resolve_context_window(model: str) -> int:
     """Return the context window size for the given model name.
 
-    Strips the ``provider/`` prefix (e.g. ``openai/gpt-4o`` → ``gpt-4o``)
+    Strips the ``provider/`` prefix (e.g. ``openai/gpt-4o`` -> ``gpt-4o``)
     before matching.
     """
     bare = model.split("/", 1)[-1] if "/" in model else model
@@ -68,7 +68,7 @@ class ContextTracker:
     """Tracks context window usage across an agent session.
 
     Two estimation modes:
-      1. Transcript-based (Agent SDK): file size of transcript_path ÷ CHARS_PER_TOKEN
+      1. Transcript-based (Agent SDK): file size of transcript_path / CHARS_PER_TOKEN
       2. Usage-based (Anthropic SDK / ResultMessage): direct input_tokens from API
     """
 
@@ -98,7 +98,7 @@ class ContextTracker:
     def estimate_from_transcript(self, transcript_path: str) -> float:
         """Estimate context usage ratio from transcript file size.
 
-        Returns the estimated ratio (0.0–1.0+).
+        Returns the estimated ratio (0.0-1.0+).
         """
         if not transcript_path:
             return self._last_ratio
@@ -124,53 +124,90 @@ class ContextTracker:
 
         return ratio
 
-    # ── Usage-based tracking (Anthropic SDK / ResultMessage) ─
+    # ── Unified usage update ────────────────────────────────
 
-    def update_from_usage(self, usage: dict) -> bool:
-        """Update from Anthropic API response.usage dict.
+    def update(
+        self,
+        usage: dict | None,
+        *,
+        include_output_in_ratio: bool = False,
+    ) -> bool:
+        """Unified context-usage update for any provider's usage dict.
 
-        For the Anthropic SDK path, ``input_tokens`` already reflects the
-        *entire* context size (system prompt + all prior messages + tool
-        results).  Using ``input_tokens`` alone is the correct measure of
-        how full the context window is — output_tokens from prior turns
-        are already included in the next request's input_tokens.
+        Args:
+            usage: Dict with ``input_tokens`` and ``output_tokens`` keys.
+                Accepts usage dicts from the Anthropic API, LiteLLM
+                (``prompt_tokens`` / ``completion_tokens``), or Agent SDK
+                ``ResultMessage.usage``.  ``None`` is a safe no-op.
+            include_output_in_ratio: If True, the ratio is computed as
+                ``(input + output) / window``.  This is appropriate for
+                Agent SDK ``ResultMessage.usage`` where the snapshot
+                represents the full session cost.  When False (default),
+                only ``input_tokens`` is used -- correct for per-request
+                usage where output tokens from prior turns are already
+                folded into the next request's ``input_tokens``.
 
-        Returns True if the threshold was newly crossed.
+        Returns:
+            True if the threshold was *newly* crossed by this update.
         """
-        self._input_tokens = usage.get("input_tokens", 0)
-        self._output_tokens = usage.get("output_tokens", 0)
+        if not usage:
+            return False
 
-        # input_tokens alone represents context fullness
-        self._last_ratio = (
-            self._input_tokens / self.context_window
-            if self.context_window
-            else 0.0
+        # Normalise keys: LiteLLM uses prompt_tokens / completion_tokens
+        self._input_tokens = (
+            usage.get("input_tokens")
+            or usage.get("prompt_tokens")
+            or 0
+        )
+        self._output_tokens = (
+            usage.get("output_tokens")
+            or usage.get("completion_tokens")
+            or 0
         )
 
+        numerator = (
+            (self._input_tokens + self._output_tokens)
+            if include_output_in_ratio
+            else self._input_tokens
+        )
+        self._last_ratio = (
+            numerator / self.context_window if self.context_window else 0.0
+        )
+
+        newly_crossed = False
         if not self._threshold_hit and self._last_ratio >= self.threshold:
             self._threshold_hit = True
+            newly_crossed = True
             logger.warning(
-                "Context threshold %.0f%% exceeded (API usage): "
-                "%d input_tokens / %d window (%.1f%%)",
+                "Context threshold %.0f%% exceeded: "
+                "%d tokens / %d window (%.1f%%)",
                 self.threshold * 100,
-                self._input_tokens,
+                numerator,
                 self.context_window,
                 self._last_ratio * 100,
             )
-            return True
-        return False
+        return newly_crossed
+
+    # ── Legacy convenience methods (delegate to update()) ─
+
+    def update_from_usage(self, usage: dict) -> bool:
+        """Update from per-request API usage (A2 / Fallback).
+
+        Uses ``input_tokens`` alone as the fullness measure because output
+        tokens from prior turns are already included in the next request's
+        ``input_tokens``.
+
+        Returns True if the threshold was newly crossed.
+        """
+        return self.update(usage, include_output_in_ratio=False)
 
     def update_from_result_message(self, usage: dict | None) -> None:
-        """Update from Agent SDK ResultMessage.usage (post-session snapshot)."""
-        if not usage:
-            return
-        self._input_tokens = usage.get("input_tokens", 0)
-        self._output_tokens = usage.get("output_tokens", 0)
-        total = self._input_tokens + self._output_tokens
-        self._last_ratio = total / self.context_window if self.context_window else 0.0
+        """Update from Agent SDK ``ResultMessage.usage`` (post-session snapshot).
 
-        if not self._threshold_hit and self._last_ratio >= self.threshold:
-            self._threshold_hit = True
+        Uses ``input_tokens + output_tokens`` because the snapshot
+        represents the total session cost.
+        """
+        self.update(usage, include_output_in_ratio=True)
 
     def reset(self) -> None:
         """Reset tracker for a new session."""

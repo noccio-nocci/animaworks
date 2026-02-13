@@ -25,7 +25,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from core.tools._async_compat import run_sync
 from core.tools._base import ToolConfigError, get_env_or_fail, logger
+from core.tools._cache import BaseMessageCache
+from core.tools._retry import retry_on_rate_limit
 
 requests = None
 
@@ -89,19 +92,23 @@ class ChatworkClient:
         })
 
     def _request(self, method: str, path: str, **kwargs) -> dict | list | None:
+        """Send an HTTP request with rate-limit retry."""
         url = f"{BASE_URL}{path}"
-        for attempt in range(RATE_LIMIT_RETRY_MAX + 1):
+
+        class _RateLimitError(Exception):
+            """Raised when Chatwork returns HTTP 429."""
+
+            def __init__(self, retry_after: int) -> None:
+                self.retry_after = retry_after
+                super().__init__(f"Rate limited, retry after {retry_after}s")
+
+        def _do_request() -> dict | list | None:
             resp = self.session.request(method, url, **kwargs)
             if resp.status_code == 429:
                 retry_after = int(
                     resp.headers.get("Retry-After", RATE_LIMIT_WAIT_DEFAULT)
                 )
-                logger.warning(
-                    "Chatwork rate limited. Retrying in %ds (%d/%d)",
-                    retry_after, attempt + 1, RATE_LIMIT_RETRY_MAX,
-                )
-                time.sleep(retry_after)
-                continue
+                raise _RateLimitError(retry_after)
             if resp.status_code == 204:
                 return None
             resp.raise_for_status()
@@ -109,10 +116,25 @@ class ChatworkClient:
             if not text:
                 return None
             return resp.json()
-        raise RuntimeError(
-            "Chatwork API rate limit retry exhausted "
-            f"after {RATE_LIMIT_RETRY_MAX} attempts"
+
+        def _get_retry_after(exc: Exception) -> float | None:
+            if isinstance(exc, _RateLimitError):
+                return float(exc.retry_after)
+            return None
+
+        return retry_on_rate_limit(
+            _do_request,
+            max_retries=RATE_LIMIT_RETRY_MAX,
+            default_wait=RATE_LIMIT_WAIT_DEFAULT,
+            get_retry_after=_get_retry_after,
+            retry_on=(_RateLimitError,),
         )
+
+    async def _arequest(
+        self, method: str, path: str, **kwargs
+    ) -> dict | list | None:
+        """Async wrapper around :meth:`_request` using a thread-pool executor."""
+        return await run_sync(self._request, method, path, **kwargs)
 
     def get(self, path: str, params: dict | None = None):
         return self._request("GET", path, params=params)
@@ -211,45 +233,40 @@ class ChatworkClient:
 # Local Message Cache (SQLite)
 # ============================================================
 
-class MessageCache:
+_CHATWORK_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS rooms (
+    room_id TEXT PRIMARY KEY,
+    name TEXT,
+    type TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS messages (
+    message_id TEXT,
+    room_id TEXT,
+    account_id TEXT,
+    account_name TEXT,
+    body TEXT,
+    send_time INTEGER,
+    send_time_jst TEXT,
+    PRIMARY KEY (room_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_messages_body ON messages(body);
+CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(send_time);
+CREATE TABLE IF NOT EXISTS sync_state (
+    room_id TEXT PRIMARY KEY,
+    last_synced TEXT
+);
+"""
+
+
+class MessageCache(BaseMessageCache):
     """SQLite-backed cache for Chatwork messages, enabling offline search and
     unreplied-mention detection."""
 
     def __init__(self, db_path: Path | None = None):
         if db_path is None:
             db_path = DEFAULT_CACHE_DIR / "messages.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path = db_path
-        self.conn = sqlite3.connect(str(db_path))
-        self.conn.row_factory = sqlite3.Row
-        self._init_db()
-
-    def _init_db(self):
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS rooms (
-                room_id TEXT PRIMARY KEY,
-                name TEXT,
-                type TEXT,
-                updated_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS messages (
-                message_id TEXT,
-                room_id TEXT,
-                account_id TEXT,
-                account_name TEXT,
-                body TEXT,
-                send_time INTEGER,
-                send_time_jst TEXT,
-                PRIMARY KEY (room_id, message_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_messages_body ON messages(body);
-            CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(send_time);
-            CREATE TABLE IF NOT EXISTS sync_state (
-                room_id TEXT PRIMARY KEY,
-                last_synced TEXT
-            );
-        """)
-        self.conn.commit()
+        super().__init__(db_path, _CHATWORK_SCHEMA_SQL)
 
     def upsert_room(self, room: dict):
         self.conn.execute(
@@ -429,12 +446,10 @@ class MessageCache:
         return unreplied
 
     def get_stats(self) -> dict:
+        """Return cache statistics."""
         rooms = self.conn.execute("SELECT COUNT(*) as c FROM rooms").fetchone()["c"]
         msgs = self.conn.execute("SELECT COUNT(*) as c FROM messages").fetchone()["c"]
         return {"rooms": rooms, "messages": msgs}
-
-    def close(self):
-        self.conn.close()
 
 
 # ============================================================

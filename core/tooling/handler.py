@@ -127,7 +127,7 @@ class ToolHandler:
         if name == "execute_command":
             return self._handle_execute_command(args)
 
-        # External tool dispatch — inject person_dir for tools that need it
+        # External tool dispatch -- inject person_dir for tools that need it
         ext_args = {**args, "person_dir": str(self._person_dir)}
         result = self._external.dispatch(name, ext_args)
         if result is not None:
@@ -140,36 +140,60 @@ class ToolHandler:
         """Handle the ``delegate_task`` tool call (async).
 
         Enforces a timeout to prevent indefinite blocking when the
-        subordinate hangs or takes excessively long.
+        subordinate hangs or takes excessively long.  On timeout the
+        underlying ``asyncio.Task`` is explicitly cancelled and awaited
+        so that coroutine resources are cleaned up promptly.
         """
         if not self._delegate_fn:
             return "Error: delegation not configured for this person"
         target = args.get("to", "")
-        task = args.get("task", "")
+        task_desc = args.get("task", "")
         context = args.get("context")
-        if not target or not task:
+        if not target or not task_desc:
             return "Error: 'to' and 'task' are required"
-        logger.info("delegate_task to=%s task=%s", target, task[:100])
+        logger.info("delegate_task to=%s task=%s", target, task_desc[:100])
+
+        # Wrap in an explicit Task so we can cancel on timeout.
+        delegate_task: asyncio.Task[str] = asyncio.create_task(
+            self._delegate_fn(target, task_desc, context),
+            name=f"delegate-{target}",
+        )
         try:
             result = await asyncio.wait_for(
-                self._delegate_fn(target, task, context),
+                asyncio.shield(delegate_task),
                 timeout=_DELEGATE_TIMEOUT_S,
             )
             logger.info("delegate_task completed, result_len=%d", len(result))
             return result
         except asyncio.TimeoutError:
-            logger.error(
-                "delegate_task timed out after %ds: to=%s",
-                _DELEGATE_TIMEOUT_S,
+            logger.warning(
+                "delegate_task to '%s' timed out after %ds -- cancelling worker task",
                 target,
+                _DELEGATE_TIMEOUT_S,
+            )
+            # Explicitly cancel the worker task and suppress CancelledError
+            delegate_task.cancel()
+            try:
+                await delegate_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            logger.info(
+                "Timed-out delegate task to '%s' has been cancelled", target,
             )
             return (
                 f"Delegation to '{target}' timed out after "
-                f"{_DELEGATE_TIMEOUT_S}s. The subordinate may still be "
-                f"running — consider checking their status or retrying."
+                f"{_DELEGATE_TIMEOUT_S}s. The subordinate task has been "
+                f"cancelled."
             )
         except Exception as e:
             logger.error("delegate_task failed: %s", e)
+            # Ensure the task is cleaned up on unexpected errors too
+            if not delegate_task.done():
+                delegate_task.cancel()
+                try:
+                    await delegate_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             return f"Delegation failed: {e}"
 
     # ── Memory tool handlers ─────────────────────────────────
@@ -281,7 +305,7 @@ class ToolHandler:
             if count > 1:
                 return (
                     f"old_string matches {count} locations "
-                    "— provide more context to make it unique"
+                    "-- provide more context to make it unique"
                 )
             content = content.replace(old, new, 1)
             path.write_text(content, encoding="utf-8")
@@ -323,15 +347,45 @@ class ToolHandler:
 
     # ── Permission checks ────────────────────────────────────
 
+    def _parse_permission_section(self, section_header: str) -> list[str]:
+        """Parse a section from permissions.md and return allowed items.
+
+        Scans for a line containing *section_header*, then collects list
+        items (lines starting with ``-``) until the next ``#`` heading or
+        EOF.  Each item is the text before the first ``:`` on the line.
+
+        Args:
+            section_header: Text to search for in a section heading
+                (e.g. ``"ファイル操作"`` or ``"コマンド実行"``).
+
+        Returns:
+            List of extracted item strings (may be empty).
+        """
+        permissions = self._memory.read_permissions()
+        items: list[str] = []
+        in_section = False
+        for line in permissions.splitlines():
+            stripped = line.strip()
+            if section_header in stripped:
+                in_section = True
+                continue
+            if in_section and stripped.startswith("#"):
+                break
+            if in_section and stripped.startswith("-"):
+                item = stripped.lstrip("- ").split(":")[0].strip()
+                if item:
+                    items.append(item)
+        return items
+
     def _check_file_permission(self, path: str) -> str | None:
         """Check if the file path is allowed by permissions.md.
 
         Returns ``None`` if allowed, or an error message string if denied.
 
         Access rules (evaluated in order):
-          1. Own person_dir — always allowed
+          1. Own person_dir -- always allowed
           2. Paths listed under ``ファイル操作`` section in permissions.md
-          3. Everything else — denied
+          3. Everything else -- denied
         """
         resolved = Path(path).resolve()
 
@@ -344,19 +398,10 @@ class ToolHandler:
             return "Permission denied: file operations not enabled in permissions.md"
 
         # Parse allowed directory whitelist from permissions.md
-        allowed_dirs: list[Path] = []
-        in_file_section = False
-        for line in permissions.splitlines():
-            stripped = line.strip()
-            if "ファイル操作" in stripped:
-                in_file_section = True
-                continue
-            if in_file_section and stripped.startswith("#"):
-                break
-            if in_file_section and stripped.startswith("-"):
-                dir_path = stripped.lstrip("- ").split(":")[0].strip()
-                if dir_path.startswith("/"):
-                    allowed_dirs.append(Path(dir_path).resolve())
+        raw_items = self._parse_permission_section("ファイル操作")
+        allowed_dirs = [
+            Path(item).resolve() for item in raw_items if item.startswith("/")
+        ]
 
         if not allowed_dirs:
             return (
@@ -404,19 +449,7 @@ class ToolHandler:
             return "Permission denied: empty command after parsing"
 
         # Extract allowed commands (lines like "- git: OK" or "- npm: OK")
-        allowed: list[str] = []
-        in_cmd_section = False
-        for line in permissions.splitlines():
-            stripped = line.strip()
-            if "コマンド実行" in stripped:
-                in_cmd_section = True
-                continue
-            if in_cmd_section and stripped.startswith("#"):
-                break
-            if in_cmd_section and stripped.startswith("-"):
-                cmd_name = stripped.lstrip("- ").split(":")[0].strip()
-                if cmd_name:
-                    allowed.append(cmd_name)
+        allowed = self._parse_permission_section("コマンド実行")
         if not allowed:
             return None  # No explicit list = allow all (section exists)
 

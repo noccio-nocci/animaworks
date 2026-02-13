@@ -220,12 +220,20 @@ def build_tool_list(
     return tools
 
 
-def load_external_schemas(tool_registry: list[str]) -> list[dict[str, Any]]:
-    """Load schemas from external tool modules, normalised to canonical format.
+# ── Schema loading ───────────────────────────────────────────
 
-    External modules export Anthropic format (``input_schema``); this function
-    converts them to the canonical format (``parameters``) used internally.
-    """
+
+def _normalise_schema(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a single tool schema to canonical format."""
+    return {
+        "name": raw["name"],
+        "description": raw.get("description", ""),
+        "parameters": raw.get("input_schema", raw.get("parameters", {})),
+    }
+
+
+def load_external_schemas(tool_registry: list[str]) -> list[dict[str, Any]]:
+    """Load schemas from external tool modules, normalised to canonical format."""
     if not tool_registry:
         return []
 
@@ -242,11 +250,46 @@ def load_external_schemas(tool_registry: list[str]) -> list[dict[str, Any]]:
             if not hasattr(mod, "get_tool_schemas"):
                 continue
             for s in mod.get_tool_schemas():
-                schemas.append({
-                    "name": s["name"],
-                    "description": s.get("description", ""),
-                    "parameters": s.get("input_schema", s.get("parameters", {})),
-                })
+                schemas.append(_normalise_schema(s))
         except Exception:
             logger.debug("Failed to load schemas for %s", tool_name, exc_info=True)
+    return schemas
+
+
+def load_personal_tool_schemas(
+    personal_tools: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Load schemas from personal tool modules, normalised to canonical format."""
+    import importlib.util
+
+    schemas: list[dict[str, Any]] = []
+    for tool_name, file_path in personal_tools.items():
+        try:
+            spec = importlib.util.spec_from_file_location(
+                f"animaworks_personal_tool_{tool_name}", file_path,
+            )
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            if not hasattr(mod, "get_tool_schemas"):
+                continue
+            for s in mod.get_tool_schemas():
+                schemas.append(_normalise_schema(s))
+        except Exception:
+            logger.debug(
+                "Failed to load personal tool schemas: %s",
+                tool_name, exc_info=True,
+            )
+    return schemas
+
+
+def load_all_tool_schemas(
+    tool_registry: list[str] | None = None,
+    personal_tools: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Load and normalise tool schemas from all enabled modules."""
+    schemas = load_external_schemas(tool_registry or [])
+    if personal_tools:
+        schemas.extend(load_personal_tool_schemas(personal_tools))
     return schemas

@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from server.dependencies import get_person
+from server.events import emit
 
 logger = logging.getLogger("animaworks.routes.chat")
 
@@ -23,103 +27,107 @@ class ChatResponse(BaseModel):
     person: str
 
 
+# ── SSE Helpers ───────────────────────────────────────────────
+
+def _format_sse(event: str, payload: dict[str, Any]) -> str:
+    """Format a single SSE frame."""
+    data = json.dumps(payload, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+def _handle_chunk(chunk: dict[str, Any]) -> tuple[str | None, str]:
+    """Map a stream chunk to an SSE event name and extract response text.
+
+    Returns:
+        Tuple of (sse_frame_or_None, accumulated_response_text).
+    """
+    event_type = chunk.get("type", "unknown")
+
+    if event_type == "text_delta":
+        return _format_sse("text_delta", {"text": chunk["text"]}), ""
+
+    if event_type == "tool_start":
+        return _format_sse("tool_start", {
+            "tool_name": chunk["tool_name"],
+            "tool_id": chunk["tool_id"],
+        }), ""
+
+    if event_type == "tool_end":
+        return _format_sse("tool_end", {
+            "tool_id": chunk["tool_id"],
+            "tool_name": chunk.get("tool_name", ""),
+        }), ""
+
+    if event_type == "chain_start":
+        return _format_sse("chain_start", {"chain": chunk["chain"]}), ""
+
+    if event_type == "cycle_done":
+        cycle_result = chunk.get("cycle_result", {})
+        response_text = cycle_result.get("summary", "")
+        return _format_sse("done", cycle_result), response_text
+
+    if event_type == "error":
+        return _format_sse("error", {
+            "message": chunk.get("message", "Unknown error"),
+        }), ""
+
+    return None, ""
+
+
+async def _stream_events(
+    person: Any,
+    name: str,
+    body: ChatRequest,
+    request: Request,
+) -> AsyncIterator[str]:
+    """Async generator that yields SSE frames for a streaming chat session."""
+    full_response = ""
+    try:
+        await emit(request, "person.status", {"name": name, "status": "thinking"})
+
+        async for chunk in person.process_message_stream(
+            body.message, from_person=body.from_person
+        ):
+            frame, response_text = _handle_chunk(chunk)
+            if response_text:
+                full_response = response_text
+            if frame:
+                yield frame
+
+        if full_response:
+            await emit(
+                request, "chat.response",
+                {"name": name, "message": full_response},
+            )
+
+    except Exception:
+        logger.exception("SSE stream error for person=%s", name)
+        yield _format_sse("error", {"message": "Internal server error"})
+
+    finally:
+        await emit(request, "person.status", {"name": name, "status": "idle"})
+
+
+# ── Router ────────────────────────────────────────────────────
+
 def create_chat_router() -> APIRouter:
     router = APIRouter()
 
     @router.post("/persons/{name}/chat")
-    async def chat(name: str, body: ChatRequest, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-
-        ws = request.app.state.ws_manager
-        await ws.broadcast(
-            {"type": "person.status", "data": {"name": name, "status": "thinking"}}
-        )
+    async def chat(name: str, body: ChatRequest, request: Request, person=Depends(get_person)):
+        await emit(request, "person.status", {"name": name, "status": "thinking"})
 
         response = await person.process_message(body.message, from_person=body.from_person)
 
-        await ws.broadcast(
-            {"type": "person.status", "data": {"name": name, "status": "idle"}}
-        )
-        await ws.broadcast(
-            {"type": "chat.response", "data": {"name": name, "message": response}}
-        )
+        await emit(request, "person.status", {"name": name, "status": "idle"})
+        await emit(request, "chat.response", {"name": name, "message": response})
 
         return ChatResponse(response=response, person=name)
 
     @router.post("/persons/{name}/chat/stream")
-    async def chat_stream(name: str, body: ChatRequest, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-
-        ws = request.app.state.ws_manager
-
-        async def event_generator():
-            full_response = ""
-            try:
-                await ws.broadcast(
-                    {"type": "person.status", "data": {"name": name, "status": "thinking"}}
-                )
-
-                async for chunk in person.process_message_stream(
-                    body.message, from_person=body.from_person
-                ):
-                    event_type = chunk.get("type", "unknown")
-
-                    if event_type == "text_delta":
-                        data = json.dumps({"text": chunk["text"]}, ensure_ascii=False)
-                        yield f"event: text_delta\ndata: {data}\n\n"
-
-                    elif event_type == "tool_start":
-                        data = json.dumps(
-                            {"tool_name": chunk["tool_name"], "tool_id": chunk["tool_id"]},
-                            ensure_ascii=False,
-                        )
-                        yield f"event: tool_start\ndata: {data}\n\n"
-
-                    elif event_type == "tool_end":
-                        data = json.dumps(
-                            {"tool_id": chunk["tool_id"], "tool_name": chunk.get("tool_name", "")},
-                            ensure_ascii=False,
-                        )
-                        yield f"event: tool_end\ndata: {data}\n\n"
-
-                    elif event_type == "chain_start":
-                        data = json.dumps({"chain": chunk["chain"]}, ensure_ascii=False)
-                        yield f"event: chain_start\ndata: {data}\n\n"
-
-                    elif event_type == "cycle_done":
-                        cycle_result = chunk.get("cycle_result", {})
-                        full_response = cycle_result.get("summary", "")
-                        data = json.dumps(cycle_result, ensure_ascii=False, default=str)
-                        yield f"event: done\ndata: {data}\n\n"
-
-                    elif event_type == "error":
-                        data = json.dumps(
-                            {"message": chunk.get("message", "Unknown error")},
-                            ensure_ascii=False,
-                        )
-                        yield f"event: error\ndata: {data}\n\n"
-
-                if full_response:
-                    await ws.broadcast(
-                        {"type": "chat.response", "data": {"name": name, "message": full_response}}
-                    )
-
-            except Exception:
-                logger.exception("SSE stream error for person=%s", name)
-                data = json.dumps({"message": "Internal server error"}, ensure_ascii=False)
-                yield f"event: error\ndata: {data}\n\n"
-
-            finally:
-                await ws.broadcast(
-                    {"type": "person.status", "data": {"name": name, "status": "idle"}}
-                )
-
+    async def chat_stream(name: str, body: ChatRequest, request: Request, person=Depends(get_person)):
         return StreamingResponse(
-            event_generator(),
+            _stream_events(person, name, body, request),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

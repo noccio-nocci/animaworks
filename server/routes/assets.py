@@ -7,9 +7,12 @@ import logging
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+from server.dependencies import get_person
+from server.events import emit
 
 logger = logging.getLogger("animaworks.routes.assets")
 
@@ -33,11 +36,8 @@ def create_assets_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/persons/{name}/assets")
-    async def list_assets(name: str, request: Request):
+    async def list_assets(name: str, person=Depends(get_person)):
         """List available assets for a person."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return JSONResponse({"error": "Person not found"}, status_code=404)
         assets_dir = person.person_dir / "assets"
         if not assets_dir.exists():
             return {"assets": []}
@@ -50,12 +50,8 @@ def create_assets_router() -> APIRouter:
         }
 
     @router.get("/persons/{name}/assets/metadata")
-    async def get_asset_metadata(name: str, request: Request):
+    async def get_asset_metadata(name: str, person=Depends(get_person)):
         """Return structured metadata about a person's available assets."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return JSONResponse({"error": "Person not found"}, status_code=404)
-
         assets_dir = person.person_dir / "assets"
         base_url = f"/api/persons/{name}/assets"
 
@@ -94,7 +90,7 @@ def create_assets_router() -> APIRouter:
             try:
                 text = identity_path.read_text(encoding="utf-8")
                 match = re.search(
-                    r"(?:イメージカラー|image[_ ]?color|カラー)\s*[:：]\s*.*?(#[0-9A-Fa-f]{6})",
+                    r"(?:\u30a4\u30e1\u30fc\u30b8\u30ab\u30e9\u30fc|image[_ ]?color|\u30ab\u30e9\u30fc)\s*[:\uff1a]\s*.*?(#[0-9A-Fa-f]{6})",
                     text,
                 )
                 if match:
@@ -105,20 +101,16 @@ def create_assets_router() -> APIRouter:
         return result
 
     @router.api_route("/persons/{name}/assets/{filename}", methods=["GET", "HEAD"])
-    async def get_asset(name: str, filename: str, request: Request):
+    async def get_asset(name: str, filename: str, person=Depends(get_person)):
         """Serve a static asset file from a person's assets directory."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return JSONResponse({"error": "Person not found"}, status_code=404)
-
         # Validate filename (prevent path traversal)
         safe_name = Path(filename).name
         if safe_name != filename or ".." in filename:
-            return JSONResponse({"error": "Invalid filename"}, status_code=400)
+            raise HTTPException(status_code=400, detail="Invalid filename")
 
         file_path = person.person_dir / "assets" / safe_name
         if not file_path.exists() or not file_path.is_file():
-            return JSONResponse({"error": "Asset not found"}, status_code=404)
+            raise HTTPException(status_code=404, detail="Asset not found")
 
         suffix = file_path.suffix.lower()
         content_type = _ASSET_CONTENT_TYPES.get(suffix, "application/octet-stream")
@@ -131,19 +123,13 @@ def create_assets_router() -> APIRouter:
     @router.post("/persons/{name}/assets/generate")
     async def generate_assets(
         name: str, body: AssetGenerateRequest, request: Request,
+        person=Depends(get_person),
     ):
         """Trigger character asset generation pipeline."""
         import asyncio
 
-        person = request.app.state.persons.get(name)
-        if not person:
-            return JSONResponse({"error": "Person not found"}, status_code=404)
-
-        prompt = body.prompt
-        if not prompt:
-            return JSONResponse(
-                {"error": "prompt is required"}, status_code=400,
-            )
+        if not body.prompt:
+            raise HTTPException(status_code=400, detail="prompt is required")
 
         from core.tools.image_gen import ImageGenPipeline
 
@@ -153,7 +139,7 @@ def create_assets_router() -> APIRouter:
         result = await loop.run_in_executor(
             None,
             lambda: pipeline.generate_all(
-                prompt=prompt,
+                prompt=body.prompt,
                 negative_prompt=body.negative_prompt,
                 skip_existing=body.skip_existing,
                 steps=body.steps,
@@ -176,14 +162,10 @@ def create_assets_router() -> APIRouter:
             generated.append(anim_path.name)
 
         if generated:
-            ws_manager = request.app.state.ws_manager
-            await ws_manager.broadcast({
-                "type": "person.assets_updated",
-                "data": {
-                    "name": name,
-                    "assets": generated,
-                    "errors": result.errors,
-                },
+            await emit(request, "person.assets_updated", {
+                "name": name,
+                "assets": generated,
+                "errors": result.errors,
             })
 
         return result.to_dict()

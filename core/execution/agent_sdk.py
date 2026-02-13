@@ -46,6 +46,10 @@ class AgentSDKExecutor(BaseExecutor):
         self._tool_registry = tool_registry or []
         self._personal_tools = personal_tools or {}
 
+    @property
+    def supports_streaming(self) -> bool:  # noqa: D102
+        return True
+
     def _resolve_agent_sdk_model(self) -> str:
         """Return the model name suitable for Agent SDK (strip provider prefix)."""
         m = self._model_config.model
@@ -121,10 +125,10 @@ class AgentSDKExecutor(BaseExecutor):
                     hookSpecificOutput=PostToolUseHookSpecificOutput(
                         hookEventName="PostToolUse",
                         additionalContext=(
-                            f"コンテキスト使用率が{ratio:.0%}に達しました。"
-                            "shortterm/session_state.md に現在の作業状態を書き出してください。"
-                            "内容: 何をしていたか、どこまで進んだか、次に何をすべきか。"
-                            "書き出し後、作業を中断してその旨を報告してください。"
+                            f"\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8\u4f7f\u7528\u7387\u304c{ratio:.0%}\u306b\u9054\u3057\u307e\u3057\u305f\u3002"
+                            "shortterm/session_state.md \u306b\u73fe\u5728\u306e\u4f5c\u696d\u72b6\u614b\u3092\u66f8\u304d\u51fa\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+                            "\u5185\u5bb9: \u4f55\u3092\u3057\u3066\u3044\u305f\u304b\u3001\u3069\u3053\u307e\u3067\u9032\u3093\u3060\u304b\u3001\u6b21\u306b\u4f55\u3092\u3059\u3079\u304d\u304b\u3002"
+                            "\u66f8\u304d\u51fa\u3057\u5f8c\u3001\u4f5c\u696d\u3092\u4e2d\u65ad\u3057\u3066\u305d\u306e\u65e8\u3092\u5831\u544a\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
                         ),
                     )
                 )
@@ -221,10 +225,10 @@ class AgentSDKExecutor(BaseExecutor):
                     hookSpecificOutput=PostToolUseHookSpecificOutput(
                         hookEventName="PostToolUse",
                         additionalContext=(
-                            f"コンテキスト使用率が{ratio:.0%}に達しました。"
-                            "shortterm/session_state.md に現在の作業状態を書き出してください。"
-                            "内容: 何をしていたか、どこまで進んだか、次に何をすべきか。"
-                            "書き出し後、作業を中断してその旨を報告してください。"
+                            f"\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8\u4f7f\u7528\u7387\u304c{ratio:.0%}\u306b\u9054\u3057\u307e\u3057\u305f\u3002"
+                            "shortterm/session_state.md \u306b\u73fe\u5728\u306e\u4f5c\u696d\u72b6\u614b\u3092\u66f8\u304d\u51fa\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+                            "\u5185\u5bb9: \u4f55\u3092\u3057\u3066\u3044\u305f\u304b\u3001\u3069\u3053\u307e\u3067\u9032\u3093\u3060\u304b\u3001\u6b21\u306b\u4f55\u3092\u3059\u3079\u304d\u304b\u3002"
+                            "\u66f8\u304d\u51fa\u3057\u5f8c\u3001\u4f5c\u696d\u3092\u4e2d\u65ad\u3057\u3066\u305d\u306e\u65e8\u3092\u5831\u544a\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
                         ),
                     )
                 )

@@ -25,7 +25,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from core.tools._async_compat import run_sync
 from core.tools._base import ToolConfigError, get_env_or_fail, logger
+from core.tools._cache import BaseMessageCache
+from core.tools._retry import retry_on_rate_limit
 
 WebClient = None
 SlackApiError = None
@@ -148,26 +151,47 @@ class SlackClient:
     def _call(self, method_name: str, **kwargs):
         """Call a WebClient method with 429 rate-limit retry."""
         method = getattr(self.client, method_name)
-        for attempt in range(RATE_LIMIT_RETRY_MAX + 1):
+
+        class _SlackRateLimitError(Exception):
+            """Wrapper to distinguish rate-limit errors for retry."""
+
+            def __init__(self, original: Exception, retry_after: int) -> None:
+                self.original = original
+                self.retry_after = retry_after
+                super().__init__(str(original))
+
+        def _do_call():
             try:
-                response = method(**kwargs)
-                return response
+                return method(**kwargs)
             except SlackApiError as e:
                 if e.response.status_code == 429:
                     retry_after = int(
-                        e.response.headers.get("Retry-After", RATE_LIMIT_WAIT_DEFAULT)
+                        e.response.headers.get(
+                            "Retry-After", RATE_LIMIT_WAIT_DEFAULT
+                        )
                     )
-                    logger.warning(
-                        "Slack rate limited. Retrying in %ds (%d/%d)",
-                        retry_after, attempt + 1, RATE_LIMIT_RETRY_MAX,
-                    )
-                    time.sleep(retry_after)
-                    continue
+                    raise _SlackRateLimitError(e, retry_after) from e
                 raise
-        raise RuntimeError(
-            "Slack API rate limit retry exhausted "
-            f"after {RATE_LIMIT_RETRY_MAX} attempts"
-        )
+
+        def _get_retry_after(exc: Exception) -> float | None:
+            if isinstance(exc, _SlackRateLimitError):
+                return float(exc.retry_after)
+            return None
+
+        try:
+            return retry_on_rate_limit(
+                _do_call,
+                max_retries=RATE_LIMIT_RETRY_MAX,
+                default_wait=RATE_LIMIT_WAIT_DEFAULT,
+                get_retry_after=_get_retry_after,
+                retry_on=(_SlackRateLimitError,),
+            )
+        except _SlackRateLimitError as exc:
+            raise exc.original from None
+
+    async def _acall(self, method_name: str, **kwargs):
+        """Async wrapper around :meth:`_call` using a thread-pool executor."""
+        return await run_sync(self._call, method_name, **kwargs)
 
     def _paginate(self, method_name: str, response_key: str, **kwargs) -> list:
         """Cursor-based pagination. Returns all items."""
@@ -380,64 +404,58 @@ class SlackClient:
 # Local Message Cache (SQLite)
 # ============================================================
 
-class MessageCache:
+_SLACK_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS channels (
+    channel_id TEXT PRIMARY KEY,
+    name TEXT,
+    type TEXT,
+    is_member INTEGER DEFAULT 0,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    name TEXT,
+    real_name TEXT,
+    is_bot INTEGER DEFAULT 0,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    channel_id TEXT,
+    ts TEXT,
+    user_id TEXT,
+    user_name TEXT,
+    text TEXT,
+    thread_ts TEXT,
+    reply_count INTEGER DEFAULT 0,
+    ts_epoch REAL,
+    send_time_jst TEXT,
+    PRIMARY KEY (channel_id, ts)
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    channel_id TEXT PRIMARY KEY,
+    last_synced TEXT,
+    oldest_ts TEXT,
+    newest_ts TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
+CREATE INDEX IF NOT EXISTS idx_messages_ts_epoch ON messages(ts_epoch);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(channel_id, thread_ts);
+"""
+
+
+class MessageCache(BaseMessageCache):
     """SQLite-backed cache for Slack messages, enabling offline search and
     unreplied-mention detection."""
 
     def __init__(self, db_path: Path | None = None):
         if db_path is None:
             db_path = DEFAULT_CACHE_DIR / "messages.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path = db_path
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
-        self._init_db()
-
-    def _init_db(self):
-        """Create tables and indexes."""
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS channels (
-                channel_id TEXT PRIMARY KEY,
-                name TEXT,
-                type TEXT,
-                is_member INTEGER DEFAULT 0,
-                updated_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                name TEXT,
-                real_name TEXT,
-                is_bot INTEGER DEFAULT 0,
-                updated_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                channel_id TEXT,
-                ts TEXT,
-                user_id TEXT,
-                user_name TEXT,
-                text TEXT,
-                thread_ts TEXT,
-                reply_count INTEGER DEFAULT 0,
-                ts_epoch REAL,
-                send_time_jst TEXT,
-                PRIMARY KEY (channel_id, ts)
-            );
-
-            CREATE TABLE IF NOT EXISTS sync_state (
-                channel_id TEXT PRIMARY KEY,
-                last_synced TEXT,
-                oldest_ts TEXT,
-                newest_ts TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
-            CREATE INDEX IF NOT EXISTS idx_messages_ts_epoch ON messages(ts_epoch);
-            CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
-            CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(channel_id, thread_ts);
-        """)
-        self.conn.commit()
+        super().__init__(db_path, _SLACK_SCHEMA_SQL)
 
     def upsert_channel(self, channel: dict):
         """Save/update channel info."""
@@ -772,9 +790,6 @@ class MessageCache:
             "oldest_message": oldest or "N/A",
             "newest_message": newest or "N/A",
         }
-
-    def close(self):
-        self.conn.close()
 
 
 # ============================================================

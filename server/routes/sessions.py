@@ -6,7 +6,11 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException
+
+from core.memory.conversation import ConversationMemory
+from core.memory.shortterm import ShortTermMemory
+from server.dependencies import get_person
 
 logger = logging.getLogger("animaworks.routes.sessions")
 
@@ -15,13 +19,8 @@ def create_sessions_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/persons/{name}/sessions")
-    async def list_sessions(name: str, request: Request):
+    async def list_sessions(name: str, person=Depends(get_person)):
         """List all available sessions: active conversation, archives, episodes."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.conversation import ConversationMemory
-        from core.memory.shortterm import ShortTermMemory
 
         # Active conversation
         conv = ConversationMemory(person.person_dir, person.model_config)
@@ -96,26 +95,21 @@ def create_sessions_router() -> APIRouter:
 
     @router.get("/persons/{name}/sessions/{session_id}")
     async def get_session_detail(
-        name: str, session_id: str, request: Request
+        name: str, session_id: str, person=Depends(get_person),
     ):
         """Get archived session detail."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.shortterm import ShortTermMemory
-
         stm = ShortTermMemory(person.person_dir)
         archive_dir = stm._archive_dir
         json_path = archive_dir / f"{session_id}.json"
         md_path = archive_dir / f"{session_id}.md"
 
         if not json_path.exists():
-            return {"error": "Session not found"}
+            raise HTTPException(status_code=404, detail="Session not found")
 
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, TypeError):
-            return {"error": "Session data corrupted"}
+            raise HTTPException(status_code=500, detail="Session data corrupted")
 
         markdown = ""
         if md_path.exists():
@@ -129,13 +123,8 @@ def create_sessions_router() -> APIRouter:
         }
 
     @router.get("/persons/{name}/transcripts/{date}")
-    async def get_transcript(name: str, date: str, request: Request):
+    async def get_transcript(name: str, date: str, person=Depends(get_person)):
         """Get full conversation transcript for a specific date."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.conversation import ConversationMemory
-
         conv = ConversationMemory(person.person_dir, person.model_config)
         messages = conv.load_transcript(date)
         return {

@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException
+
+from core.memory.conversation import ConversationMemory
+from server.dependencies import get_person
 
 logger = logging.getLogger("animaworks.routes.memory")
 
@@ -16,70 +19,47 @@ def create_memory_router() -> APIRouter:
     # ── Episodes ──────────────────────────────────────────
 
     @router.get("/persons/{name}/episodes")
-    async def list_episodes(name: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def list_episodes(name: str, person=Depends(get_person)):
         return {"files": person.memory.list_episode_files()}
 
     @router.get("/persons/{name}/episodes/{date}")
-    async def get_episode(name: str, date: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def get_episode(name: str, date: str, person=Depends(get_person)):
         path = person.memory.episodes_dir / f"{date}.md"
         if not path.exists():
-            return {"error": "Episode not found"}
+            raise HTTPException(status_code=404, detail="Episode not found")
         return {"date": date, "content": path.read_text(encoding="utf-8")}
 
     # ── Knowledge ─────────────────────────────────────────
 
     @router.get("/persons/{name}/knowledge")
-    async def list_knowledge(name: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def list_knowledge(name: str, person=Depends(get_person)):
         return {"files": person.memory.list_knowledge_files()}
 
     @router.get("/persons/{name}/knowledge/{topic}")
-    async def get_knowledge(name: str, topic: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def get_knowledge(name: str, topic: str, person=Depends(get_person)):
         path = person.memory.knowledge_dir / f"{topic}.md"
         if not path.exists():
-            return {"error": "Knowledge not found"}
+            raise HTTPException(status_code=404, detail="Knowledge not found")
         return {"topic": topic, "content": path.read_text(encoding="utf-8")}
 
     # ── Procedures ────────────────────────────────────────
 
     @router.get("/persons/{name}/procedures")
-    async def list_procedures(name: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def list_procedures(name: str, person=Depends(get_person)):
         return {"files": person.memory.list_procedure_files()}
 
     @router.get("/persons/{name}/procedures/{proc}")
-    async def get_procedure(name: str, proc: str, request: Request):
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
+    async def get_procedure(name: str, proc: str, person=Depends(get_person)):
         path = person.memory.procedures_dir / f"{proc}.md"
         if not path.exists():
-            return {"error": "Procedure not found"}
+            raise HTTPException(status_code=404, detail="Procedure not found")
         return {"name": proc, "content": path.read_text(encoding="utf-8")}
 
     # ── Conversation ──────────────────────────────────────
 
     @router.get("/persons/{name}/conversation")
-    async def get_conversation(name: str, request: Request):
+    async def get_conversation(name: str, person=Depends(get_person)):
         """View current conversation state."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.conversation import ConversationMemory
-
         conv = ConversationMemory(person.person_dir, person.model_config)
         state = conv.load()
         return {
@@ -111,14 +91,10 @@ def create_memory_router() -> APIRouter:
 
     @router.get("/persons/{name}/conversation/full")
     async def get_conversation_full(
-        name: str, request: Request, limit: int = 50, offset: int = 0
+        name: str, limit: int = 50, offset: int = 0,
+        person=Depends(get_person),
     ):
         """View full conversation history (not truncated)."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.conversation import ConversationMemory
-
         conv = ConversationMemory(person.person_dir, person.model_config)
         state = conv.load()
 
@@ -147,25 +123,15 @@ def create_memory_router() -> APIRouter:
         }
 
     @router.delete("/persons/{name}/conversation")
-    async def clear_conversation(name: str, request: Request):
+    async def clear_conversation(name: str, person=Depends(get_person)):
         """Clear conversation history for a fresh start."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.conversation import ConversationMemory
-
         conv = ConversationMemory(person.person_dir, person.model_config)
         conv.clear()
         return {"status": "cleared", "person": name}
 
     @router.post("/persons/{name}/conversation/compress")
-    async def compress_conversation(name: str, request: Request):
+    async def compress_conversation(name: str, person=Depends(get_person)):
         """Manually trigger conversation compression."""
-        person = request.app.state.persons.get(name)
-        if not person:
-            return {"error": "Person not found"}
-        from core.memory.conversation import ConversationMemory
-
         conv = ConversationMemory(person.person_dir, person.model_config)
         compressed = await conv.compress_if_needed()
         state = conv.load()

@@ -28,6 +28,7 @@ from typing import Any
 import httpx
 
 from core.tools._base import logger
+from core.tools._retry import retry_with_backoff
 
 # ---------------------------------------------------------------------------
 # Server configuration
@@ -239,50 +240,72 @@ class OllamaClient:
         max_retries: int = 60,
         poll_interval: float = 5.0,
     ) -> str:
-        """Send request with retry on server busy, failover to alternate server."""
+        """Send request with retry on server busy, failover to alternate server.
+
+        Uses the shared :func:`retry_with_backoff` utility for the
+        retry loop while adding server-failover logic via
+        ``on_retry``.
+        """
         alternate = self._get_alternate(server)
-        current = server
-        for attempt in range(max_retries):
-            try:
-                r = self._client.post(
-                    f"{current.url}{path}",
-                    json=body,
-                    timeout=httpx.Timeout(self._timeout, connect=10.0),
+        # Mutable state shared between the closure and on_retry callback
+        state = {"current": server, "alternate": alternate}
+
+        class _ServerBusyError(Exception):
+            """Raised when the Ollama server reports busy/running."""
+
+        def _do_request() -> str:
+            current = state["current"]
+            r = self._client.post(
+                f"{current.url}{path}",
+                json=body,
+                timeout=httpx.Timeout(self._timeout, connect=10.0),
+            )
+            data = r.json()
+            if "error" in data and (
+                "is running" in data["error"]
+                or "busy" in str(data.get("error", "")).lower()
+            ):
+                raise _ServerBusyError(
+                    f"Server {current.name} busy: {data['error']}"
                 )
-                data = r.json()
-                if "error" in data and (
-                    "is running" in data["error"]
-                    or "busy" in str(data.get("error", "")).lower()
-                ):
-                    logger.debug(
-                        "Server %s busy, retrying in %.0fs (attempt %d)",
-                        current.name,
-                        poll_interval,
-                        attempt + 1,
-                    )
-                    time.sleep(poll_interval)
-                    # Try alternate server on next attempt
-                    if alternate and attempt % 2 == 0:
-                        current = alternate
-                    continue
-                r.raise_for_status()
-                # Extract nested key like "message.content"
-                result: Any = data
-                for k in key.split("."):
-                    result = result[k]
-                return result
-            except httpx.ConnectError:
-                if alternate:
+            r.raise_for_status()
+            # Extract nested key like "message.content"
+            result: Any = data
+            for k in key.split("."):
+                result = result[k]
+            return result
+
+        def _on_retry(exc: Exception, attempt: int, wait: float) -> None:
+            current = state["current"]
+            alt = state["alternate"]
+            if isinstance(exc, _ServerBusyError):
+                logger.debug(
+                    "Server %s busy, retrying in %.0fs (attempt %d)",
+                    current.name,
+                    poll_interval,
+                    attempt,
+                )
+                # Alternate servers on even attempts
+                if alt and attempt % 2 == 0:
+                    state["current"] = alt
+            elif isinstance(exc, httpx.ConnectError):
+                if alt:
                     logger.warning(
                         "Server %s unreachable, failing over to %s",
                         current.name,
-                        alternate.name,
+                        alt.name,
                     )
-                    current = alternate
-                    alternate = None
-                    continue
-                raise
-        raise RuntimeError(f"Server busy after {max_retries} retries")
+                    state["current"] = alt
+                    state["alternate"] = None
+
+        return retry_with_backoff(
+            _do_request,
+            max_retries=max_retries,
+            base_delay=poll_interval,
+            max_delay=poll_interval,  # constant interval for busy polling
+            retry_on=(_ServerBusyError, httpx.ConnectError),
+            on_retry=_on_retry,
+        )
 
     def _get_alternate(self, server: OllamaServer) -> OllamaServer | None:
         """Get alternate server for failover."""
