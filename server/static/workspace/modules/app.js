@@ -105,8 +105,9 @@ async function initOfficeIfNeeded() {
   setState({ officeInitialized: true });
 
   try {
-    // Initialize 3D scene
-    initOffice(dom.officeCanvas);
+    // Initialize 3D scene with person data for dynamic desk layout
+    const { persons } = getState();
+    initOffice(dom.officeCanvas, persons);
 
     // Initialize characters in the scene
     const scene = getScene();
@@ -115,14 +116,10 @@ async function initOfficeIfNeeded() {
     // Register character animation update in the render loop
     setCharacterUpdateHook(updateAllCharacters);
 
-    // Create characters for all known persons
+    // Create characters at their dynamically assigned desk positions
     const desks = getDesks();
-    const deskKeys = Object.keys(desks);
-    const { persons } = getState();
-    for (let i = 0; i < persons.length; i++) {
-      const p = persons[i];
-      const deskKey = deskKeys[i % deskKeys.length];
-      const deskPos = desks[deskKey];
+    for (const p of persons) {
+      const deskPos = desks[p.name];
       if (deskPos) {
         const group = await createCharacter(p.name, { x: deskPos.x, y: deskPos.y + 0.4, z: deskPos.z - 0.3 });
         if (group) {
@@ -514,23 +511,17 @@ function setupWebSocket() {
     // Refresh 3D character if office is initialised
     if (getState().officeInitialized) {
       const desks = getDesks();
-      const deskKeys = Object.keys(desks);
-      const { persons } = getState();
-      const idx = persons.findIndex((p) => p.name === personName);
-      if (idx >= 0) {
-        const deskKey = deskKeys[idx % deskKeys.length];
-        const deskPos = desks[deskKey];
-        if (deskPos) {
-          removeCharacter(personName);
-          const group = await createCharacter(
-            personName,
-            { x: deskPos.x, y: deskPos.y + 0.4, z: deskPos.z - 0.3 },
-          );
-          if (group) {
-            group.traverse((child) => {
-              if (child.isMesh) registerClickTarget(personName, child);
-            });
-          }
+      const deskPos = desks[personName];
+      if (deskPos) {
+        removeCharacter(personName);
+        const group = await createCharacter(
+          personName,
+          { x: deskPos.x, y: deskPos.y + 0.4, z: deskPos.z - 0.3 },
+        );
+        if (group) {
+          group.traverse((child) => {
+            if (child.isMesh) registerClickTarget(personName, child);
+          });
         }
       }
     }

@@ -1,6 +1,7 @@
 // ── 3D Office Scene ──────────────────────
 // Three.js-based isometric office for the AnimaWorks Workspace.
 // Renders a modern open-plan office where AI Persons work at desks.
+// Desks are dynamically placed based on organizational tree structure.
 // This module owns the scene, camera, renderer, and static furniture.
 // Characters are placed by character.js via getDesks().
 
@@ -8,20 +9,6 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 // ── Constants ──────────────────────
-
-/** @type {Record<string, {x: number, y: number, z: number}>} */
-const DESK_LAYOUT = {
-  monitor:    { x: -4, y: 0, z: -3 },
-  supervisor: { x:  0, y: 0, z: -3 },
-  trader:     { x:  4, y: 0, z: -3 },
-  comm:       { x: -4, y: 0, z:  0 },
-  researcher: { x:  4, y: 0, z:  0 },
-  developer:  { x: -4, y: 0, z:  3 },
-  browser:    { x:  4, y: 0, z:  3 },
-};
-
-const FLOOR_WIDTH = 16;
-const FLOOR_DEPTH = 12;
 
 const COLOR = {
   floor:       0xd4a373,
@@ -39,7 +26,15 @@ const COLOR = {
   book2:       0x4e7cc4,
   book3:       0x52c44e,
   highlight:   0xffcc00,
+  connector:   0xaaaaaa,
 };
+
+/** Spacing between desks in a row (X axis). */
+const DESK_SPACING_X = 3.5;
+/** Spacing between hierarchy levels (Z axis). */
+const DESK_SPACING_Z = 4.0;
+/** Minimum floor padding around desks. */
+const FLOOR_PADDING = 4;
 
 // ── Module State ──────────────────────
 
@@ -71,6 +66,16 @@ let _raycaster = new THREE.Raycaster();
 let _mouse = new THREE.Vector2();
 
 /**
+ * Dynamic desk layout computed from person data.
+ * @type {Record<string, {x: number, y: number, z: number}>}
+ */
+let _deskLayout = {};
+
+/** Current floor dimensions (updated dynamically). */
+let _floorWidth = 16;
+let _floorDepth = 12;
+
+/**
  * Maps person name to the desk group mesh (for raycasting / highlighting).
  * @type {Map<string, THREE.Group>}
  */
@@ -96,6 +101,141 @@ let _characterClickHandler = null;
  * @type {Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>}
  */
 const _disposables = new Set();
+
+// ── Tree Layout Algorithm ──────────────────────
+
+/**
+ * @typedef {Object} TreeNode
+ * @property {string} name
+ * @property {string|null} role
+ * @property {string|null} supervisor
+ * @property {TreeNode[]} children
+ */
+
+/**
+ * Build an organizational tree from person data.
+ * Persons with role "commander" or no supervisor are roots.
+ * Others are placed under their supervisor.
+ *
+ * @param {Array<{name: string, role?: string, supervisor?: string}>} persons
+ * @returns {TreeNode[]} Root nodes of the tree.
+ */
+function buildOrgTree(persons) {
+  /** @type {Map<string, TreeNode>} */
+  const nodeMap = new Map();
+
+  // Create nodes for all persons
+  for (const p of persons) {
+    nodeMap.set(p.name, {
+      name: p.name,
+      role: p.role || null,
+      supervisor: p.supervisor || null,
+      children: [],
+    });
+  }
+
+  /** @type {TreeNode[]} */
+  const roots = [];
+
+  // Build parent-child relationships
+  for (const node of nodeMap.values()) {
+    if (node.role === "commander" || !node.supervisor || !nodeMap.has(node.supervisor)) {
+      roots.push(node);
+    } else {
+      const parent = nodeMap.get(node.supervisor);
+      if (parent) {
+        parent.children.push(node);
+      }
+    }
+  }
+
+  // If no roots found, treat all persons as roots (flat layout)
+  if (roots.length === 0) {
+    return [...nodeMap.values()];
+  }
+
+  return roots;
+}
+
+/**
+ * Compute desk positions from the organizational tree.
+ * Commander(s) at the top (negative Z), workers in rows below.
+ * Each level is centered horizontally.
+ *
+ * @param {TreeNode[]} roots
+ * @returns {Record<string, {x: number, y: number, z: number}>}
+ */
+function computeTreeLayout(roots) {
+  /** @type {Record<string, {x: number, y: number, z: number}>} */
+  const layout = {};
+
+  // Flatten tree into levels using BFS
+  /** @type {TreeNode[][]} */
+  const levels = [];
+  let currentLevel = [...roots];
+
+  while (currentLevel.length > 0) {
+    levels.push(currentLevel);
+    /** @type {TreeNode[]} */
+    const nextLevel = [];
+    for (const node of currentLevel) {
+      nextLevel.push(...node.children);
+    }
+    currentLevel = nextLevel;
+  }
+
+  // Compute the maximum width needed (for centering)
+  const maxNodesInLevel = Math.max(...levels.map((l) => l.length));
+
+  // Position each level
+  const totalDepth = levels.length;
+  const startZ = -((totalDepth - 1) * DESK_SPACING_Z) / 2;
+
+  for (let levelIdx = 0; levelIdx < levels.length; levelIdx++) {
+    const level = levels[levelIdx];
+    const z = startZ + levelIdx * DESK_SPACING_Z;
+    const levelWidth = (level.length - 1) * DESK_SPACING_X;
+    const startX = -levelWidth / 2;
+
+    for (let i = 0; i < level.length; i++) {
+      const node = level[i];
+      layout[node.name] = {
+        x: startX + i * DESK_SPACING_X,
+        y: 0,
+        z,
+      };
+    }
+  }
+
+  return layout;
+}
+
+/**
+ * Compute dynamic floor dimensions from desk layout.
+ * @param {Record<string, {x: number, y: number, z: number}>} layout
+ * @returns {{width: number, depth: number}}
+ */
+function computeFloorDimensions(layout) {
+  const positions = Object.values(layout);
+  if (positions.length === 0) {
+    return { width: 16, depth: 12 };
+  }
+
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+
+  for (const pos of positions) {
+    if (pos.x < minX) minX = pos.x;
+    if (pos.x > maxX) maxX = pos.x;
+    if (pos.z < minZ) minZ = pos.z;
+    if (pos.z > maxZ) maxZ = pos.z;
+  }
+
+  const width = Math.max(12, (maxX - minX) + FLOOR_PADDING * 2);
+  const depth = Math.max(10, (maxZ - minZ) + FLOOR_PADDING * 2);
+
+  return { width, depth };
+}
 
 // ── Geometry / Material Helpers ──────────────────────
 
@@ -180,7 +320,7 @@ function phong(params) {
  * @param {THREE.Scene} scene
  */
 function buildFloor(scene) {
-  const geo = plane(FLOOR_WIDTH, FLOOR_DEPTH);
+  const geo = plane(_floorWidth, _floorDepth);
   const mat = lambert({ color: COLOR.floor });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
@@ -195,11 +335,11 @@ function buildFloor(scene) {
 function buildWalls(scene) {
   const wallMat = lambert({ color: COLOR.wallSide });
   const wallHeight = 3;
-  const halfFloorW = FLOOR_WIDTH / 2;
-  const halfFloorD = FLOOR_DEPTH / 2;
+  const halfFloorW = _floorWidth / 2;
+  const halfFloorD = _floorDepth / 2;
 
   // Left wall
-  const leftGeo = box(0.1, wallHeight, FLOOR_DEPTH);
+  const leftGeo = box(0.1, wallHeight, _floorDepth);
   const leftWall = new THREE.Mesh(leftGeo, wallMat);
   leftWall.position.set(-halfFloorW, wallHeight / 2, 0);
   leftWall.castShadow = true;
@@ -231,7 +371,7 @@ function buildWalls(scene) {
   scene.add(rightPillar);
 
   // Window frame top
-  const windowWidth = FLOOR_WIDTH - pillarWidth * 2;
+  const windowWidth = _floorWidth - pillarWidth * 2;
   const frameThickness = 0.3;
   const frameGeo = box(windowWidth, frameThickness, 0.1);
   const topFrame = new THREE.Mesh(frameGeo, backMat);
@@ -259,7 +399,7 @@ function buildWalls(scene) {
   scene.add(glass);
 
   // Window dividers (vertical mullions)
-  const mullionCount = 5;
+  const mullionCount = Math.max(3, Math.floor(windowWidth / 2.5));
   const mullionGeo = box(0.05, glassHeight, 0.05);
   const mullionMat = lambert({ color: 0xcccccc });
   for (let i = 1; i < mullionCount; i++) {
@@ -403,11 +543,11 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /**
- * Build all desks and add them to the scene.
+ * Build all desks dynamically from the computed layout and add them to the scene.
  * @param {THREE.Scene} scene
  */
 function buildDesks(scene) {
-  for (const [name, pos] of Object.entries(DESK_LAYOUT)) {
+  for (const [name, pos] of Object.entries(_deskLayout)) {
     const group = createDesk(name, pos);
     scene.add(group);
     _deskGroups.set(name, group);
@@ -415,24 +555,62 @@ function buildDesks(scene) {
 }
 
 /**
- * Build decorative elements: plants, bookshelf.
+ * Draw organizational hierarchy connector lines between supervisor and subordinate desks.
+ * @param {THREE.Scene} scene
+ * @param {Array<{name: string, role?: string, supervisor?: string}>} persons
+ */
+function buildConnectors(scene, persons) {
+  const lineMat = new THREE.LineBasicMaterial({
+    color: COLOR.connector,
+    transparent: true,
+    opacity: 0.4,
+  });
+  _disposables.add(lineMat);
+
+  for (const p of persons) {
+    if (!p.supervisor) continue;
+    const fromPos = _deskLayout[p.supervisor];
+    const toPos = _deskLayout[p.name];
+    if (!fromPos || !toPos) continue;
+
+    // Draw an L-shaped connector: down from parent, then across to child
+    const midZ = (fromPos.z + toPos.z) / 2;
+    const points = [
+      new THREE.Vector3(fromPos.x, 0.01, fromPos.z + 1.0),
+      new THREE.Vector3(fromPos.x, 0.01, midZ),
+      new THREE.Vector3(toPos.x, 0.01, midZ),
+      new THREE.Vector3(toPos.x, 0.01, toPos.z - 1.0),
+    ];
+
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    _disposables.add(geo);
+    const line = new THREE.Line(geo, lineMat);
+    scene.add(line);
+  }
+}
+
+/**
+ * Build decorative elements: plants around the office.
+ * Positions are computed relative to current floor size.
  * @param {THREE.Scene} scene
  */
 function buildDecorations(scene) {
   const potMat = lambert({ color: COLOR.plantPot });
   const leafMat = lambert({ color: COLOR.plantLeaf });
 
-  // ── Center plant (shared space) ──
-  buildPlant(scene, 0, 0, potMat, leafMat, 0.25, 0.6);
+  const halfW = _floorWidth / 2 - 1;
+  const halfD = _floorDepth / 2 - 1;
 
-  // ── Scattered small plants ──
-  buildPlant(scene, -2, -1.5, potMat, leafMat, 0.12, 0.35);
-  buildPlant(scene,  2, -1.5, potMat, leafMat, 0.12, 0.35);
-  buildPlant(scene,  1.5,  1.5, potMat, leafMat, 0.1, 0.3);
-  buildPlant(scene, -1.5,  1.5, potMat, leafMat, 0.1, 0.3);
+  // Corner plants
+  buildPlant(scene, -halfW, -halfD, potMat, leafMat, 0.2, 0.5);
+  buildPlant(scene,  halfW, -halfD, potMat, leafMat, 0.2, 0.5);
+  buildPlant(scene, -halfW,  halfD, potMat, leafMat, 0.15, 0.4);
+  buildPlant(scene,  halfW,  halfD, potMat, leafMat, 0.15, 0.4);
 
-  // ── Bookshelf near researcher desk ──
-  buildBookshelf(scene, 6.5, 0);
+  // A center-ish plant if the office is large enough
+  if (_floorWidth >= 14 && _floorDepth >= 10) {
+    buildPlant(scene, 0, 0, potMat, leafMat, 0.25, 0.6);
+  }
 }
 
 /**
@@ -462,51 +640,6 @@ function buildPlant(scene, x, z, potMat, leafMat, potRadius, plantHeight) {
 }
 
 /**
- * Build a simple bookshelf made of stacked boxes.
- * @param {THREE.Scene} scene
- * @param {number} x
- * @param {number} z
- */
-function buildBookshelf(scene, x, z) {
-  const shelfMat = lambert({ color: COLOR.shelf });
-
-  // Shelf frame (back panel)
-  const frameGeo = box(0.8, 1.6, 0.05);
-  const frame = new THREE.Mesh(frameGeo, shelfMat);
-  frame.position.set(x, 0.8, z - 0.2);
-  frame.castShadow = true;
-  scene.add(frame);
-
-  // Shelves (3 horizontal planks)
-  const plankGeo = box(0.8, 0.04, 0.35);
-  for (let i = 0; i < 3; i++) {
-    const plank = new THREE.Mesh(plankGeo, shelfMat);
-    plank.position.set(x, 0.1 + i * 0.5, z);
-    scene.add(plank);
-  }
-
-  // Books on shelves
-  const bookColors = [COLOR.book1, COLOR.book2, COLOR.book3];
-  for (let shelf = 0; shelf < 3; shelf++) {
-    const bookCount = 3 + shelf;
-    for (let b = 0; b < bookCount; b++) {
-      const bw = 0.06 + Math.random() * 0.04;
-      const bh = 0.3 + Math.random() * 0.15;
-      const bookGeo = box(bw, bh, 0.25);
-      const bookMat = lambert({ color: bookColors[b % bookColors.length] });
-      const bookMesh = new THREE.Mesh(bookGeo, bookMat);
-      bookMesh.position.set(
-        x - 0.3 + b * 0.14,
-        0.14 + shelf * 0.5 + bh / 2,
-        z,
-      );
-      bookMesh.castShadow = true;
-      scene.add(bookMesh);
-    }
-  }
-}
-
-/**
  * Set up ambient and directional lighting.
  * @param {THREE.Scene} scene
  */
@@ -519,12 +652,15 @@ function buildLighting(scene) {
   const directional = new THREE.DirectionalLight(0xffffff, 0.8);
   directional.position.set(5, 10, 5);
   directional.castShadow = true;
+
+  // Shadow camera covers the whole floor
+  const shadowExtent = Math.max(_floorWidth, _floorDepth) / 2 + 2;
   directional.shadow.mapSize.width = 2048;
   directional.shadow.mapSize.height = 2048;
-  directional.shadow.camera.left = -10;
-  directional.shadow.camera.right = 10;
-  directional.shadow.camera.top = 10;
-  directional.shadow.camera.bottom = -10;
+  directional.shadow.camera.left = -shadowExtent;
+  directional.shadow.camera.right = shadowExtent;
+  directional.shadow.camera.top = shadowExtent;
+  directional.shadow.camera.bottom = -shadowExtent;
   directional.shadow.camera.near = 0.5;
   directional.shadow.camera.far = 30;
   directional.shadow.bias = -0.001;
@@ -566,11 +702,12 @@ function createHighlightMesh() {
 
 /**
  * Create an orthographic camera with isometric-like perspective.
+ * Frustum is scaled to fit the office.
  * @param {number} aspect - container width / height
  * @returns {THREE.OrthographicCamera}
  */
 function createCamera(aspect) {
-  const frustum = 8;
+  const frustum = Math.max(8, Math.max(_floorWidth, _floorDepth) / 2 + 2);
   const camera = new THREE.OrthographicCamera(
     -frustum * aspect,
      frustum * aspect,
@@ -595,7 +732,7 @@ function updateCameraFrustum(width, height) {
   if (!_camera || !_renderer) return;
 
   const aspect = width / height;
-  const frustum = 8;
+  const frustum = Math.max(8, Math.max(_floorWidth, _floorDepth) / 2 + 2);
   _camera.left = -frustum * aspect;
   _camera.right = frustum * aspect;
   _camera.top = frustum;
@@ -676,11 +813,12 @@ function renderLoop() {
 
 /**
  * Initialize the 3D office scene inside the given container element.
- * Creates the scene, camera, renderer, and starts the render loop.
+ * Desk layout is computed dynamically from the persons array.
  *
  * @param {HTMLElement} container - The DOM element to host the Three.js canvas
+ * @param {Array<{name: string, role?: string, supervisor?: string}>} [persons] - Person data for dynamic layout
  */
-export function initOffice(container) {
+export function initOffice(container, persons = []) {
   if (_renderer) {
     // Already initialized — dispose first
     disposeOffice();
@@ -689,6 +827,19 @@ export function initOffice(container) {
   _container = container;
   const width = container.clientWidth || 800;
   const height = container.clientHeight || 600;
+
+  // Compute dynamic desk layout from person data
+  if (persons.length > 0) {
+    const roots = buildOrgTree(persons);
+    _deskLayout = computeTreeLayout(roots);
+  } else {
+    _deskLayout = {};
+  }
+
+  // Compute floor dimensions
+  const dims = computeFloorDimensions(_deskLayout);
+  _floorWidth = dims.width;
+  _floorDepth = dims.depth;
 
   // Scene
   _scene = new THREE.Scene();
@@ -723,6 +874,7 @@ export function initOffice(container) {
   buildFloor(_scene);
   buildWalls(_scene);
   buildDesks(_scene);
+  buildConnectors(_scene, persons);
   buildDecorations(_scene);
   buildLighting(_scene);
 
@@ -813,6 +965,7 @@ export function disposeOffice() {
   _container = null;
   _highlightMesh = null;
   _highlightedName = null;
+  _deskLayout = {};
   _deskGroups.clear();
   _meshToName.clear();
 }
@@ -826,7 +979,7 @@ export function disposeOffice() {
 export function getDesks() {
   /** @type {Record<string, {x: number, y: number, z: number}>} */
   const result = {};
-  for (const [name, pos] of Object.entries(DESK_LAYOUT)) {
+  for (const [name, pos] of Object.entries(_deskLayout)) {
     result[name] = { x: pos.x, y: pos.y, z: pos.z };
   }
   return result;
@@ -841,7 +994,7 @@ export function getDesks() {
 export function highlightDesk(name) {
   if (!_highlightMesh) return;
 
-  const pos = DESK_LAYOUT[name];
+  const pos = _deskLayout[name];
   if (!pos) {
     console.warn(`[office3d] Unknown desk name: "${name}"`);
     return;

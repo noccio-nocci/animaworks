@@ -47,7 +47,14 @@ def create_router() -> APIRouter:
     @api.get("/persons")
     async def list_persons(request: Request):
         persons = request.app.state.persons
-        return [p.status.model_dump() for p in persons.values()]
+        result = []
+        for p in persons.values():
+            data = p.status.model_dump()
+            mc = p.config.model_config_data
+            data["role"] = mc.role
+            data["supervisor"] = mc.supervisor
+            result.append(data)
+        return result
 
     @api.get("/persons/{name}")
     async def get_person(name: str, request: Request):
