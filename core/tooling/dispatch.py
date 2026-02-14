@@ -328,8 +328,11 @@ def _handle_github_create_pr(mod: Any, args: dict[str, Any]) -> Any:
 
 def _handle_generate_character_assets(mod: Any, args: dict[str, Any]) -> Any:
     """Handle ``generate_character_assets`` schema."""
+    from core.config.models import load_config
+
     person_dir = Path(args.pop("person_dir", ""))
-    pipeline = mod.ImageGenPipeline(person_dir)
+    config = load_config()
+    pipeline = mod.ImageGenPipeline(person_dir, config=config.image_gen)
     result = pipeline.generate_all(
         prompt=args["prompt"],
         negative_prompt=args.get("negative_prompt", ""),
