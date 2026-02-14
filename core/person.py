@@ -336,6 +336,14 @@ class DigitalPerson:
                         prompt, trigger=f"cron:{task_name}"
                     )
                     self._last_activity = datetime.now()
+
+                    # Record cron execution result
+                    self.memory.append_cron_log(
+                        task_name,
+                        summary=result.summary,
+                        duration_ms=result.duration_ms,
+                    )
+
                     logger.info(
                         "[%s] run_cron_task END task=%s duration_ms=%d",
                         self.name, task_name, result.duration_ms,
