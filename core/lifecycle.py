@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any, Callable, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -21,6 +22,11 @@ from core.schemas import CronTask
 logger = logging.getLogger("animaworks.lifecycle")
 
 BroadcastFn = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
+# Minimum seconds between consecutive message-triggered heartbeats
+# for the same person. Prevents cascading loops (A sends to B, B replies
+# to A, A replies to B, …).
+_MSG_HEARTBEAT_COOLDOWN_S = 60
 
 _DAY_MAP = {
     "月曜": "mon",
@@ -43,6 +49,7 @@ class LifecycleManager:
         self._inbox_watcher_task: asyncio.Task | None = None
         self._pending_triggers: set[str] = set()
         self._deferred_inbox: set[str] = set()
+        self._last_msg_heartbeat_end: dict[str, float] = {}
 
     def set_broadcast(self, fn: BroadcastFn) -> None:
         self._ws_broadcast = fn
@@ -165,6 +172,11 @@ class LifecycleManager:
 
     # ── Inbox Watcher ──────────────────────────────────────
 
+    def _is_in_cooldown(self, name: str) -> bool:
+        """Return True if a message-triggered heartbeat finished too recently."""
+        last = self._last_msg_heartbeat_end.get(name, 0.0)
+        return (time.monotonic() - last) < _MSG_HEARTBEAT_COOLDOWN_S
+
     async def _inbox_watcher_loop(self) -> None:
         """Poll inbox dirs every 2s; trigger heartbeat on new messages."""
         logger.info("Inbox watcher started (poll interval: 2s)")
@@ -174,6 +186,8 @@ class LifecycleManager:
                 if name in self._pending_triggers:
                     continue
                 if not person.messenger.has_unread():
+                    continue
+                if self._is_in_cooldown(name):
                     continue
                 if person._lock.locked():
                     self._deferred_inbox.add(name)
@@ -195,6 +209,8 @@ class LifecycleManager:
         if not person.messenger.has_unread():
             return
         if name in self._pending_triggers:
+            return
+        if self._is_in_cooldown(name):
             return
 
         self._pending_triggers.add(name)
@@ -219,6 +235,7 @@ class LifecycleManager:
             logger.exception("Message-triggered heartbeat failed: %s", name)
         finally:
             self._pending_triggers.discard(name)
+            self._last_msg_heartbeat_end[name] = time.monotonic()
 
     # ── Lifecycle ─────────────────────────────────────────
 

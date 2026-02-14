@@ -212,28 +212,25 @@ class DigitalPerson:
                     )
                     self._last_activity = datetime.now()
 
-                    # Selective archival: only archive messages from senders
-                    # the agent actually replied to.
+                    # Archive all messages that were injected into the prompt.
+                    # In A1 mode agents send replies via Bash (not the
+                    # send_message tool), so ToolHandler.replied_to may be
+                    # incomplete.  Keeping unarchived messages causes
+                    # re-processing and heartbeat cascade loops.
                     if unread_count > 0:
                         replied_to = self.agent.replied_to
-                        replied_senders = senders & replied_to
-                        if replied_senders:
-                            total_archived = 0
-                            for sender in replied_senders:
-                                archived = self.messenger.archive_from(sender)
-                                total_archived += archived
-                            logger.info(
-                                "[%s] Archived %d messages (replied to: %s)",
-                                self.name, total_archived,
-                                ", ".join(replied_senders),
-                            )
                         unreplied = senders - replied_to
                         if unreplied:
-                            logger.warning(
-                                "[%s] No replies sent to %s; "
-                                "their messages remain in inbox",
+                            logger.info(
+                                "[%s] No send_message tool calls detected for %s "
+                                "(may have replied via Bash)",
                                 self.name, ", ".join(unreplied),
                             )
+                        total_archived = self.messenger.archive_all()
+                        logger.info(
+                            "[%s] Archived %d messages from heartbeat",
+                            self.name, total_archived,
+                        )
 
                     logger.info(
                         "[%s] run_heartbeat END duration_ms=%d unread_processed=%d",
