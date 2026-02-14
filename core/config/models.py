@@ -124,6 +124,17 @@ class ConsolidationConfig(BaseModel):
     episode_retention_days: int = 30  # Days to retain uncompressed episodes
 
 
+class ImageGenConfig(BaseModel):
+    """Configuration for image generation and style consistency."""
+
+    style_reference: str | None = None  # Path to organization-wide style reference image
+    style_prefix: str = ""  # Common style tags prepended to character prompt
+    style_suffix: str = ""  # Common style tags appended to character prompt
+    negative_prompt_extra: str = ""  # Extra tags added to negative prompt
+    vibe_strength: float = 0.6  # Vibe Transfer strength (0.0-1.0)
+    vibe_info_extracted: float = 0.8  # Vibe Transfer information extraction (0.0-1.0)
+
+
 class AnimaWorksConfig(BaseModel):
     version: int = 1
     system: SystemConfig = SystemConfig()
@@ -134,6 +145,7 @@ class AnimaWorksConfig(BaseModel):
     consolidation: ConsolidationConfig = ConsolidationConfig()
     rag: RAGConfig = RAGConfig()
     priming: PrimingConfig = PrimingConfig()
+    image_gen: ImageGenConfig = ImageGenConfig()
 
 
 # ---------------------------------------------------------------------------

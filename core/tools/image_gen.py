@@ -648,9 +648,16 @@ class ImageGenPipeline:
     }
     # Animation files use pattern: anim_{name}.glb
 
-    def __init__(self, person_dir: Path) -> None:
+    def __init__(
+        self,
+        person_dir: Path,
+        config: "ImageGenConfig | None" = None,
+    ) -> None:
+        from core.config.models import ImageGenConfig
+
         self._person_dir = person_dir
         self._assets_dir = person_dir / "assets"
+        self._config = config or ImageGenConfig()
 
     def generate_all(
         self,
@@ -693,9 +700,39 @@ class ImageGenPipeline:
                 try:
                     logger.info("Step 1: Generating full-body with NovelAI …")
                     client = NovelAIClient()
+
+                    # ── A: Load style reference for Vibe Transfer ──
+                    vibe_image: bytes | None = None
+                    if self._config.style_reference:
+                        style_path = Path(self._config.style_reference).expanduser()
+                        if style_path.exists():
+                            vibe_image = style_path.read_bytes()
+                            logger.debug("Loaded style reference: %s", style_path)
+                        else:
+                            logger.warning(
+                                "Style reference not found: %s", style_path
+                            )
+
+                    # ── B: Apply style prefix/suffix to prompt ──
+                    styled_prompt = prompt
+                    if self._config.style_prefix:
+                        styled_prompt = self._config.style_prefix + styled_prompt
+                    if self._config.style_suffix:
+                        styled_prompt = styled_prompt + self._config.style_suffix
+
+                    styled_negative = negative_prompt
+                    if self._config.negative_prompt_extra:
+                        if styled_negative:
+                            styled_negative += ", " + self._config.negative_prompt_extra
+                        else:
+                            styled_negative = self._config.negative_prompt_extra
+
                     fullbody_bytes = client.generate_fullbody(
-                        prompt=prompt,
-                        negative_prompt=negative_prompt,
+                        prompt=styled_prompt,
+                        negative_prompt=styled_negative,
+                        vibe_image=vibe_image,
+                        vibe_strength=self._config.vibe_strength,
+                        vibe_info_extracted=self._config.vibe_info_extracted,
                     )
                     fullbody_path.write_bytes(fullbody_bytes)
                     result.fullbody_path = fullbody_path
