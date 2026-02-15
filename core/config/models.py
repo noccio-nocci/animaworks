@@ -403,6 +403,35 @@ def _match_pattern_table(
     return None
 
 
+def load_model_config(person_dir: Path) -> "ModelConfig":
+    """Build a :class:`~core.schemas.ModelConfig` for *person_dir*.
+
+    Merges per-person overrides with defaults and resolves credentials
+    so that callers (e.g. ``ConversationMemory``) receive a ready-to-use
+    configuration without knowing the config-resolution details.
+    """
+    from core.schemas import ModelConfig
+
+    config = load_config()
+    person_name = person_dir.name
+    resolved, credential = resolve_person_config(config, person_name)
+
+    return ModelConfig(
+        model=resolved.model,
+        fallback_model=resolved.fallback_model,
+        max_tokens=resolved.max_tokens,
+        max_turns=resolved.max_turns,
+        api_key=credential.api_key or None,
+        api_base_url=credential.base_url,
+        context_threshold=resolved.context_threshold,
+        max_chains=resolved.max_chains,
+        conversation_history_threshold=resolved.conversation_history_threshold,
+        execution_mode=resolved.execution_mode,
+        supervisor=resolved.supervisor,
+        speciality=resolved.speciality,
+    )
+
+
 def resolve_execution_mode(
     config: AnimaWorksConfig,
     model_name: str,

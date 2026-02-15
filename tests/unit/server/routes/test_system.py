@@ -194,7 +194,7 @@ class TestReloadPersons:
 
 class TestRecentActivity:
     async def test_activity_no_persons(self):
-        app = _make_test_app(persons={})
+        app = _make_test_app(person_names=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent")
@@ -202,21 +202,24 @@ class TestRecentActivity:
         assert data["events"] == []
 
     async def test_activity_with_hours_param(self):
-        app = _make_test_app(persons={})
+        app = _make_test_app(person_names=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent?hours=1")
         assert resp.status_code == 200
 
-    async def test_activity_with_person_filter(self):
-        app = _make_test_app(persons={"alice": MagicMock()})
-        # Mock the person's person_dir to avoid filesystem access
-        alice = app.state.persons["alice"]
-        alice.person_dir = Path("/tmp/nonexistent")
-        mc = MagicMock()
-        mc.model = "test"
-        alice.model_config = mc
+    @patch("core.config.models.load_model_config")
+    async def test_activity_with_person_filter(self, mock_lmc, tmp_path):
+        persons_dir = tmp_path / "persons"
+        alice_dir = persons_dir / "alice"
+        alice_dir.mkdir(parents=True)
 
+        mock_lmc.return_value = MagicMock()
+
+        app = _make_test_app(
+            persons_dir=persons_dir,
+            person_names=["alice"],
+        )
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent?person=alice")
