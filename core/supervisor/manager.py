@@ -637,11 +637,16 @@ class ProcessSupervisor:
 
     def _start_system_scheduler(self) -> None:
         """Start the system-level scheduler for consolidation crons."""
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Tokyo")
-        self._setup_system_crons()
-        self.scheduler.start()
-        self._scheduler_running = True
-        logger.info("System scheduler started")
+        try:
+            self.scheduler = AsyncIOScheduler(timezone="Asia/Tokyo")
+            self._setup_system_crons()
+            self.scheduler.start()
+            self._scheduler_running = True
+            logger.info("System scheduler started")
+        except Exception:
+            logger.exception("Failed to start system scheduler")
+            self.scheduler = None
+            self._scheduler_running = False
 
     def _setup_system_crons(self) -> None:
         """Register system-wide cron jobs for memory consolidation."""
