@@ -73,6 +73,7 @@ def create_from_template(
     _init_state_files(anima_dir)
     _place_bootstrap(anima_dir)
     _place_send_script(anima_dir)
+    _ensure_status_json(anima_dir)
 
     logger.info("Created anima '%s' from template '%s'", name, template_name)
     return anima_dir

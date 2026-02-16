@@ -271,6 +271,21 @@ class TestCreateFromTemplate:
             anima_dir = create_from_template(animas_dir, "dev", anima_name="alice")
             assert anima_dir.name == "alice"
 
+    def test_creates_status_json(self, tmp_path):
+        """create_from_template() creates status.json with enabled=true."""
+        tpl_dir = tmp_path / "tpl"
+        (tpl_dir / "dev").mkdir(parents=True)
+        (tpl_dir / "dev" / "identity.md").write_text("dev id", encoding="utf-8")
+        animas_dir = tmp_path / "animas"
+        animas_dir.mkdir()
+        with patch("core.anima_factory.ANIMA_TEMPLATES_DIR", tpl_dir), \
+             patch("core.anima_factory.BOOTSTRAP_TEMPLATE", tmp_path / "no"):
+            anima_dir = create_from_template(animas_dir, "dev")
+            status_path = anima_dir / "status.json"
+            assert status_path.exists()
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+            assert data["enabled"] is True
+
 
 # ── create_blank ──────────────────────────────────────────
 
