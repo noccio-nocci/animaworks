@@ -56,13 +56,13 @@ function registerRoutes() {
 // ── Route Handler ───────────────────────────
 
 async function handleRoute() {
-  const hash = window.location.hash || "#/";
-  const path = hash.slice(1) || "/"; // Remove leading '#'
+  const hash = window.location.hash || "#/chat";
+  const path = hash.slice(1) || "/chat"; // Remove leading '#'
 
   const loader = routes[path];
   if (!loader) {
-    // Fallback to home
-    window.location.hash = "#/";
+    // Fallback to chat
+    window.location.hash = "#/chat";
     return;
   }
 

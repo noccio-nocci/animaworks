@@ -14,10 +14,11 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   min-height: 0;
+}
+
+.chat-messages > * + * {
+  margin-top: 8px;
 }
 
 .chat-empty {
@@ -29,6 +30,7 @@
 
 .chat-bubble {
   max-width: 75%;
+  width: fit-content;
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 0.92rem;
@@ -38,14 +40,14 @@
 }
 
 .chat-bubble.user {
-  align-self: flex-end;
+  margin-left: auto;
   background: #2563eb;
   color: #fff;
   border-bottom-right-radius: 4px;
 }
 
 .chat-bubble.assistant {
-  align-self: flex-start;
+  margin-right: auto;
   background: #f0f0f0;
   color: #1a1a1a;
   border-bottom-left-radius: 4px;
@@ -131,7 +133,7 @@
 }
 
 .chat-bubble.thinking {
-  align-self: flex-start;
+  margin-right: auto;
   background: #fef3c7;
   color: #92400e;
   border-bottom-left-radius: 4px;

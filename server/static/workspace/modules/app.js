@@ -365,10 +365,7 @@ function renderConvMessages() {
     return;
   }
   dom.convMessages.innerHTML = chatMessages.map(renderConvBubble).join("");
-  requestAnimationFrame(() => {
-    const last = dom.convMessages.lastElementChild;
-    if (last) last.scrollIntoView({ block: "end", behavior: "instant" });
-  });
+  dom.convMessages.scrollTop = dom.convMessages.scrollHeight;
 }
 
 async function loadAndRenderConvMessages(animaName) {
@@ -528,9 +525,7 @@ function updateStreamingBubble(msg) {
     html += `<div class="tool-indicator"><span class="tool-spinner"></span>${escapeHtml(msg.activeTool)} を実行中...</div>`;
   }
   bubble.innerHTML = html;
-  requestAnimationFrame(() => {
-    bubble.scrollIntoView({ block: "end", behavior: "instant" });
-  });
+  dom.convMessages.scrollTop = dom.convMessages.scrollHeight;
 }
 
 // ── System Status ──────────────────────
