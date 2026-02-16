@@ -991,10 +991,11 @@ async function _createGLBCharacter(name, position, url, isRigged) {
   // Bone.getWorldPosition() incorporates the armature transform correctly.
   const box = new THREE.Box3();
   let hasBones = false;
+  const _tmpVec = new THREE.Vector3();
   model.traverse((child) => {
-    if (child.isSkinnedMesh && child.skeleton) {
+    if (child.isSkinnedMesh && child.skeleton && child.skeleton.bones.length > 0) {
       for (const bone of child.skeleton.bones) {
-        box.expandByPoint(bone.getWorldPosition(new THREE.Vector3()));
+        box.expandByPoint(bone.getWorldPosition(_tmpVec));
       }
       hasBones = true;
     }
@@ -1015,9 +1016,9 @@ async function _createGLBCharacter(name, position, url, isRigged) {
   const scaledBox = new THREE.Box3();
   if (hasBones) {
     model.traverse((child) => {
-      if (child.isSkinnedMesh && child.skeleton) {
+      if (child.isSkinnedMesh && child.skeleton && child.skeleton.bones.length > 0) {
         for (const bone of child.skeleton.bones) {
-          scaledBox.expandByPoint(bone.getWorldPosition(new THREE.Vector3()));
+          scaledBox.expandByPoint(bone.getWorldPosition(_tmpVec));
         }
       }
     });
