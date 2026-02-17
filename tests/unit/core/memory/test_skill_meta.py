@@ -530,7 +530,7 @@ class TestMatchTier3WithMockRetriever:
 
         mock_retriever = self._make_mock_retriever()
         mock_result = MagicMock()
-        mock_result.score = 0.3  # Below threshold of 0.5
+        mock_result.score = 0.3  # Below threshold of 0.88
         mock_result.metadata = {"file_path": str(p)}
         mock_retriever.search.return_value = [mock_result]
 
@@ -550,7 +550,7 @@ class TestMatchTier3WithMockRetriever:
 
         mock_retriever = self._make_mock_retriever()
         mock_result = MagicMock()
-        mock_result.score = 0.8
+        mock_result.score = 0.95
         mock_result.metadata = {"file_path": "/some/other/path/deploy-guide.md"}
         mock_retriever.search.return_value = [mock_result]
 
@@ -571,7 +571,7 @@ class TestMatchTier3WithMockRetriever:
 
         mock_retriever = self._make_mock_retriever()
         mock_result = MagicMock()
-        mock_result.score = 0.8
+        mock_result.score = 0.95
         # file_path does not match path or stem, but name "deploy-guide" is
         # indexed in the candidate lookup
         mock_result.metadata = {"file_path": ""}
@@ -602,7 +602,7 @@ class TestMatchTier3WithMockRetriever:
         r1.score = 0.9
         r1.metadata = {"file_path": str(p)}
         r2 = MagicMock()
-        r2.score = 0.7
+        r2.score = 0.9
         r2.metadata = {"file_path": "/other/deploy-guide.md"}
         mock_retriever.search.return_value = [r1, r2]
 
@@ -627,7 +627,7 @@ class TestMatchTier3WithMockRetriever:
 
         mock_retriever = self._make_mock_retriever()
         mock_result = MagicMock()
-        mock_result.score = 0.8
+        mock_result.score = 0.95
         mock_result.metadata = {"file_path": str(p)}
         mock_retriever.search.return_value = [mock_result]
 

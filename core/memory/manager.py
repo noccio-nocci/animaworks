@@ -170,7 +170,7 @@ def _match_tier3_vector(
     retriever: object,
     anima_name: str,
     top_k: int = 3,
-    min_score: float = 0.5,
+    min_score: float = 0.88,
 ) -> list[SkillMeta]:
     """Tier 3: Use RAG vector search to find semantically matching skills.
 
@@ -207,14 +207,13 @@ def _match_tier3_vector(
     for r in results:
         if r.score < min_score:
             continue
-        # Try to match by file_path metadata or content overlap
-        file_path = r.metadata.get("file_path", "")
+        # Try to match by file_path or source_file metadata
+        file_path = r.metadata.get("file_path", "") or r.metadata.get("source_file", "")
         skill = candidate_by_path.get(str(file_path))
-        if skill is None:
+        if skill is None and file_path:
             # Try stem matching from file_path
-            if file_path:
-                stem = Path(file_path).stem
-                skill = candidate_by_path.get(stem)
+            stem = Path(file_path).stem
+            skill = candidate_by_path.get(stem)
         if skill and skill.name not in seen:
             matched.append(skill)
             seen.add(skill.name)
