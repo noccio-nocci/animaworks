@@ -161,6 +161,23 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
+        # ── Asset reconciliation (periodic) ───────────────
+        from core.asset_reconciler import reconcile_all_assets
+
+        async def _reconcile_assets_periodic() -> None:
+            try:
+                await reconcile_all_assets(app.state.animas_dir)
+            except Exception:
+                logger.exception("Periodic asset reconciliation failed")
+
+        msg_log_scheduler.add_job(
+            _reconcile_assets_periodic,
+            IntervalTrigger(minutes=5),
+            id="asset_reconciliation",
+            name="System: Asset Reconciliation",
+            replace_existing=True,
+        )
+
         msg_log_scheduler.start()
         app.state.msg_log_scheduler = msg_log_scheduler
 
