@@ -18,6 +18,7 @@ from typing import Any
 
 from core.agent import AgentCore
 from core.background import BackgroundTask
+from core.memory.activity import ActivityLogger
 from core.memory.conversation import ConversationMemory
 from core.memory import MemoryManager
 from core.messenger import Messenger
@@ -206,33 +207,6 @@ class DigitalAnima:
 
     _HEARTBEAT_HISTORY_DIR = "shortterm/heartbeat_history"
     _HEARTBEAT_HISTORY_N = 3
-    _HEARTBEAT_HISTORY_MAX_LINES = 200
-    _HEARTBEAT_HISTORY_RETENTION_DAYS = 30
-
-    def _save_heartbeat_history(self, result: CycleResult) -> None:
-        """Append heartbeat result summary to daily JSONL history file."""
-        from datetime import date
-        history_dir = self.anima_dir / self._HEARTBEAT_HISTORY_DIR
-        history_dir.mkdir(parents=True, exist_ok=True)
-        path = history_dir / f"{date.today().isoformat()}.jsonl"
-        entry = json.dumps({
-            "timestamp": result.timestamp.isoformat(),
-            "trigger": result.trigger,
-            "action": result.action,
-            "summary": result.summary[:500],
-            "duration_ms": result.duration_ms,
-        }, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(entry + "\n")
-        # Keep daily file bounded
-        lines = path.read_text(encoding="utf-8").strip().splitlines()
-        if len(lines) > self._HEARTBEAT_HISTORY_MAX_LINES:
-            path.write_text(
-                "\n".join(lines[-self._HEARTBEAT_HISTORY_MAX_LINES:]) + "\n",
-                encoding="utf-8",
-            )
-        # Purge old log files beyond retention
-        self._purge_old_heartbeat_logs(history_dir)
 
     def _load_heartbeat_history(self) -> str:
         """Load last N heartbeat history entries as formatted text."""
@@ -263,19 +237,6 @@ class DigitalAnima:
             except (json.JSONDecodeError, KeyError):
                 continue
         return "\n".join(entries)
-
-    def _purge_old_heartbeat_logs(self, history_dir: Path) -> None:
-        """Remove heartbeat log files older than retention period."""
-        from datetime import date, timedelta
-        cutoff = date.today() - timedelta(days=self._HEARTBEAT_HISTORY_RETENTION_DAYS)
-        for f in history_dir.glob("*.jsonl"):
-            try:
-                file_date = date.fromisoformat(f.stem)
-                if file_date < cutoff:
-                    f.unlink()
-                    logger.debug("Purged old heartbeat log: %s", f.name)
-            except (ValueError, OSError):
-                continue
 
     @property
     def needs_bootstrap(self) -> bool:
@@ -374,6 +335,13 @@ class DigitalAnima:
                 )
                 conv_memory.save()
 
+                # Activity log: message received
+                try:
+                    activity = ActivityLogger(self.anima_dir)
+                    activity.log("message_received", content=content, from_person=from_person, channel="chat")
+                except Exception:
+                    pass
+
                 try:
                     result = await self.agent.run_cycle(
                         prompt, trigger=f"message:{from_person}",
@@ -384,6 +352,13 @@ class DigitalAnima:
                     # Record assistant response in conversation memory
                     conv_memory.append_turn("assistant", result.summary)
                     conv_memory.save()
+
+                    # Activity log: response sent
+                    try:
+                        activity = ActivityLogger(self.anima_dir)
+                        activity.log("response_sent", content=result.summary, to_person=from_person, channel="chat")
+                    except Exception:
+                        pass
 
                     # Fire-and-forget: episode recording
                     asyncio.create_task(conv_memory.finalize_session(min_turns=3))
@@ -499,6 +474,13 @@ class DigitalAnima:
                 )
                 conv_memory.save()
 
+                # Activity log: message received
+                try:
+                    activity = ActivityLogger(self.anima_dir)
+                    activity.log("message_received", content=content, from_person=from_person, channel="chat")
+                except Exception:
+                    pass
+
                 partial_response = ""
                 cycle_done = False
 
@@ -518,6 +500,13 @@ class DigitalAnima:
                             summary = cycle_result.get("summary", "")
                             conv_memory.append_turn("assistant", summary)
                             conv_memory.save()
+
+                            # Activity log: response sent
+                            try:
+                                activity = ActivityLogger(self.anima_dir)
+                                activity.log("response_sent", content=summary, to_person=from_person, channel="chat")
+                            except Exception:
+                                pass
 
                             # Fire-and-forget: episode recording
                             asyncio.create_task(
@@ -683,6 +672,13 @@ class DigitalAnima:
                 self._status = "checking"
                 self._last_heartbeat = datetime.now()
 
+                # Activity log: heartbeat start
+                try:
+                    activity = ActivityLogger(self.anima_dir)
+                    activity.log("heartbeat_start")
+                except Exception:
+                    pass
+
                 hb_config = self.memory.read_heartbeat_config()
                 checklist = hb_config or load_prompt("heartbeat_default_checklist")
                 parts = [load_prompt("heartbeat", checklist=checklist)]
@@ -763,6 +759,14 @@ class DigitalAnima:
                                 self.name, _m.from_person, exc_info=True,
                             )
 
+                    # Activity log: DM received
+                    try:
+                        activity = ActivityLogger(self.anima_dir)
+                        for _m in _recordable[:10]:
+                            activity.log("dm_received", content=_m.content[:200], from_person=_m.from_person)
+                    except Exception:
+                        pass
+
                 # Set heartbeat context for relay
                 if unread_count > 0:
                     self._heartbeat_context = (
@@ -817,7 +821,14 @@ class DigitalAnima:
                         )
 
                     self._last_activity = datetime.now()
-                    self._save_heartbeat_history(result)
+                    # Heartbeat history replaced by unified activity log
+
+                    # Activity log: heartbeat end
+                    try:
+                        activity = ActivityLogger(self.anima_dir)
+                        activity.log("heartbeat_end", summary=result.summary[:200])
+                    except Exception:
+                        pass
 
                     # A-3: Record important heartbeat actions to episodes
                     if result.summary and "HEARTBEAT_OK" not in result.summary:
@@ -905,6 +916,13 @@ class DigitalAnima:
                         summary=result.summary,
                         duration_ms=result.duration_ms,
                     )
+
+                    # Activity log: cron executed
+                    try:
+                        activity = ActivityLogger(self.anima_dir)
+                        activity.log("cron_executed", summary=f"タスク: {task_name}", meta={"task_name": task_name})
+                    except Exception:
+                        pass
 
                     logger.info(
                         "[%s] run_cron_task END task=%s duration_ms=%d",

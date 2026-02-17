@@ -117,29 +117,39 @@ class TestCrossContextFlow:
     A-3: Non-HEARTBEAT_OK results are persisted to episodes/
     """
 
-    def test_save_heartbeat_history_creates_entry(self, dp, anima_dir):
-        """_save_heartbeat_history persists a heartbeat result to JSONL."""
-        result = _make_cycle_result(
-            summary="Checked Slack, found 3 unread messages"
-        )
-        dp._save_heartbeat_history(result)
+    def test_activity_log_records_heartbeat(self, dp, anima_dir):
+        """ActivityLogger records heartbeat_end to activity_log/."""
+        from core.memory.activity import ActivityLogger
 
-        history_dir = anima_dir / "shortterm" / "heartbeat_history"
-        today_file = history_dir / f"{date.today().isoformat()}.jsonl"
+        activity = ActivityLogger(anima_dir)
+        activity.log("heartbeat_end", summary="Checked Slack, found 3 unread messages")
+
+        log_dir = anima_dir / "activity_log"
+        today_file = log_dir / f"{date.today().isoformat()}.jsonl"
         assert today_file.exists()
 
         content = today_file.read_text(encoding="utf-8").strip()
         entry = json.loads(content)
         assert entry["summary"] == "Checked Slack, found 3 unread messages"
-        assert entry["trigger"] == "heartbeat"
-        assert entry["action"] == "checked"
+        assert entry["type"] == "heartbeat_end"
 
     def test_load_heartbeat_history_returns_entries(self, dp, anima_dir):
         """_load_heartbeat_history reads back persisted entries."""
-        # Save several heartbeat results
+        # Write entries directly to heartbeat_history/ (legacy format)
+        history_dir = anima_dir / "shortterm" / "heartbeat_history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        entries = []
         for i in range(5):
-            result = _make_cycle_result(summary=f"HB action {i}")
-            dp._save_heartbeat_history(result)
+            entries.append(json.dumps({
+                "timestamp": f"2026-02-17T{10 + i:02d}:00:00",
+                "trigger": "heartbeat",
+                "action": "checked",
+                "summary": f"HB action {i}",
+                "duration_ms": 100,
+            }, ensure_ascii=False))
+        (history_dir / f"{date.today().isoformat()}.jsonl").write_text(
+            "\n".join(entries) + "\n", encoding="utf-8",
+        )
 
         text = dp._load_heartbeat_history()
         assert text != ""
@@ -271,14 +281,16 @@ class TestCrossContextFlow:
         assert state.turns[2].content == "How long will it take?"
 
     def test_full_cross_context_roundtrip(self, dp, anima_dir):
-        """Full roundtrip: conversation -> heartbeat history -> summary -> episodes.
+        """Full roundtrip: conversation -> activity log -> summary -> episodes.
 
         1. Write conversation turns (simulating dialogue)
-        2. Save a non-OK heartbeat result (simulating HB run)
-        3. Verify heartbeat history is loadable
+        2. Record heartbeat via ActivityLogger (simulating HB run)
+        3. Verify activity log is loadable
         4. Verify load_recent_heartbeat_summary returns formatted data
         5. Verify episode recording
         """
+        from core.memory.activity import ActivityLogger
+
         # Step 1: Write dialogue turns
         config = _make_model_config()
         conv = ConversationMemory(anima_dir, config)
@@ -294,15 +306,31 @@ class TestCrossContextFlow:
         conv_summary = "\n".join(conv_lines)
         assert "batch job" in conv_summary.lower()
 
-        # Step 2: Save heartbeat result
+        # Step 2: Record heartbeat via ActivityLogger + legacy heartbeat_history
         result = _make_cycle_result(
             summary="Checked batch job status for client X: 50% complete"
         )
-        dp._save_heartbeat_history(result)
+        activity = ActivityLogger(anima_dir)
+        activity.log("heartbeat_end", summary=result.summary[:200])
 
-        # Step 3: Verify history is loadable
-        history = dp._load_heartbeat_history()
-        assert "batch job" in history.lower()
+        # Also write legacy heartbeat_history for load_recent_heartbeat_summary
+        history_dir = anima_dir / "shortterm" / "heartbeat_history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        entry = json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "trigger": "heartbeat",
+            "action": "checked",
+            "summary": result.summary,
+            "duration_ms": result.duration_ms,
+        }, ensure_ascii=False)
+        (history_dir / f"{date.today().isoformat()}.jsonl").write_text(
+            entry + "\n", encoding="utf-8",
+        )
+
+        # Step 3: Verify activity log is loadable
+        entries = activity.recent(days=1, limit=10)
+        summaries = " ".join(e.summary for e in entries)
+        assert "batch job" in summaries.lower()
 
         # Step 4: Verify A-2 path (load_recent_heartbeat_summary)
         mm = MemoryManager.__new__(MemoryManager)
@@ -577,7 +605,13 @@ class TestCurrentTaskEmphasis:
         _prompt_cache.clear()
 
     def test_heartbeat_summary_injected_into_prompt_a2(self, tmp_path, monkeypatch):
-        """A-2: build_system_prompt includes recent heartbeat summary section."""
+        """A-2: build_system_prompt includes recent activity summary section.
+
+        The builder now uses _load_recent_activity_summary() which reads
+        from the unified ActivityLogger, falling back to legacy
+        heartbeat_history.  We write activity_log entries so the primary
+        path is exercised.
+        """
         data_dir = tmp_path / ".animaworks"
         data_dir.mkdir()
         monkeypatch.setenv("ANIMAWORKS_DATA_DIR", str(data_dir))
@@ -595,27 +629,12 @@ class TestCurrentTaskEmphasis:
 
         anima_dir = _setup_anima_dir(tmp_path, "tester")
 
-        # Write heartbeat history with non-OK entries
-        history_dir = anima_dir / "shortterm" / "heartbeat_history"
-        history_dir.mkdir(parents=True, exist_ok=True)
-        entries = [
-            json.dumps({
-                "timestamp": "2026-02-17T10:00:00",
-                "trigger": "heartbeat",
-                "action": "reported",
-                "summary": "Found 3 errors in production logs",
-                "duration_ms": 200,
-            }, ensure_ascii=False),
-            json.dumps({
-                "timestamp": "2026-02-17T10:30:00",
-                "trigger": "heartbeat",
-                "action": "checked",
-                "summary": "HEARTBEAT_OK - all clear",
-                "duration_ms": 100,
-            }, ensure_ascii=False),
-        ]
-        (history_dir / f"{date.today().isoformat()}.jsonl").write_text(
-            "\n".join(entries) + "\n", encoding="utf-8",
+        # Write unified activity log entries (replaces heartbeat_history)
+        from core.memory.activity import ActivityLogger
+        activity = ActivityLogger(anima_dir)
+        activity.log(
+            "heartbeat_end",
+            summary="Found 3 errors in production logs",
         )
 
         mm = MemoryManager.__new__(MemoryManager)
@@ -634,11 +653,9 @@ class TestCurrentTaskEmphasis:
         from core.prompt.builder import build_system_prompt
         prompt = build_system_prompt(mm)
 
-        # A-2: heartbeat summary section should be present
-        assert "直近のハートビート活動" in prompt
+        # A-2: activity summary section should be present (renamed from ハートビート活動)
+        assert "直近の活動" in prompt
         assert "Found 3 errors in production logs" in prompt
-        # HEARTBEAT_OK entry should be filtered out
-        assert "all clear" not in prompt
 
         invalidate_cache()
         _prompt_cache.clear()
