@@ -105,19 +105,22 @@ CHANNEL_TOOLS: list[dict[str, Any]] = [
     {
         "name": "post_channel",
         "description": (
-            "共有チャネルにメッセージを投稿します。"
-            "全員が閲覧できるチャネル（general, ops等）にメッセージを書き込みます。"
+            "Boardの共有チャネルにメッセージを投稿する。"
+            "チーム全体に共有すべき情報はgeneralチャネルに、"
+            "運用・インフラ関連はopsチャネルに投稿する。"
+            "全Animaが閲覧できるため、解決済み情報の共有や"
+            "お知らせに使うこと。1対1の連絡にはsend_messageを使う。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "channel": {
                     "type": "string",
-                    "description": "チャネル名 (例: general, ops)",
+                    "description": "チャネル名 (general=全体共有, ops=運用系)",
                 },
                 "text": {
                     "type": "string",
-                    "description": "投稿するメッセージ本文",
+                    "description": "投稿するメッセージ本文。@名前 でメンション可能",
                 },
             },
             "required": ["channel", "text"],
@@ -126,15 +129,16 @@ CHANNEL_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_channel",
         "description": (
-            "共有チャネルの直近メッセージを読みます。"
-            "human_only=trueでユーザー発言のみフィルタリングできます。"
+            "Boardの共有チャネルの直近メッセージを読む。"
+            "他のAnimaやユーザーが共有した情報を確認できる。"
+            "human_only=trueでユーザー発言のみフィルタリング可能。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "channel": {
                     "type": "string",
-                    "description": "チャネル名 (例: general, ops)",
+                    "description": "チャネル名 (general, ops)",
                 },
                 "limit": {
                     "type": "integer",
@@ -151,8 +155,9 @@ CHANNEL_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_dm_history",
         "description": (
-            "特定の相手とのDM履歴を読みます。"
-            "過去のダイレクトメッセージのやり取りを時系列で確認できます。"
+            "特定の相手との過去のDM履歴を読む。"
+            "send_messageで送受信したメッセージの履歴を時系列で確認できる。"
+            "以前のやり取りの文脈を確認したいときに使う。"
         ),
         "parameters": {
             "type": "object",
