@@ -19,6 +19,7 @@ import logging
 import re
 import shlex
 import subprocess
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -271,6 +272,7 @@ class ToolHandler:
         self._background_manager = background_manager
         self._pending_notifications: list[dict[str, Any]] = []
         self._replied_to: set[str] = set()
+        self._session_id: str = uuid.uuid4().hex[:12]
         self._external = ExternalToolDispatcher(
             tool_registry or [],
             personal_tools=personal_tools,
@@ -302,6 +304,15 @@ class ToolHandler:
     def replied_to(self) -> set[str]:
         """Anima names this anima has sent messages to in the current cycle."""
         return self._replied_to
+
+    @property
+    def session_id(self) -> str:
+        """Unique session identifier for double-count prevention."""
+        return self._session_id
+
+    def reset_session_id(self) -> None:
+        """Generate a new session ID (call at start of each interaction cycle)."""
+        self._session_id = uuid.uuid4().hex[:12]
 
     def reset_replied_to(self) -> None:
         """Clear reply tracking (call at start of each heartbeat cycle)."""
@@ -1016,6 +1027,9 @@ class ToolHandler:
         s = meta.get("success_count", 0)
         f = meta.get("failure_count", 0)
         meta["confidence"] = s / max(1, s + f)
+
+        # Flag for auto-tracking skip (prevents double-counting)
+        meta["_reported_session_id"] = self._session_id
 
         # Read body and rewrite with updated metadata
         body = self._memory.read_procedure_content(target)

@@ -616,5 +616,304 @@ class TestEpisodeCollectionGlobAndFallback:
         assert times == ["08:00", "09:00", "10:00"]
 
 
+class TestDetectDuplicates:
+    """Test _detect_duplicates with mocked RAG components."""
+
+    @pytest.mark.asyncio
+    async def test_detect_duplicates_finds_similar_files(self, consolidation_engine):
+        """Duplicate detection correctly identifies similar knowledge files."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class FakeRetrievalResult:
+            doc_id: str
+            content: str
+            score: float
+            metadata: dict
+            source_scores: dict
+
+        # Create two knowledge files
+        (consolidation_engine.knowledge_dir / "topic-a.md").write_text(
+            "# Topic A\n\nSimilar content about API design.",
+            encoding="utf-8",
+        )
+        (consolidation_engine.knowledge_dir / "topic-b.md").write_text(
+            "# Topic B\n\nSimilar content about API design patterns.",
+            encoding="utf-8",
+        )
+
+        mock_result = FakeRetrievalResult(
+            doc_id="test/knowledge/topic-b.md#0",
+            content="Similar content about API design patterns.",
+            score=0.92,
+            metadata={"source_file": "knowledge/topic-b.md"},
+            source_scores={"vector": 0.92},
+        )
+
+        mock_retriever = MagicMock()
+        mock_retriever.search.return_value = [mock_result]
+
+        mock_indexer = MagicMock()
+        mock_vector_store = MagicMock()
+
+        with patch(
+            "core.memory.rag.singleton.get_vector_store",
+            return_value=mock_vector_store,
+        ):
+            with patch(
+                "core.memory.rag.indexer.MemoryIndexer",
+                return_value=mock_indexer,
+            ):
+                with patch(
+                    "core.memory.rag.retriever.MemoryRetriever",
+                    return_value=mock_retriever,
+                ):
+                    duplicates = await consolidation_engine._detect_duplicates(
+                        threshold=0.85,
+                    )
+
+        assert len(duplicates) == 1
+        assert duplicates[0][0] == "topic-a.md"
+        assert duplicates[0][1] == "topic-b.md"
+        assert duplicates[0][2] == 0.92
+
+        # Verify search was called with anima_name keyword argument
+        call_kwargs = mock_retriever.search.call_args
+        assert call_kwargs.kwargs.get("anima_name") == "test_anima"
+
+    @pytest.mark.asyncio
+    async def test_detect_duplicates_below_threshold(self, consolidation_engine):
+        """Files below the similarity threshold are not reported as duplicates."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class FakeRetrievalResult:
+            doc_id: str
+            content: str
+            score: float
+            metadata: dict
+            source_scores: dict
+
+        # Create two knowledge files
+        (consolidation_engine.knowledge_dir / "file-x.md").write_text(
+            "# File X\n\nContent about X.",
+            encoding="utf-8",
+        )
+        (consolidation_engine.knowledge_dir / "file-y.md").write_text(
+            "# File Y\n\nContent about Y.",
+            encoding="utf-8",
+        )
+
+        mock_result = FakeRetrievalResult(
+            doc_id="test/knowledge/file-y.md#0",
+            content="Content about Y.",
+            score=0.50,
+            metadata={"source_file": "knowledge/file-y.md"},
+            source_scores={"vector": 0.50},
+        )
+
+        mock_retriever = MagicMock()
+        mock_retriever.search.return_value = [mock_result]
+        mock_indexer = MagicMock()
+        mock_vector_store = MagicMock()
+
+        with patch(
+            "core.memory.rag.singleton.get_vector_store",
+            return_value=mock_vector_store,
+        ):
+            with patch(
+                "core.memory.rag.indexer.MemoryIndexer",
+                return_value=mock_indexer,
+            ):
+                with patch(
+                    "core.memory.rag.retriever.MemoryRetriever",
+                    return_value=mock_retriever,
+                ):
+                    duplicates = await consolidation_engine._detect_duplicates(
+                        threshold=0.85,
+                    )
+
+        assert len(duplicates) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_duplicates_single_file(self, consolidation_engine):
+        """No duplicates returned when only one knowledge file exists."""
+        (consolidation_engine.knowledge_dir / "only-file.md").write_text(
+            "# Only\n\nSingle file.",
+            encoding="utf-8",
+        )
+
+        with patch(
+            "core.memory.rag.singleton.get_vector_store",
+        ):
+            with patch(
+                "core.memory.rag.indexer.MemoryIndexer",
+            ):
+                with patch(
+                    "core.memory.rag.retriever.MemoryRetriever",
+                ):
+                    duplicates = await consolidation_engine._detect_duplicates(
+                        threshold=0.85,
+                    )
+
+        assert duplicates == []
+
+    @pytest.mark.asyncio
+    async def test_detect_duplicates_rag_unavailable(self, consolidation_engine):
+        """Returns empty list when RAG modules are not importable."""
+        (consolidation_engine.knowledge_dir / "a.md").write_text("A", encoding="utf-8")
+        (consolidation_engine.knowledge_dir / "b.md").write_text("B", encoding="utf-8")
+
+        with patch.dict("sys.modules", {"core.memory.rag.singleton": None}):
+            duplicates = await consolidation_engine._detect_duplicates()
+
+        assert duplicates == []
+
+
+class TestPathTraversalSanitization:
+    """Test _sanitize_filepath and its integration in _merge_to_knowledge."""
+
+    def test_sanitize_filepath_normal_name(self, consolidation_engine):
+        """Normal filenames pass through unchanged."""
+        from core.memory.consolidation import _sanitize_filepath
+
+        base = consolidation_engine.knowledge_dir
+        result = _sanitize_filepath(base, "valid-topic.md")
+        assert result == base / "valid-topic.md"
+
+    def test_sanitize_filepath_traversal_dotdot(self, consolidation_engine):
+        """Path traversal with ../../ is caught and sanitized."""
+        from core.memory.consolidation import _sanitize_filepath
+
+        base = consolidation_engine.knowledge_dir
+        result = _sanitize_filepath(base, "../../evil.md")
+        assert result.parent == base
+        assert result.name.endswith(".md")
+        assert ".." not in str(result)
+
+    def test_sanitize_filepath_complex_traversal(self, consolidation_engine):
+        """Complex traversal like knowledge/../../../etc/passwd is sanitized."""
+        from core.memory.consolidation import _sanitize_filepath
+
+        base = consolidation_engine.knowledge_dir
+        result = _sanitize_filepath(base, "knowledge/../../../etc/passwd")
+        assert result.parent == base
+        assert result.name.endswith(".md")
+        assert "etc" not in str(result.parent)
+        assert "passwd" in result.name  # the basename is kept but sanitized
+
+    def test_sanitize_filepath_ensures_md_suffix(self, consolidation_engine):
+        """Non-.md filenames get .md appended after sanitization."""
+        from core.memory.consolidation import _sanitize_filepath
+
+        base = consolidation_engine.knowledge_dir
+        result = _sanitize_filepath(base, "../evil")
+        assert result.name.endswith(".md")
+        assert result.parent == base
+
+    def test_merge_to_knowledge_traversal_in_update(self, consolidation_engine):
+        """Path traversal in update filename is sanitized during merge."""
+        # Create a file at the sanitized name location
+        safe_name = consolidation_engine.knowledge_dir / "evil.md"
+        safe_name.write_text("# Existing\n\nContent.", encoding="utf-8")
+
+        llm_output = """## 既存ファイル更新
+- ファイル名: ../../evil.md
+  追加内容: Malicious content
+
+## 新規ファイル作成
+(なし)
+"""
+        files_created, files_updated = consolidation_engine._merge_to_knowledge(
+            llm_output,
+        )
+
+        # Should NOT have written outside knowledge_dir
+        # The sanitized filename should be used
+        assert len(files_updated) <= 1
+        assert len(files_created) <= 1
+        # Verify no file was created outside knowledge_dir
+        parent_dir = consolidation_engine.knowledge_dir.parent
+        for f in parent_dir.glob("evil.md"):
+            assert f.parent == consolidation_engine.knowledge_dir
+
+    def test_merge_to_knowledge_traversal_in_create(self, consolidation_engine):
+        """Path traversal in create filename is sanitized during merge."""
+        llm_output = """## 既存ファイル更新
+(なし)
+
+## 新規ファイル作成
+- ファイル名: knowledge/../../../etc/passwd
+  内容: Malicious content
+"""
+        files_created, files_updated = consolidation_engine._merge_to_knowledge(
+            llm_output,
+        )
+
+        # The file should be created inside knowledge_dir, not at /etc/passwd
+        assert not Path("/etc/passwd").exists() or Path("/etc/passwd").read_text() != "Malicious content"
+        for created in files_created:
+            filepath = consolidation_engine.knowledge_dir / created
+            assert filepath.parent == consolidation_engine.knowledge_dir
+
+    def test_merge_to_knowledge_normal_filenames_unchanged(self, consolidation_engine):
+        """Normal filenames are not altered by sanitization."""
+        llm_output = """## 既存ファイル更新
+(なし)
+
+## 新規ファイル作成
+- ファイル名: knowledge/my-topic.md
+  内容: # My Topic
+
+Some knowledge content.
+"""
+        files_created, files_updated = consolidation_engine._merge_to_knowledge(
+            llm_output,
+        )
+
+        assert len(files_created) == 1
+        assert "my-topic.md" in files_created
+        assert (consolidation_engine.knowledge_dir / "my-topic.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_merge_knowledge_files_traversal_sanitized(
+        self, consolidation_engine,
+    ):
+        """Path traversal in merge filename from LLM is sanitized."""
+        file1 = consolidation_engine.knowledge_dir / "topic-a.md"
+        file2 = consolidation_engine.knowledge_dir / "topic-b.md"
+        file1.write_text("# Topic A\n\nContent A.", encoding="utf-8")
+        file2.write_text("# Topic B\n\nContent B.", encoding="utf-8")
+
+        duplicates = [("topic-a.md", "topic-b.md", 0.92)]
+
+        # LLM tries to write outside knowledge_dir
+        llm_response = (
+            "## 統合ファイル名\n"
+            "../../etc/evil.md\n\n"
+            "## 統合内容\n"
+            "# Merged\n\nMerged content."
+        )
+
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_response
+
+            merged = await consolidation_engine._merge_knowledge_files(
+                duplicates, model="test-model",
+            )
+
+        assert len(merged) == 1
+        # The merged file should be inside knowledge_dir
+        for entry in merged:
+            # entry format: "topic-a.md + topic-b.md → sanitized_name.md"
+            merged_name = entry.split("→ ")[1].strip()
+            merged_path = consolidation_engine.knowledge_dir / merged_name
+            assert merged_path.exists()
+            assert merged_path.parent == consolidation_engine.knowledge_dir
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

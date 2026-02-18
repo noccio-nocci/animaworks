@@ -824,6 +824,9 @@ class MemoryManager:
     def read_knowledge_metadata(self, path: Path) -> dict:
         """Read YAML frontmatter metadata from a knowledge file.
 
+        Applies legacy migration: renames ``superseded_at`` to
+        ``valid_until`` when encountered.
+
         Args:
             path: Path to the knowledge file
 
@@ -837,10 +840,14 @@ class MemoryManager:
             parts = text.split("---", 2)
             if len(parts) >= 3:
                 try:
-                    return yaml.safe_load(parts[1]) or {}
+                    meta = yaml.safe_load(parts[1]) or {}
                 except Exception:
                     logger.warning("Failed to parse YAML frontmatter in %s", path)
                     return {}
+                # Legacy migration: superseded_at → valid_until
+                if "superseded_at" in meta and "valid_until" not in meta:
+                    meta["valid_until"] = meta.pop("superseded_at")
+                return meta
         return {}
 
     def write_knowledge(self, topic: str, content: str) -> None:

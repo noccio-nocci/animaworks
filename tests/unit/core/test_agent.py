@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 
+from core.prompt.builder import BuildResult
 from core.schemas import CycleResult, ModelConfig
 
 
@@ -140,10 +141,17 @@ class TestRunCycle:
         mock_result.text = "Assisted response"
         agent._executor.execute = AsyncMock(return_value=mock_result)
 
-        result = await agent.run_cycle("Hello", trigger="test")
-        assert isinstance(result, CycleResult)
-        assert result.summary == "Assisted response"
-        assert result.trigger == "test"
+        mock_build_result = BuildResult(system_prompt="sysprompt")
+        with patch("core.agent.build_system_prompt", return_value=mock_build_result), \
+             patch("core.agent.inject_shortterm", return_value="sysprompt"), \
+             patch("core.agent.ShortTermMemory") as MockST:
+            MockST.return_value.has_pending.return_value = False
+            MockST.return_value.clear = MagicMock()
+
+            result = await agent.run_cycle("Hello", trigger="test")
+            assert isinstance(result, CycleResult)
+            assert result.summary == "Assisted response"
+            assert result.trigger == "test"
 
     async def test_mode_a2_returns_result(self, tmp_path):
         agent = _make_agent(tmp_path, model="openai/gpt-4o")
@@ -151,7 +159,8 @@ class TestRunCycle:
         mock_result.text = "A2 response"
         agent._executor.execute = AsyncMock(return_value=mock_result)
 
-        with patch("core.agent.build_system_prompt", return_value="sysprompt"), \
+        mock_build_result = BuildResult(system_prompt="sysprompt")
+        with patch("core.agent.build_system_prompt", return_value=mock_build_result), \
              patch("core.agent.inject_shortterm", return_value="sysprompt"), \
              patch("core.agent.ShortTermMemory") as MockST:
             MockST.return_value.has_pending.return_value = False
@@ -174,7 +183,8 @@ class TestRunCycle:
         mock_result.result_message.session_id = "sess-1"
         agent._executor.execute = AsyncMock(return_value=mock_result)
 
-        with patch("core.agent.build_system_prompt", return_value="sysprompt"), \
+        mock_build_result = BuildResult(system_prompt="sysprompt")
+        with patch("core.agent.build_system_prompt", return_value=mock_build_result), \
              patch("core.agent.inject_shortterm", return_value="sysprompt"), \
              patch("core.agent.ShortTermMemory") as MockST, \
              patch("core.agent.ContextTracker") as MockCT:

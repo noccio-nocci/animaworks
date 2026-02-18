@@ -23,11 +23,25 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.schemas import ModelConfig
 
+if TYPE_CHECKING:
+    from core.memory.manager import MemoryManager
+
 logger = logging.getLogger("animaworks.conversation_memory")
+
+# ── Error detection patterns for auto-tracking ───────────────
+
+_ERROR_PATTERN = re.compile(
+    r"\b(error|failed)\b|エラー[がはをの]|失敗し[たてま]",
+    re.IGNORECASE,
+)
+_RESOLVED_PATTERN = re.compile(
+    r"(fixed|resolved|解決|修正済み|成功)",
+    re.IGNORECASE,
+)
 
 # Truncate assistant responses to this length in the history display.
 _MAX_RESPONSE_CHARS_IN_HISTORY = 1500
@@ -169,6 +183,54 @@ class ConversationMemory:
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    # ── Pending injected procedures ─────────────────────────────
+
+    @property
+    def _pending_procedures_path(self) -> Path:
+        return self._state_dir / "pending_procedures.json"
+
+    def store_injected_procedures(
+        self,
+        procedures: list[Path],
+        session_id: str = "",
+    ) -> None:
+        """Persist injected procedure paths for later finalization.
+
+        Called by the agent after ``build_system_prompt()`` so that
+        ``finalize_if_session_ended()`` (triggered by heartbeat) can
+        pass them to ``finalize_session()``.
+        """
+        if not procedures:
+            return
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "procedures": [str(p) for p in procedures],
+            "session_id": session_id,
+        }
+        self._pending_procedures_path.write_text(
+            json.dumps(data, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _load_pending_procedures(self) -> tuple[list[Path], str]:
+        """Load and clear pending procedure info.
+
+        Returns:
+            Tuple of (procedure paths, session_id).  Empty if none pending.
+        """
+        path = self._pending_procedures_path
+        if not path.exists():
+            return [], ""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            procedures = [Path(p) for p in data.get("procedures", [])]
+            session_id = data.get("session_id", "")
+            path.unlink(missing_ok=True)
+            return procedures, session_id
+        except (json.JSONDecodeError, TypeError):
+            path.unlink(missing_ok=True)
+            return [], ""
 
     # ── Transcript ────────────────────────────────────────────
 
@@ -413,6 +475,8 @@ class ConversationMemory:
     async def finalize_session(
         self,
         min_turns: int = 3,
+        injected_procedures: list[Path] | None = None,
+        session_id: str = "",
     ) -> bool:
         """Finalize the current conversation session (differential).
 
@@ -422,6 +486,10 @@ class ConversationMemory:
 
         Args:
             min_turns: Minimum number of *new* turns to trigger summarization.
+            injected_procedures: Procedure paths from ``BuildResult`` for
+                auto-outcome tracking.
+            session_id: Session identifier for double-count prevention with
+                explicit ``report_procedure_outcome`` calls.
 
         Returns:
             True if session was finalized and written to episodes/, False if skipped.
@@ -470,7 +538,12 @@ class ConversationMemory:
             self._record_resolutions(memory_mgr, parsed.resolved_items)
 
         # 3.5. Auto-track procedure outcomes for injected procedures
-        self._auto_track_procedure_outcomes(memory_mgr, new_turns)
+        if injected_procedures:
+            self._auto_track_procedure_outcomes(
+                memory_mgr, new_turns,
+                injected_procedures=injected_procedures,
+                session_id=session_id,
+            )
 
         # 4. Integrate recorded turns into compressed_summary
         turn_text = self._format_turns_for_compression(new_turns)
@@ -514,7 +587,12 @@ class ConversationMemory:
         elapsed = (datetime.now() - last_ts).total_seconds()
         if elapsed < SESSION_GAP_MINUTES * 60:
             return False
-        return await self.finalize_session()
+        # Load any pending injected procedures stored by the agent
+        procedures, session_id = self._load_pending_procedures()
+        return await self.finalize_session(
+            injected_procedures=procedures or None,
+            session_id=session_id,
+        )
 
     def _gather_activity_context(self, turns: list[ConversationTurn]) -> str:
         """Gather non-conversation activities from activity log for episode enrichment.
@@ -696,37 +774,50 @@ class ConversationMemory:
 
     def _auto_track_procedure_outcomes(
         self,
-        memory_mgr: "MemoryManager",
+        memory_mgr: MemoryManager,
         new_turns: list[ConversationTurn],
+        injected_procedures: list[Path] | None = None,
+        session_id: str = "",
     ) -> None:
         """Auto-track outcomes for procedures that were injected during this session.
 
-        Reads ``_last_injected_procedures`` from builder.py and records a
-        success (session completed normally) or failure (error detected in
-        conversation turns) for each injected procedure.
+        Args:
+            memory_mgr: MemoryManager for reading/writing procedure metadata.
+            new_turns: Conversation turns from the current session.
+            injected_procedures: List of procedure paths injected via
+                ``BuildResult.injected_procedures``.
+            session_id: Session identifier for double-count prevention.
+                Procedures already reported via ``report_procedure_outcome``
+                with a matching ``_reported_session_id`` are skipped.
         """
         try:
-            from core.prompt.builder import _last_injected_procedures
-
-            anima_name = self.anima_dir.name
-            injected = _last_injected_procedures.get(anima_name, [])
-            if not injected:
+            if not injected_procedures:
                 return
 
-            # Simple heuristic: detect errors in conversation turns
-            has_error = any(
-                "error" in t.content.lower() or "エラー" in t.content
-                or "失敗" in t.content or "failed" in t.content.lower()
-                for t in new_turns
-                if t.role == "assistant"
-            )
+            # Only check the LAST assistant turn, not all turns
+            assistant_turns = [t for t in new_turns if t.role == "assistant"]
+            if assistant_turns:
+                last_turn = assistant_turns[-1]
+                has_error = bool(_ERROR_PATTERN.search(last_turn.content))
+                if has_error and _RESOLVED_PATTERN.search(last_turn.content):
+                    has_error = False  # Resolution context overrides error detection
+            else:
+                has_error = False
 
-            for proc_path in injected:
+            for proc_path in injected_procedures:
                 if not proc_path.exists():
                     continue
 
                 meta = memory_mgr.read_procedure_metadata(proc_path)
                 if not meta:
+                    continue
+
+                # Skip if already reported via explicit tool in this session
+                if session_id and meta.get("_reported_session_id") == session_id:
+                    logger.debug(
+                        "Skipping auto-track for %s: already reported in session %s",
+                        proc_path.name, session_id,
+                    )
                     continue
 
                 if has_error:
@@ -747,9 +838,6 @@ class ConversationMemory:
                     "Auto-tracked procedure outcome: %s success=%s confidence=%.2f",
                     proc_path.name, not has_error, meta["confidence"],
                 )
-
-            # Clear tracking after processing
-            _last_injected_procedures.pop(anima_name, None)
 
         except Exception:
             logger.debug("Failed to auto-track procedure outcomes", exc_info=True)

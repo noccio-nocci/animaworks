@@ -82,6 +82,7 @@ class MemoryRetriever:
         enable_spreading_activation: bool = False,
         *,
         include_shared: bool = False,
+        include_superseded: bool = False,
     ) -> list[RetrievalResult]:
         """Perform dense vector search with temporal decay.
 
@@ -93,6 +94,9 @@ class MemoryRetriever:
             enable_spreading_activation: Enable graph-based spreading activation
             include_shared: Also search ``shared_common_knowledge`` collection
                 and merge results by score.
+            include_superseded: If False (default), exclude knowledge that has
+                been superseded (``valid_until`` is non-empty). Set to True
+                to include all knowledge regardless of validity.
 
         Returns:
             List of retrieval results sorted by combined score
@@ -108,8 +112,16 @@ class MemoryRetriever:
             include_shared,
         )
 
+        # Build metadata filter for superseded knowledge exclusion
+        filter_metadata: dict[str, str | int | float] | None = None
+        if not include_superseded and memory_type == "knowledge":
+            filter_metadata = {"valid_until": ""}
+
         # 1. Dense Vector search (personal collection)
-        vector_results = self._vector_search(query, anima_name, memory_type, top_k * 2)
+        vector_results = self._vector_search(
+            query, anima_name, memory_type, top_k * 2,
+            filter_metadata=filter_metadata,
+        )
 
         # 1b. Shared collection search (if requested)
         _SHARED_COLLECTION_MAP: dict[str, str] = {
@@ -121,6 +133,7 @@ class MemoryRetriever:
             if shared_collection:
                 shared_results = self._vector_search_collection(
                     query, shared_collection, top_k * 2,
+                    filter_metadata=filter_metadata,
                 )
                 vector_results.extend(shared_results)
 
@@ -162,6 +175,7 @@ class MemoryRetriever:
         anima_name: str,
         memory_type: str,
         top_k: int,
+        filter_metadata: dict[str, str | int | float] | None = None,
     ) -> list[tuple[str, str, float, dict]]:
         """Perform vector similarity search on an anima collection.
 
@@ -169,15 +183,25 @@ class MemoryRetriever:
             List of (doc_id, content, score, metadata) tuples
         """
         collection_name = f"{anima_name}_{memory_type}"
-        return self._vector_search_collection(query, collection_name, top_k)
+        return self._vector_search_collection(
+            query, collection_name, top_k, filter_metadata=filter_metadata,
+        )
 
     def _vector_search_collection(
         self,
         query: str,
         collection_name: str,
         top_k: int,
+        filter_metadata: dict[str, str | int | float] | None = None,
     ) -> list[tuple[str, str, float, dict]]:
         """Perform vector similarity search on a named collection.
+
+        Args:
+            query: Search query text
+            collection_name: Name of the ChromaDB collection
+            top_k: Number of results to return
+            filter_metadata: Optional metadata filters (exact match).
+                Used to exclude superseded knowledge via ``valid_until``.
 
         Returns:
             List of (doc_id, content, score, metadata) tuples
@@ -190,6 +214,7 @@ class MemoryRetriever:
             collection=collection_name,
             embedding=embedding,
             top_k=top_k,
+            filter_metadata=filter_metadata,
         )
 
         return [
