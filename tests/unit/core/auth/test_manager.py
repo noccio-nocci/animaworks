@@ -270,6 +270,50 @@ class TestSessionManagement:
         assert validate_session(t2) is not None
         assert t1 != t2
 
+    def test_session_limit_evicts_oldest(self, data_dir):
+        """When a user exceeds MAX_SESSIONS_PER_USER, oldest sessions are evicted."""
+        from core.auth.manager import MAX_SESSIONS_PER_USER
+
+        config = AuthConfig(owner=AuthUser(username="admin"))
+        tokens = []
+        for _ in range(MAX_SESSIONS_PER_USER):
+            tokens.append(create_session(config, "admin"))
+        save_auth(config)
+
+        # All 10 should be valid
+        assert len(config.sessions) == MAX_SESSIONS_PER_USER
+        for t in tokens:
+            assert validate_session(t) is not None
+
+        # Create 11th — should evict the 1st
+        new_token = create_session(config, "admin")
+        save_auth(config)
+
+        assert len(config.sessions) == MAX_SESSIONS_PER_USER
+        assert validate_session(tokens[0]) is None  # oldest evicted
+        assert validate_session(new_token) is not None
+
+    def test_session_limit_does_not_evict_other_users(self, data_dir):
+        """Session limit applies per-user, not globally."""
+        from core.auth.manager import MAX_SESSIONS_PER_USER
+
+        config = AuthConfig(
+            owner=AuthUser(username="admin"),
+            users=[AuthUser(username="alice")],
+        )
+        alice_token = create_session(config, "alice")
+        for _ in range(MAX_SESSIONS_PER_USER):
+            create_session(config, "admin")
+        save_auth(config)
+
+        # Alice's session should still be valid
+        assert validate_session(alice_token) is not None
+
+        # Admin creating one more should only evict admin's oldest
+        create_session(config, "admin")
+        save_auth(config)
+        assert validate_session(alice_token) is not None
+
 
 # ── User lookup ─────────────────────────────────────────
 

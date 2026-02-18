@@ -76,8 +76,10 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 # ── Session management ──────────────────────────────────────
 
+MAX_SESSIONS_PER_USER = 10
+
 def _ensure_secret_key(config: AuthConfig) -> None:
-    """Generate secret_key if not yet set."""
+    """Generate secret_key if not yet set (reserved for future HMAC signing)."""
     if not config.secret_key:
         config.secret_key = secrets.token_urlsafe(32)
 
@@ -85,9 +87,27 @@ def _ensure_secret_key(config: AuthConfig) -> None:
 def create_session(config: AuthConfig, username: str) -> str:
     """Create a new session for *username* and return the token.
 
+    If the user already has ``MAX_SESSIONS_PER_USER`` active sessions, the
+    oldest one is evicted before creating the new session.
+
     The caller is responsible for calling ``save_auth(config)`` afterwards.
     """
     _ensure_secret_key(config)
+
+    # Evict oldest sessions if user exceeds limit
+    user_sessions = [
+        (tok, sess) for tok, sess in config.sessions.items()
+        if sess.username == username
+    ]
+    if len(user_sessions) >= MAX_SESSIONS_PER_USER:
+        user_sessions.sort(key=lambda x: x[1].created_at)
+        excess = len(user_sessions) - MAX_SESSIONS_PER_USER + 1
+        for tok, _ in user_sessions[:excess]:
+            del config.sessions[tok]
+        logger.info(
+            "Evicted %d oldest session(s) for user '%s'", excess, username,
+        )
+
     token = secrets.token_urlsafe(48)
     config.sessions[token] = Session(username=username)
     return token

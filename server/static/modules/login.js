@@ -65,6 +65,7 @@ export async function checkAuth() {
       const user = await res.json();
       state.currentUser = user.username;
       state.currentUserRole = user.role;
+      state.authMode = user.auth_mode || null;
       return true;
     }
   } catch { /* not authenticated */ }

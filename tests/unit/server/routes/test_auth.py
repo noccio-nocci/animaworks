@@ -161,3 +161,58 @@ class TestMe:
         resp = client.get("/api/auth/me")
         assert resp.status_code == 200
         assert resp.json()["username"] == "admin"
+
+    def test_me_includes_auth_mode(self, data_dir):
+        config = AuthConfig(
+            auth_mode="password",
+            owner=AuthUser(username="admin", password_hash=hash_password("pw"), role="owner"),
+        )
+        save_auth(config)
+
+        app = _create_test_app(data_dir)
+        client = TestClient(app)
+        client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+        resp = client.get("/api/auth/me")
+        assert resp.status_code == 200
+        assert resp.json()["auth_mode"] == "password"
+
+    def test_me_local_trust_includes_auth_mode(self, data_dir):
+        config = AuthConfig(
+            auth_mode="local_trust",
+            owner=AuthUser(username="admin", role="owner"),
+        )
+        save_auth(config)
+
+        app = _create_test_app(data_dir)
+        client = TestClient(app)
+        resp = client.get("/api/auth/me")
+        assert resp.status_code == 200
+        assert resp.json()["auth_mode"] == "local_trust"
+
+
+class TestLoginPasswordMaxLength:
+    def test_login_rejects_password_over_128(self, data_dir):
+        config = AuthConfig(
+            auth_mode="password",
+            owner=AuthUser(username="admin", password_hash=hash_password("pw"), role="owner"),
+        )
+        save_auth(config)
+
+        app = _create_test_app(data_dir)
+        client = TestClient(app)
+        long_pw = "a" * 129
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": long_pw})
+        assert resp.status_code == 401
+
+    def test_login_accepts_password_at_128(self, data_dir):
+        pw = "a" * 128
+        config = AuthConfig(
+            auth_mode="password",
+            owner=AuthUser(username="admin", password_hash=hash_password(pw), role="owner"),
+        )
+        save_auth(config)
+
+        app = _create_test_app(data_dir)
+        client = TestClient(app)
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": pw})
+        assert resp.status_code == 200

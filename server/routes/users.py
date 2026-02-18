@@ -83,6 +83,11 @@ def create_users_router() -> APIRouter:
                 {"error": "Password must be at least 4 characters"},
                 status_code=400,
             )
+        if len(body.password) > 128:
+            return JSONResponse(
+                {"error": "Password must be at most 128 characters"},
+                status_code=400,
+            )
 
         auth_config = load_auth()
 
@@ -197,6 +202,11 @@ def create_users_router() -> APIRouter:
         if len(body.new_password) < 4:
             return JSONResponse(
                 {"error": "New password must be at least 4 characters"},
+                status_code=400,
+            )
+        if len(body.new_password) > 128:
+            return JSONResponse(
+                {"error": "New password must be at most 128 characters"},
                 status_code=400,
             )
 

@@ -41,14 +41,23 @@ def create_auth_router() -> APIRouter:
                 status_code=400,
             )
 
+        if len(body.password) > 128:
+            logger.warning("Login rejected: password too long for user '%s'", body.username)
+            return JSONResponse(
+                {"error": "Invalid credentials"},
+                status_code=401,
+            )
+
         user = find_user(auth_config, body.username)
         if not user or not user.password_hash:
+            logger.warning("Login failed: unknown user '%s'", body.username)
             return JSONResponse(
                 {"error": "Invalid credentials"},
                 status_code=401,
             )
 
         if not verify_password(body.password, user.password_hash):
+            logger.warning("Login failed: wrong password for user '%s'", body.username)
             return JSONResponse(
                 {"error": "Invalid credentials"},
                 status_code=401,
@@ -85,9 +94,9 @@ def create_auth_router() -> APIRouter:
     @router.get("/auth/me")
     async def me(request: Request):
         user = getattr(request.state, "user", None)
+        auth_config = load_auth()
         if not user:
             # In local_trust mode, try to get from auth config
-            auth_config = load_auth()
             if auth_config.auth_mode == "local_trust" and auth_config.owner:
                 user = auth_config.owner
             else:
@@ -101,6 +110,7 @@ def create_auth_router() -> APIRouter:
             "display_name": user.display_name,
             "bio": user.bio,
             "role": user.role,
+            "auth_mode": auth_config.auth_mode,
         }
 
     return router

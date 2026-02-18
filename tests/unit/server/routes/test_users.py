@@ -196,3 +196,41 @@ class TestChangePassword:
             "new_password": "newpw",
         })
         assert resp.status_code == 401
+
+
+class TestPasswordMaxLength:
+    def test_add_user_password_too_long(self, data_dir):
+        config = AuthConfig(
+            auth_mode="password",
+            owner=AuthUser(username="admin", password_hash=hash_password("secret123"), role="owner"),
+        )
+        save_auth(config)
+
+        app = _create_test_app(data_dir)
+        client = TestClient(app)
+        _login_as_owner(client)
+
+        resp = client.post("/api/users", json={
+            "username": "newuser",
+            "password": "a" * 129,
+        })
+        assert resp.status_code == 400
+        assert "128" in resp.json()["error"]
+
+    def test_change_password_too_long(self, data_dir):
+        config = AuthConfig(
+            auth_mode="password",
+            owner=AuthUser(username="admin", password_hash=hash_password("oldpw"), role="owner"),
+        )
+        save_auth(config)
+
+        app = _create_test_app(data_dir)
+        client = TestClient(app)
+        client.post("/api/auth/login", json={"username": "admin", "password": "oldpw"})
+
+        resp = client.put("/api/users/me/password", json={
+            "current_password": "oldpw",
+            "new_password": "a" * 129,
+        })
+        assert resp.status_code == 400
+        assert "128" in resp.json()["error"]

@@ -4,6 +4,7 @@
 
 import { state } from "./state.js";
 import { connectWebSocket } from "./websocket.js";
+// state.authMode is set by login.js checkAuth()
 import { loadSystemStatus } from "./status.js";
 import { checkAuth, logout, showLoginScreen, hideLoginScreen, setStartDashboard } from "./login.js";
 import { initRouter } from "./router.js";
@@ -14,6 +15,27 @@ async function startDashboard() {
   initRouter("pageContent");
   connectWebSocket();
   loadSystemStatus();
+  showAuthBannerIfNeeded();
+}
+
+function showAuthBannerIfNeeded() {
+  // Remove existing banner if any
+  const existing = document.getElementById("authBanner");
+  if (existing) existing.remove();
+
+  if (state.authMode !== "local_trust") return;
+
+  const banner = document.createElement("div");
+  banner.id = "authBanner";
+  banner.className = "auth-banner";
+  banner.innerHTML = `
+    <span>パスワードが未設定です。セキュリティのため、<a href="#/setup">セットアップページ</a>でパスワードを設定してください。</span>
+    <button class="auth-banner-close" aria-label="閉じる">&times;</button>
+  `;
+  banner.querySelector(".auth-banner-close").addEventListener("click", () => banner.remove());
+
+  const main = document.getElementById("pageContent");
+  if (main) main.parentElement.insertBefore(banner, main);
 }
 
 setStartDashboard(startDashboard);

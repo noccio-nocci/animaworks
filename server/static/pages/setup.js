@@ -185,8 +185,9 @@ async function _loadAuthSettings() {
     let html = "";
 
     // Auth mode info
+    const modeLabel = { local_trust: "ローカルトラスト（未認証）", password: "パスワード認証", multi_user: "マルチユーザー認証" };
     html += `<div style="margin-bottom: 1rem;">
-      <strong>認証モード:</strong> <code>${escapeHtml(me.role === "owner" ? "有効" : "有効")}</code>
+      <strong>認証モード:</strong> <code>${escapeHtml(modeLabel[me.auth_mode] || me.auth_mode || "不明")}</code>
     </div>`;
 
     // Password change form
