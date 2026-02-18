@@ -191,7 +191,6 @@ results = await experiment.run_all()
 ### Running Unit Tests
 
 ```bash
-cd /home/main/dev/animaworks-memory-eval
 pytest tests/evaluation/test_framework.py -v
 ```
 
@@ -406,7 +405,6 @@ print(f"Interpretation: {gt_manager._interpret_kappa(agreement['cohens_kappa'])}
 ### 4. Quick Start: Generate Sample Dataset
 
 ```bash
-cd /home/main/dev/animaworks-memory-eval
 python3 scripts/generate_small_dataset.py
 ```
 

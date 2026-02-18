@@ -128,7 +128,7 @@ async def _measure_priming(self, agent, message):
 
 **Test Execution**:
 ```bash
-source /home/main/dev/animaworks/.venv/bin/activate
+source .venv/bin/activate
 pytest tests/evaluation/test_framework.py -v
 ```
 

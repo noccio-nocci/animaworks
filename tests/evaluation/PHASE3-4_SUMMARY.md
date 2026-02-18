@@ -179,7 +179,6 @@ generated = viz.generate_all_figures(
 ## Demo Execution
 
 ```bash
-cd /home/main/dev/animaworks-memory-eval
 source .venv/bin/activate
 python tests/evaluation/scripts/demo_analysis_visualization.py
 ```
