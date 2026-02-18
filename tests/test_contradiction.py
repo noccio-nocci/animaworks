@@ -86,12 +86,13 @@ class TestNLIContradictionCheck:
             "core.memory.validation.KnowledgeValidator",
             return_value=mock_validator,
         ):
-            is_contradiction, score = await detector._check_contradiction_nli(
-                "text A", "text B",
+            is_contradiction, score, is_entailment = (
+                await detector._check_contradiction_nli("text A", "text B")
             )
 
         assert is_contradiction is False
         assert score == 0.0
+        assert is_entailment is False
 
     @pytest.mark.asyncio
     async def test_nli_detects_contradiction(
@@ -105,13 +106,16 @@ class TestNLIContradictionCheck:
         ]
         detector._nli_validator = mock_validator
 
-        is_contradiction, score = await detector._check_contradiction_nli(
-            "The server uses port 8080",
-            "The server uses port 3000",
+        is_contradiction, score, is_entailment = (
+            await detector._check_contradiction_nli(
+                "The server uses port 8080",
+                "The server uses port 3000",
+            )
         )
 
         assert is_contradiction is True
         assert score == 0.85
+        assert is_entailment is False
 
     @pytest.mark.asyncio
     async def test_nli_no_contradiction_when_below_threshold(
@@ -125,8 +129,8 @@ class TestNLIContradictionCheck:
         ]
         detector._nli_validator = mock_validator
 
-        is_contradiction, score = await detector._check_contradiction_nli(
-            "text A", "text B",
+        is_contradiction, score, is_entailment = (
+            await detector._check_contradiction_nli("text A", "text B")
         )
 
         assert is_contradiction is False
@@ -143,12 +147,51 @@ class TestNLIContradictionCheck:
         ]
         detector._nli_validator = mock_validator
 
-        is_contradiction, score = await detector._check_contradiction_nli(
-            "text A", "text B",
+        is_contradiction, score, is_entailment = (
+            await detector._check_contradiction_nli("text A", "text B")
         )
 
         assert is_contradiction is True
         assert score == 0.78
+        assert is_entailment is False
+
+    @pytest.mark.asyncio
+    async def test_nli_entailment_detected(
+        self, detector: ContradictionDetector,
+    ) -> None:
+        """NLI entailment above threshold is flagged as is_entailment."""
+        mock_validator = MagicMock()
+        mock_validator._nli_check.side_effect = [
+            ("entailment", 0.85),  # A->B: entailment
+            ("neutral", 0.30),     # B->A: neutral
+        ]
+        detector._nli_validator = mock_validator
+
+        is_contradiction, score, is_entailment = (
+            await detector._check_contradiction_nli("text A", "text B")
+        )
+
+        assert is_contradiction is False
+        assert is_entailment is True
+
+    @pytest.mark.asyncio
+    async def test_nli_entailment_below_threshold_not_flagged(
+        self, detector: ContradictionDetector,
+    ) -> None:
+        """Entailment below threshold does not set is_entailment."""
+        mock_validator = MagicMock()
+        mock_validator._nli_check.side_effect = [
+            ("entailment", 0.50),  # Below NLI_ENTAILMENT_THRESHOLD
+            ("neutral", 0.30),
+        ]
+        detector._nli_validator = mock_validator
+
+        is_contradiction, score, is_entailment = (
+            await detector._check_contradiction_nli("text A", "text B")
+        )
+
+        assert is_contradiction is False
+        assert is_entailment is False
 
 
 # ── LLM Contradiction Check Tests ──────────────────────────
@@ -305,6 +348,40 @@ class TestSupersedeResolution:
         text = archived.read_text(encoding="utf-8")
         assert "superseded_by" in text
         assert "new-info.md" in text
+
+    def test_supersede_adds_supersedes_metadata_to_newer_file(
+        self, detector: ContradictionDetector, anima_dir: Path,
+    ) -> None:
+        """Newer file gets `supersedes` metadata referencing the old filename."""
+        knowledge_dir = anima_dir / "knowledge"
+
+        file_a = _write_knowledge(
+            knowledge_dir, "old-info.md", "Old content",
+            {"created_at": "2026-01-01T10:00:00", "confidence": 0.7},
+        )
+        file_b = _write_knowledge(
+            knowledge_dir, "new-info.md", "New content",
+            {"created_at": "2026-02-18T10:00:00", "confidence": 0.8},
+        )
+
+        pair = ContradictionPair(
+            file_a=file_a,
+            file_b=file_b,
+            text_a="Old content",
+            text_b="New content",
+            confidence=0.85,
+            resolution="supersede",
+            reason="File B is newer",
+        )
+
+        detector._apply_supersede(pair)
+
+        # Newer file should contain supersedes metadata
+        text = file_b.read_text(encoding="utf-8")
+        parts = text.split("---", 2)
+        meta = yaml.safe_load(parts[1])
+        assert "supersedes" in meta
+        assert "old-info.md" in meta["supersedes"]
 
     def test_supersede_correct_direction_when_a_is_newer(
         self, detector: ContradictionDetector, anima_dir: Path,
@@ -741,6 +818,90 @@ class TestScanContradictions:
         # (target vs other-a, target vs other-b)
         assert len(results) == 0
         assert mock_llm.call_count == 2  # Two candidate pairs checked
+
+    @pytest.mark.asyncio
+    async def test_scan_entailment_skips_llm(
+        self, detector: ContradictionDetector, anima_dir: Path,
+    ) -> None:
+        """When NLI returns entailment, LLM is not called."""
+        knowledge_dir = anima_dir / "knowledge"
+
+        _write_knowledge(
+            knowledge_dir, "fact-a.md", "Python is a programming language.",
+        )
+        _write_knowledge(
+            knowledge_dir, "fact-b.md", "Python is a widely-used programming language.",
+        )
+
+        # Mock NLI to return entailment (consistent texts)
+        mock_validator = MagicMock()
+        mock_validator._nli_check.side_effect = [
+            ("entailment", 0.90),  # A->B: entailment
+            ("entailment", 0.85),  # B->A: entailment
+        ]
+        detector._nli_validator = mock_validator
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"is_contradiction": false, "resolution": "coexist", '
+            '"reason": "No contradiction", "merged_content": null}'
+        )
+
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = mock_response
+
+            with patch.object(
+                detector, "_find_candidates_via_rag", return_value=None,
+            ):
+                results = await detector.scan_contradictions(model="test-model")
+
+        # No contradictions
+        assert len(results) == 0
+        # LLM should NOT have been called — entailment short-circuits
+        assert mock_llm.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_scan_neutral_nli_still_calls_llm(
+        self, detector: ContradictionDetector, anima_dir: Path,
+    ) -> None:
+        """When NLI returns neutral (uncertain), LLM is still called as fallback."""
+        knowledge_dir = anima_dir / "knowledge"
+
+        _write_knowledge(
+            knowledge_dir, "topic-x.md", "Topic X content.",
+        )
+        _write_knowledge(
+            knowledge_dir, "topic-y.md", "Topic Y content.",
+        )
+
+        # Mock NLI to return neutral (uncertain)
+        mock_validator = MagicMock()
+        mock_validator._nli_check.side_effect = [
+            ("neutral", 0.50),  # A->B: neutral
+            ("neutral", 0.45),  # B->A: neutral
+        ]
+        detector._nli_validator = mock_validator
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"is_contradiction": false, "resolution": "coexist", '
+            '"reason": "No contradiction", "merged_content": null}'
+        )
+
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = mock_response
+
+            with patch.object(
+                detector, "_find_candidates_via_rag", return_value=None,
+            ):
+                results = await detector.scan_contradictions(model="test-model")
+
+        # No contradictions found
+        assert len(results) == 0
+        # LLM SHOULD have been called for neutral/uncertain case
+        assert mock_llm.call_count == 1
 
     @pytest.mark.asyncio
     async def test_scan_empty_knowledge_dir(

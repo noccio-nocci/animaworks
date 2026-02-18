@@ -217,7 +217,8 @@ class ConsolidationEngine:
                 saved_paths: list[str] = []
                 for item in procedures:
                     path = distiller.save_procedure(item)
-                    saved_paths.append(str(path))
+                    if path is not None:
+                        saved_paths.append(str(path))
                 distillation_result["procedures_created"] = saved_paths
                 logger.info(
                     "Daily distillation: created %d procedures for anima=%s",

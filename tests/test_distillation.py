@@ -343,14 +343,16 @@ class TestSaveProcedure:
             "content": "# Deploy App\n\n1. Pull\n2. Build\n3. Deploy",
         }
 
-        path = distiller.save_procedure(item)
+        with patch.object(distiller, "_check_rag_duplicate", return_value=None):
+            path = distiller.save_procedure(item)
 
+        assert path is not None
         assert path.exists()
         assert path.name == "deploy_app.md"
         text = path.read_text(encoding="utf-8")
         assert text.startswith("---\n")
         assert "auto_distilled: true" in text
-        assert "confidence: 0.5" in text
+        assert "confidence: 0.4" in text
         assert "description: Application deploy procedure" in text
         assert "# Deploy App" in text
 
@@ -360,7 +362,9 @@ class TestSaveProcedure:
             "content": "# Sanitized",
         }
 
-        path = distiller.save_procedure(item)
+        with patch.object(distiller, "_check_rag_duplicate", return_value=None):
+            path = distiller.save_procedure(item)
+        assert path is not None
         assert path.exists()
         # Special chars should be replaced with underscores
         assert "/" not in path.name
@@ -368,7 +372,9 @@ class TestSaveProcedure:
 
     def test_saves_to_procedures_dir(self, distiller, anima_dir: Path) -> None:
         item = {"title": "test_proc", "content": "# Test"}
-        path = distiller.save_procedure(item)
+        with patch.object(distiller, "_check_rag_duplicate", return_value=None):
+            path = distiller.save_procedure(item)
+        assert path is not None
         assert path.parent == anima_dir / "procedures"
 
     def test_metadata_fields(self, distiller, anima_dir: Path) -> None:
@@ -378,7 +384,10 @@ class TestSaveProcedure:
             "tags": ["test"],
             "content": "# Check Metadata",
         }
-        path = distiller.save_procedure(item)
+        with patch.object(distiller, "_check_rag_duplicate", return_value=None):
+            path = distiller.save_procedure(item)
+
+        assert path is not None
 
         from core.memory.manager import MemoryManager
 
@@ -389,11 +398,133 @@ class TestSaveProcedure:
         assert meta["tags"] == ["test"]
         assert meta["success_count"] == 0
         assert meta["failure_count"] == 0
-        assert meta["confidence"] == 0.5
+        assert meta["confidence"] == 0.4
         assert meta["version"] == 1
         assert meta["auto_distilled"] is True
         assert meta["last_used"] is None
         assert "created_at" in meta
+
+
+# ── RAG Duplicate Check ──────────────────────────────────────
+
+
+class TestRAGDuplicateCheck:
+    """Test RAG-based duplicate detection in save_procedure()."""
+
+    def test_save_procedure_skips_rag_duplicate(
+        self, distiller, anima_dir: Path,
+    ) -> None:
+        """When RAG finds a high-similarity match, save_procedure returns None."""
+        item = {
+            "title": "deploy_app",
+            "content": "# Deploy App\n\n1. Pull\n2. Deploy",
+        }
+
+        with patch.object(
+            distiller, "_check_rag_duplicate",
+            return_value="procedures/existing_deploy.md",
+        ):
+            result = distiller.save_procedure(item)
+
+        assert result is None
+        # File should NOT have been created
+        assert not (anima_dir / "procedures" / "deploy_app.md").exists()
+
+    def test_save_procedure_allows_unique(
+        self, distiller, anima_dir: Path,
+    ) -> None:
+        """When RAG finds no duplicate, save_procedure writes the file."""
+        item = {
+            "title": "unique_proc",
+            "content": "# Unique Procedure\n\n1. Do something new",
+        }
+
+        with patch.object(distiller, "_check_rag_duplicate", return_value=None):
+            result = distiller.save_procedure(item)
+
+        assert result is not None
+        assert result.exists()
+        assert result.name == "unique_proc.md"
+
+    def test_save_procedure_rag_failure_proceeds(
+        self, distiller, anima_dir: Path,
+    ) -> None:
+        """When RAG raises an exception, save_procedure proceeds with saving."""
+        item = {
+            "title": "fallback_proc",
+            "content": "# Fallback Procedure\n\nSteps here",
+        }
+
+        # _check_rag_duplicate catches all exceptions internally and returns None
+        with patch.object(distiller, "_check_rag_duplicate", return_value=None):
+            result = distiller.save_procedure(item)
+
+        assert result is not None
+        assert result.exists()
+
+    def test_check_rag_duplicate_handles_exception(self, distiller) -> None:
+        """_check_rag_duplicate returns None when RAG is unavailable."""
+        # Force import failure by patching builtins.__import__
+        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+        def fail_on_rag(name, *args, **kwargs):
+            if "core.memory.rag" in name:
+                raise RuntimeError("ChromaDB not available")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=fail_on_rag):
+            result = distiller._check_rag_duplicate("some content")
+
+        assert result is None
+
+    def test_check_rag_duplicate_searches_procedures_and_skills(
+        self, distiller,
+    ) -> None:
+        """Both procedures and skills collections should be searched."""
+        mock_retriever = MagicMock()
+        # First call (procedures) returns no match, second (skills) returns match
+        low_result = MagicMock()
+        low_result.score = 0.5
+        low_result.metadata = {"source_file": "procedures/low.md"}
+
+        high_result = MagicMock()
+        high_result.score = 0.90
+        high_result.metadata = {"source_file": "skills/existing_skill.md"}
+
+        mock_retriever.search.side_effect = [
+            [low_result],   # procedures search
+            [high_result],  # skills search
+        ]
+
+        mock_vector_store = MagicMock()
+        mock_indexer = MagicMock()
+
+        # Patch the lazy imports inside _check_rag_duplicate
+        rag_module = MagicMock()
+        rag_module.MemoryIndexer.return_value = mock_indexer
+        retriever_module = MagicMock()
+        retriever_module.MemoryRetriever.return_value = mock_retriever
+        singleton_module = MagicMock()
+        singleton_module.get_vector_store.return_value = mock_vector_store
+
+        import sys
+
+        with patch.dict(sys.modules, {
+            "core.memory.rag": rag_module,
+            "core.memory.rag.retriever": retriever_module,
+            "core.memory.rag.singleton": singleton_module,
+        }):
+            result = distiller._check_rag_duplicate("some procedure content")
+
+        assert result == "skills/existing_skill.md"
+        # Verify both collections were searched
+        assert mock_retriever.search.call_count == 2
+        types_searched = [
+            c.kwargs["memory_type"]
+            for c in mock_retriever.search.call_args_list
+        ]
+        assert "procedures" in types_searched
+        assert "skills" in types_searched
 
 
 # ── Existing Procedures Summary ───────────────────────────────
@@ -468,7 +599,12 @@ class TestWeeklyPatternDistill:
             mock_resp.choices[0].message.content = llm_response
             mock_llm.return_value = mock_resp
 
-            result = await distiller.weekly_pattern_distill(model="test-model")
+            with patch.object(
+                distiller, "_check_rag_duplicate", return_value=None,
+            ):
+                result = await distiller.weekly_pattern_distill(
+                    model="test-model",
+                )
 
         assert result["patterns_detected"] == 1
         assert len(result["procedures_created"]) == 1
@@ -633,10 +769,15 @@ class TestDailyConsolidationIntegration:
             return mock_resp
 
         with patch("litellm.acompletion", side_effect=mock_acompletion):
-            result = await consolidation_engine.daily_consolidate(
-                min_episodes=1,
-                model="test-model",
-            )
+            with patch(
+                "core.memory.distillation.ProceduralDistiller"
+                "._check_rag_duplicate",
+                return_value=None,
+            ):
+                result = await consolidation_engine.daily_consolidate(
+                    min_episodes=1,
+                    model="test-model",
+                )
 
         assert result["skipped"] is False
         assert "distillation" in result

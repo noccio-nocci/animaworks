@@ -84,6 +84,7 @@ class ReconsolidationEngine:
         self.anima_name = anima_name
         self.knowledge_dir = anima_dir / "knowledge"
         self.procedures_dir = anima_dir / "procedures"
+        self._nli_validator: Any | None = None
 
     # ── Prediction Error Detection ─────────────────────────────
 
@@ -220,6 +221,21 @@ class ReconsolidationEngine:
 
         return related
 
+    def _get_validator(self) -> Any:
+        """Get or create cached KnowledgeValidator.
+
+        Lazily initializes the validator on first use to avoid loading
+        the NLI model until actually needed, and caches it for reuse.
+
+        Returns:
+            Cached KnowledgeValidator instance.
+        """
+        if self._nli_validator is None:
+            from core.memory.validation import KnowledgeValidator
+
+            self._nli_validator = KnowledgeValidator()
+        return self._nli_validator
+
     async def _nli_contradiction_check(
         self, new_text: str, existing_text: str,
     ) -> tuple[bool, float]:
@@ -235,9 +251,7 @@ class ReconsolidationEngine:
             Tuple of (is_contradiction, nli_score).
         """
         try:
-            from core.memory.validation import KnowledgeValidator
-
-            validator = KnowledgeValidator()
+            validator = self._get_validator()
             label, score = validator._nli_check(new_text, existing_text)
 
             is_contradiction = (
@@ -387,6 +401,12 @@ is_error が false の場合、error_type は "none" にしてください。"""
                 meta["updated_at"] = datetime.now().isoformat()
                 meta["reconsolidated_from"] = error.error_type
                 meta["reconsolidation_reason"] = error.description[:200]
+
+                # Reset counters for procedures (fresh evaluation cycle)
+                if error.memory_type == "procedures":
+                    meta["success_count"] = 0
+                    meta["failure_count"] = 0
+                    meta["confidence"] = 0.5
 
                 # Write updated content with metadata
                 from core.memory.manager import MemoryManager

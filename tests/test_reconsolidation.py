@@ -808,5 +808,89 @@ class TestPredictionError:
         assert error.updated_content is None
 
 
+# ── H-1: Procedure Counter Reset Tests ────────────────────
+
+
+class TestProcedureCounterReset:
+    """Test that reconsolidation resets counters for procedures."""
+
+    @pytest.mark.asyncio
+    async def test_procedure_reconsolidation_resets_counters(
+        self, engine: ReconsolidationEngine, procedure_file: Path,
+    ) -> None:
+        """After reconsolidation of a procedure, success/failure/confidence are reset."""
+        error = _make_prediction_error(
+            engine.anima_dir,
+            memory_type="procedures",
+            error_type="procedure_change",
+            updated_content="# Deploy\n\n1. Push to main\n2. CI deploys\n",
+            filename="deploy-process.md",
+        )
+
+        result = await engine.apply_reconsolidation([error])
+
+        assert result["updated"] == 1
+
+        # Verify counters were reset
+        from core.memory.manager import MemoryManager
+        mm = MemoryManager(engine.anima_dir)
+        meta = mm.read_procedure_metadata(procedure_file)
+        assert meta["success_count"] == 0
+        assert meta["failure_count"] == 0
+        assert meta["confidence"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_knowledge_reconsolidation_no_counter_reset(
+        self, engine: ReconsolidationEngine, knowledge_file: Path,
+    ) -> None:
+        """Knowledge files do not get counter resets after reconsolidation."""
+        error = _make_prediction_error(
+            engine.anima_dir,
+            memory_type="knowledge",
+            updated_content="# API Configuration\n\nServer on port 3000.\n",
+            filename="api-config.md",
+        )
+
+        result = await engine.apply_reconsolidation([error])
+
+        assert result["updated"] == 1
+
+        # Verify counters were NOT reset (knowledge has no success/failure counters)
+        from core.memory.manager import MemoryManager
+        mm = MemoryManager(engine.anima_dir)
+        meta = mm.read_knowledge_metadata(knowledge_file)
+        assert "success_count" not in meta
+        assert "failure_count" not in meta
+        # Original confidence (0.8) should remain unchanged
+        assert meta.get("confidence") == 0.8
+
+
+# ── H-2: Validator Caching Tests ──────────────────────────
+
+
+class TestValidatorCaching:
+    """Test that KnowledgeValidator is cached and reused."""
+
+    @pytest.mark.asyncio
+    async def test_validator_cached(
+        self, engine: ReconsolidationEngine,
+    ) -> None:
+        """Validator is created once and reused across multiple calls."""
+        with patch(
+            "core.memory.validation.KnowledgeValidator",
+        ) as MockValidator:
+            mock_v = MockValidator.return_value
+            mock_v._nli_check.return_value = ("contradiction", 0.85)
+
+            # Call twice
+            await engine._nli_contradiction_check("text1", "text2")
+            await engine._nli_contradiction_check("text3", "text4")
+
+        # KnowledgeValidator() should only be called once (cached)
+        MockValidator.assert_called_once()
+        # But _nli_check should be called twice
+        assert mock_v._nli_check.call_count == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

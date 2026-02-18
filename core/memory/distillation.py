@@ -25,6 +25,8 @@ from pathlib import Path
 
 logger = logging.getLogger("animaworks.distillation")
 
+RAG_DUPLICATE_THRESHOLD = 0.85
+
 
 # ── ProceduralDistiller ────────────────────────────────────────
 
@@ -269,6 +271,8 @@ class ProceduralDistiller:
             saved_paths: list[str] = []
             for item in procedures:
                 path = self.save_procedure(item)
+                if path is None:
+                    continue
                 saved_paths.append(str(path))
                 logger.info(
                     "Weekly pattern distill: saved procedure '%s' for anima=%s",
@@ -375,8 +379,59 @@ class ProceduralDistiller:
                     return {}
         return {}
 
-    def save_procedure(self, item: dict) -> Path:
+    def _check_rag_duplicate(
+        self, content: str, threshold: float = RAG_DUPLICATE_THRESHOLD,
+    ) -> str | None:
+        """Check if a similar procedure or skill already exists via RAG.
+
+        Searches both the ``procedures`` and ``skills`` collections.
+        Returns the source file path of the first match above *threshold*,
+        or ``None`` if no duplicate is found.  Failures are logged and
+        treated as "no duplicate" so that saving can proceed.
+
+        Args:
+            content: Procedure body text to compare.
+            threshold: Minimum similarity score to consider a duplicate.
+
+        Returns:
+            Path string of the similar existing document, or None.
+        """
+        try:
+            from core.memory.rag import MemoryIndexer
+            from core.memory.rag.retriever import MemoryRetriever
+            from core.memory.rag.singleton import get_vector_store
+
+            vector_store = get_vector_store()
+            indexer = MemoryIndexer(
+                vector_store, self.anima_name, self.anima_dir,
+            )
+            retriever = MemoryRetriever(
+                vector_store, indexer, self.knowledge_dir,
+            )
+
+            for memory_type in ("procedures", "skills"):
+                results = retriever.search(
+                    query=content[:500],
+                    anima_name=self.anima_name,
+                    memory_type=memory_type,
+                    top_k=3,
+                )
+                for r in results:
+                    if r.score >= threshold:
+                        return r.metadata.get("source_file", "unknown")
+        except Exception as e:
+            logger.warning(
+                "RAG duplicate check failed (proceeding with save): %s", e,
+            )
+        return None
+
+    def save_procedure(self, item: dict) -> Path | None:
         """Persist a distilled procedure with YAML frontmatter.
+
+        Before saving, performs a RAG similarity check against existing
+        procedures and skills.  If a duplicate is found (similarity
+        >= ``RAG_DUPLICATE_THRESHOLD``), the save is skipped and ``None``
+        is returned.
 
         Uses ``MemoryManager.write_procedure_with_meta()`` for consistent
         file format across the codebase.
@@ -386,8 +441,20 @@ class ProceduralDistiller:
                 ``description`` and ``tags``.
 
         Returns:
-            Path to the saved procedure file.
+            Path to the saved procedure file, or None if skipped as
+            duplicate.
         """
+        content = item["content"]
+
+        # RAG duplicate check
+        existing = self._check_rag_duplicate(content)
+        if existing:
+            logger.info(
+                "Skipping duplicate procedure '%s' (similar to %s)",
+                item["title"], existing,
+            )
+            return None
+
         from core.memory.manager import MemoryManager
 
         title = re.sub(r"[^\w\-]", "_", item["title"])
@@ -399,7 +466,7 @@ class ProceduralDistiller:
             "success_count": 0,
             "failure_count": 0,
             "last_used": None,
-            "confidence": 0.5,
+            "confidence": 0.4,
             "version": 1,
             "created_at": datetime.now().isoformat(),
             "auto_distilled": True,

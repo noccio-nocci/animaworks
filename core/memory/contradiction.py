@@ -269,9 +269,11 @@ class ContradictionDetector:
 
     # ── Contradiction detection ─────────────────────────────────
 
+    NLI_ENTAILMENT_THRESHOLD = 0.70
+
     async def _check_contradiction_nli(
         self, text_a: str, text_b: str,
-    ) -> tuple[bool, float]:
+    ) -> tuple[bool, float, bool]:
         """Check for contradiction using NLI model.
 
         Uses the shared KnowledgeValidator's NLI pipeline to classify
@@ -282,11 +284,14 @@ class ContradictionDetector:
             text_b: Second knowledge text
 
         Returns:
-            Tuple of (is_contradiction, confidence_score)
+            Tuple of (is_contradiction, confidence_score, is_entailment).
+            ``is_entailment`` is True when either direction shows
+            entailment above ``NLI_ENTAILMENT_THRESHOLD``, indicating
+            the texts are consistent and no LLM check is needed.
         """
         validator = self._get_nli_validator()
         if validator is None:
-            return (False, 0.0)
+            return (False, 0.0, False)
 
         # NLI check: text_a as premise, text_b as hypothesis
         label_ab, score_ab = validator._nli_check(
@@ -308,7 +313,16 @@ class ContradictionDetector:
             is_contradiction = True
             max_score = max(max_score, score_ba)
 
-        return (is_contradiction, max_score)
+        # Check if either direction shows clear entailment
+        is_entailment = False
+        if not is_contradiction:
+            if (
+                (label_ab == "entailment" and score_ab >= self.NLI_ENTAILMENT_THRESHOLD)
+                or (label_ba == "entailment" and score_ba >= self.NLI_ENTAILMENT_THRESHOLD)
+            ):
+                is_entailment = True
+
+        return (is_contradiction, max_score, is_entailment)
 
     async def _check_contradiction_llm(
         self,
@@ -423,8 +437,8 @@ class ContradictionDetector:
 
         for file_a, text_a, file_b, text_b in candidates:
             # Stage 2a: NLI check (fast, local)
-            is_nli_contradiction, nli_score = await self._check_contradiction_nli(
-                text_a, text_b,
+            is_nli_contradiction, nli_score, is_entailment = (
+                await self._check_contradiction_nli(text_a, text_b)
             )
 
             if is_nli_contradiction:
@@ -450,9 +464,16 @@ class ContradictionDetector:
                         file_a.name, file_b.name, nli_score,
                         llm_result.resolution,
                     )
+            elif is_entailment:
+                # NLI shows clear entailment — texts are consistent,
+                # skip costly LLM check
+                logger.debug(
+                    "NLI entailment detected, skipping LLM: %s vs %s",
+                    file_a.name, file_b.name,
+                )
             else:
-                # NLI did not detect contradiction - still run LLM for
-                # uncertain cases where NLI may miss semantic contradictions
+                # NLI neutral / uncertain — fall through to LLM as fallback
+                # for cases where NLI may miss semantic contradictions
                 llm_result = await self._check_contradiction_llm(
                     text_a, text_b, file_a.name, file_b.name, model,
                 )
@@ -580,6 +601,16 @@ class ContradictionDetector:
         archive_dir = self.anima_dir / "archive" / "superseded"
         archive_dir.mkdir(parents=True, exist_ok=True)
         shutil.move(str(older), str(archive_dir / older.name))
+
+        # Update newer file metadata with supersedes reference
+        newer_meta = mm.read_knowledge_metadata(newer)
+        supersedes_list = newer_meta.get("supersedes", [])
+        if isinstance(supersedes_list, str):
+            supersedes_list = [supersedes_list]
+        supersedes_list.append(older.name)
+        newer_meta["supersedes"] = supersedes_list
+        newer_content = mm.read_knowledge_content(newer)
+        mm.write_knowledge_with_meta(newer, newer_content, newer_meta)
 
         logger.info(
             "Superseded %s by %s (archived to %s)",
