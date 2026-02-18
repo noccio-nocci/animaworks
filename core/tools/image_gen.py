@@ -126,7 +126,6 @@ _EXPRESSION_PROMPTS: dict[str, str] = {
         "Change the character's expression to deeply embarrassed. "
         "Bright red blush across entire face, eyes averted to the side. "
         "Both hands covering cheeks or pressing index fingers together nervously. "
-
         "Bust-up portrait, anime illustration, soft lighting. "
         "Same character identity, outfit, and hairstyle."
     ),
@@ -150,6 +149,10 @@ _EXPRESSION_GUIDANCE: dict[str, float] = {
     "thinking": 5.0,
     "embarrassed": 5.5,
 }
+
+assert set(_EXPRESSION_GUIDANCE.keys()) == _VALID_EXPRESSION_NAMES, (
+    f"Expression guidance mismatch: {set(_EXPRESSION_GUIDANCE.keys())} != {_VALID_EXPRESSION_NAMES}"
+)
 
 # Default animation presets for office digital animas
 # See https://docs.meshy.ai/api/animation-library for full catalog
