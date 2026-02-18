@@ -265,8 +265,11 @@ class MemoryIndexer:
         it exceeds 50 characters, followed by each heading section.
 
         YAML frontmatter (``---`` delimited) is stripped before chunking
-        to avoid polluting vector embeddings with metadata.
+        to avoid polluting vector embeddings with metadata.  The parsed
+        frontmatter is passed to ``_extract_metadata`` so that fields
+        like ``valid_until`` are included in chunk metadata.
         """
+        frontmatter = self._parse_frontmatter(content)
         content = self._strip_frontmatter(content)
         chunks: list[MemoryChunk] = []
         sections = re.split(r"\n(##\s+.+)", content)
@@ -279,6 +282,7 @@ class MemoryIndexer:
             chunk_id = self._make_chunk_id(file_path, memory_type, chunk_idx)
             metadata = self._extract_metadata(
                 file_path, preamble, memory_type, chunk_idx, 1,
+                frontmatter=frontmatter,
             )
             chunks.append(
                 MemoryChunk(
@@ -300,6 +304,7 @@ class MemoryIndexer:
                     chunk_id = self._make_chunk_id(file_path, memory_type, chunk_idx)
                     metadata = self._extract_metadata(
                         file_path, section_content, memory_type, chunk_idx, 1,
+                        frontmatter=frontmatter,
                     )
                     chunks.append(
                         MemoryChunk(
@@ -319,6 +324,7 @@ class MemoryIndexer:
         memory_type: str,
     ) -> list[MemoryChunk]:
         """Split by time headings (## HH:MM format)."""
+        frontmatter = self._parse_frontmatter(content)
         chunks: list[MemoryChunk] = []
         # Match headings like ## 09:30, ## 14:15 — タイトル
         sections = re.split(r"\n(##\s+\d{1,2}:\d{2}.*)", content)
@@ -332,7 +338,8 @@ class MemoryIndexer:
                 if section_content.strip():
                     chunk_id = self._make_chunk_id(file_path, memory_type, i // 2)
                     metadata = self._extract_metadata(
-                        file_path, section_content, memory_type, i // 2, (i // 2) + 1
+                        file_path, section_content, memory_type, i // 2, (i // 2) + 1,
+                        frontmatter=frontmatter,
                     )
                     chunks.append(
                         MemoryChunk(
@@ -353,14 +360,20 @@ class MemoryIndexer:
         """Return entire file as single chunk.
 
         YAML frontmatter (``---`` delimited) is stripped before chunking
-        to avoid polluting vector embeddings with metadata.
+        to avoid polluting vector embeddings with metadata.  The parsed
+        frontmatter is passed to ``_extract_metadata`` so that fields
+        like ``valid_until`` are included in chunk metadata.
         """
+        frontmatter = self._parse_frontmatter(content)
         content = self._strip_frontmatter(content)
         if not content.strip():
             return []
 
         chunk_id = self._make_chunk_id(file_path, memory_type, 0)
-        metadata = self._extract_metadata(file_path, content, memory_type, 0, 1)
+        metadata = self._extract_metadata(
+            file_path, content, memory_type, 0, 1,
+            frontmatter=frontmatter,
+        )
 
         return [
             MemoryChunk(
@@ -401,6 +414,27 @@ class MemoryIndexer:
         rel_path = file_path.relative_to(self.anima_dir)
         return f"{self.collection_prefix}/{rel_path}#{index}"
 
+    @staticmethod
+    def _parse_frontmatter(raw_content: str) -> dict:
+        """Parse YAML frontmatter from raw file content.
+
+        Args:
+            raw_content: Full file content potentially starting with ``---``
+
+        Returns:
+            Parsed frontmatter dict, or empty dict if absent/unparseable
+        """
+        if raw_content.startswith("---"):
+            parts = raw_content.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    import yaml
+                    fm = yaml.safe_load(parts[1])
+                    return fm if isinstance(fm, dict) else {}
+                except Exception:
+                    return {}
+        return {}
+
     def _extract_metadata(
         self,
         file_path: Path,
@@ -408,8 +442,19 @@ class MemoryIndexer:
         memory_type: str,
         chunk_index: int,
         total_chunks: int,
+        frontmatter: dict | None = None,
     ) -> dict[str, str | int | float | list[str]]:
-        """Extract metadata from file and content."""
+        """Extract metadata from file and content.
+
+        Args:
+            file_path: Path to the source file
+            content: Chunk content text
+            memory_type: Memory type identifier
+            chunk_index: Index of this chunk within the file
+            total_chunks: Total number of chunks from this file
+            frontmatter: Pre-parsed YAML frontmatter from the file.
+                If provided, ``valid_until`` is extracted from it.
+        """
         metadata: dict[str, str | int | float | list[str]] = {
             "anima": self.collection_prefix,
             "memory_type": memory_type,
@@ -442,6 +487,13 @@ class MemoryIndexer:
         # Activation level (for forgetting mechanism)
         metadata["activation_level"] = "normal"
         metadata["low_activation_since"] = ""
+
+        # Supersession tracking: valid_until from frontmatter
+        # Legacy migration: rename superseded_at → valid_until
+        fm = frontmatter or {}
+        if "superseded_at" in fm and "valid_until" not in fm:
+            fm["valid_until"] = fm.pop("superseded_at")
+        metadata["valid_until"] = str(fm.get("valid_until", "") or "")
 
         return metadata
 

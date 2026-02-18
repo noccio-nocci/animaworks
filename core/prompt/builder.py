@@ -8,6 +8,7 @@ from __future__ import annotations
 
 
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,45 @@ from core.schemas import SkillMeta
 
 logger = logging.getLogger("animaworks.prompt_builder")
 
-# Module-level tracking of injected procedures per anima for
-# automatic outcome tracking in Phase 3 (conversation.py reads this).
-_last_injected_procedures: dict[str, list[Path]] = {}
+
+@dataclass
+class BuildResult:
+    """Result of system prompt building."""
+
+    system_prompt: str
+    injected_procedures: list[Path] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        """Backward compatibility: str() returns prompt."""
+        return self.system_prompt
+
+    def __len__(self) -> int:
+        """Backward compatibility: len() returns prompt length."""
+        return len(self.system_prompt)
+
+    def encode(self, encoding: str = "utf-8") -> bytes:
+        """Backward compatibility: encode() encodes prompt."""
+        return self.system_prompt.encode(encoding)
+
+    def __contains__(self, item: str) -> bool:
+        """Backward compatibility: 'x in result' checks prompt."""
+        return item in self.system_prompt
+
+    def __add__(self, other: str) -> str:
+        """Backward compatibility: result + str concatenates prompt."""
+        return self.system_prompt + other
+
+    def __radd__(self, other: str) -> str:
+        """Backward compatibility: str + result concatenates prompt."""
+        return other + self.system_prompt
+
+    def index(self, sub: str, *args: int) -> int:
+        """Backward compatibility: result.index(x) searches prompt."""
+        return self.system_prompt.index(sub, *args)
+
+    def count(self, sub: str, *args: int) -> int:
+        """Backward compatibility: result.count(x) counts in prompt."""
+        return self.system_prompt.count(sub, *args)
 
 
 # ── Skill Injection Budget ────────────────────────────────
@@ -310,7 +347,7 @@ def build_system_prompt(
     execution_mode: str = "a1",
     message: str = "",
     retriever: object | None = None,
-) -> str:
+) -> BuildResult:
     """Construct the full system prompt from Markdown files.
 
     System prompt =
@@ -475,8 +512,8 @@ def build_system_prompt(
         matched_names.add(skill.name)
         used_tokens += body_len
 
-    # Record injected procedures for auto-outcome tracking
-    _last_injected_procedures[anima_name] = injected_procedure_paths
+    # injected_procedure_paths is returned in BuildResult for the caller
+    # to pass to finalize_session() (replaces former module-level dict).
 
     # Non-matched personal skills → table
     unmatched_personal = [
@@ -610,11 +647,15 @@ def build_system_prompt(
     except Exception:
         logger.debug("Skipped human notification guidance injection", exc_info=True)
 
+    prompt = "\n\n---\n\n".join(parts)
     logger.debug(
         "System prompt built: %d sections, total_len=%d",
-        len(parts), sum(len(p) for p in parts),
+        len(parts), len(prompt),
     )
-    return "\n\n---\n\n".join(parts)
+    return BuildResult(
+        system_prompt=prompt,
+        injected_procedures=injected_procedure_paths,
+    )
 
 
 def inject_shortterm(

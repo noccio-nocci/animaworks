@@ -29,7 +29,7 @@ from core.prompt.context import ContextTracker
 from core.memory import MemoryManager
 from core.messenger import Messenger
 from core.paths import load_prompt
-from core.prompt.builder import build_system_prompt, inject_shortterm
+from core.prompt.builder import BuildResult, build_system_prompt, inject_shortterm
 from core.schemas import CycleResult, ModelConfig
 from core.memory.shortterm import SessionState, ShortTermMemory
 from core.tooling.handler import ToolHandler
@@ -543,7 +543,7 @@ class AgentCore:
                     execution_mode=mode,
                     message=prompt,
                     retriever=self._get_retriever(),
-                )
+                ).system_prompt
             except Exception:
                 logger.exception("Forced compression failed")
 
@@ -617,7 +617,7 @@ class AgentCore:
         )
 
         # Build system prompt with priming; inject short-term memory from prior session
-        system_prompt = build_system_prompt(
+        build_result = build_system_prompt(
             self.memory,
             tool_registry=self._tool_registry,
             personal_tools=self._personal_tools,
@@ -626,7 +626,18 @@ class AgentCore:
             message=prompt,
             retriever=self._get_retriever(),
         )
+        system_prompt = build_result.system_prompt
+        injected_procedures = build_result.injected_procedures
         logger.debug("System prompt assembled, length=%d", len(system_prompt))
+
+        # Persist injected procedures for heartbeat-triggered finalization
+        if injected_procedures:
+            from core.memory.conversation import ConversationMemory as _CM
+            _cm = _CM(self.anima_dir, self.model_config)
+            _cm.store_injected_procedures(
+                injected_procedures,
+                session_id=self._tool_handler.session_id,
+            )
         if shortterm.has_pending():
             system_prompt = inject_shortterm(system_prompt, shortterm)
             logger.info("Injected short-term memory into system prompt")
@@ -747,7 +758,7 @@ class AgentCore:
                     execution_mode=mode,
                     message=prompt,
                     retriever=self._get_retriever(),
-                ),
+                ).system_prompt,
                 shortterm,
             )
             continuation_prompt = load_prompt("session_continuation")
@@ -831,7 +842,7 @@ class AgentCore:
             threshold=self.model_config.context_threshold,
         )
 
-        system_prompt = build_system_prompt(
+        build_result = build_system_prompt(
             self.memory,
             tool_registry=self._tool_registry,
             personal_tools=self._personal_tools,
@@ -840,6 +851,15 @@ class AgentCore:
             message=prompt,
             retriever=self._get_retriever(),
         )
+        system_prompt = build_result.system_prompt
+        # Persist injected procedures for heartbeat-triggered finalization
+        if build_result.injected_procedures:
+            from core.memory.conversation import ConversationMemory as _CM
+            _cm = _CM(self.anima_dir, self.model_config)
+            _cm.store_injected_procedures(
+                build_result.injected_procedures,
+                session_id=self._tool_handler.session_id,
+            )
         if shortterm.has_pending():
             system_prompt = inject_shortterm(system_prompt, shortterm)
 
@@ -983,7 +1003,7 @@ class AgentCore:
                     execution_mode=mode,
                     message=prompt,
                     retriever=self._get_retriever(),
-                )
+                ).system_prompt
 
                 await asyncio.sleep(retry_delay)
                 continue
@@ -1036,7 +1056,7 @@ class AgentCore:
                     execution_mode=mode,
                     message=prompt,
                     retriever=self._get_retriever(),
-                ),
+                ).system_prompt,
                 shortterm,
             )
             continuation_prompt = load_prompt("session_continuation")

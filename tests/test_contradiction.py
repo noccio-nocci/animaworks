@@ -344,10 +344,11 @@ class TestSupersedeResolution:
         archived = anima_dir / "archive" / "superseded" / "old-info.md"
         assert archived.exists()
 
-        # Archived file should have superseded_by metadata
+        # Archived file should have superseded_by and valid_until metadata
         text = archived.read_text(encoding="utf-8")
         assert "superseded_by" in text
         assert "new-info.md" in text
+        assert "valid_until" in text
 
     def test_supersede_adds_supersedes_metadata_to_newer_file(
         self, detector: ContradictionDetector, anima_dir: Path,
@@ -1112,6 +1113,329 @@ class TestPipelineIntegration:
 
         assert result["superseded"] == 1
         mock_detector.resolve_contradictions.assert_called_once()
+
+
+# ── Activity Log Event Tests ─────────────────────────────────
+
+
+class TestActivityLogEvent:
+    """Test that contradiction resolution records activity log events."""
+
+    @pytest.mark.asyncio
+    async def test_resolution_logs_activity_event(
+        self, anima_dir: Path,
+    ) -> None:
+        """Each successful resolution records a knowledge_contradiction_resolved event."""
+        from core.memory.activity import ActivityLogger
+
+        activity_logger = ActivityLogger(anima_dir)
+        detector = ContradictionDetector(
+            anima_dir, "test-anima", activity_logger=activity_logger,
+        )
+        knowledge_dir = anima_dir / "knowledge"
+
+        file_a = _write_knowledge(
+            knowledge_dir, "old-fact.md", "Old fact",
+            {"created_at": "2026-01-01T10:00:00"},
+        )
+        file_b = _write_knowledge(
+            knowledge_dir, "new-fact.md", "New fact",
+            {"created_at": "2026-02-18T10:00:00"},
+        )
+
+        pairs = [
+            ContradictionPair(
+                file_a=file_a,
+                file_b=file_b,
+                text_a="Old fact",
+                text_b="New fact",
+                confidence=0.80,
+                resolution="supersede",
+                reason="Newer info",
+            ),
+        ]
+
+        await detector.resolve_contradictions(pairs, "test-model")
+
+        # Verify the activity log was written
+        entries = activity_logger.recent(
+            days=1,
+            types=["knowledge_contradiction_resolved"],
+        )
+        assert len(entries) == 1
+        assert entries[0].type == "knowledge_contradiction_resolved"
+        assert "supersede" in entries[0].content
+        assert entries[0].meta.get("strategy") == "supersede"
+
+    @pytest.mark.asyncio
+    async def test_no_activity_log_when_logger_absent(
+        self, detector: ContradictionDetector, anima_dir: Path,
+    ) -> None:
+        """When no activity_logger is provided, resolution still succeeds."""
+        knowledge_dir = anima_dir / "knowledge"
+
+        file_a = _write_knowledge(
+            knowledge_dir, "coexist-a.md", "Approach A",
+        )
+        file_b = _write_knowledge(
+            knowledge_dir, "coexist-b.md", "Approach B",
+        )
+
+        pairs = [
+            ContradictionPair(
+                file_a=file_a,
+                file_b=file_b,
+                text_a="Approach A",
+                text_b="Approach B",
+                confidence=0.55,
+                resolution="coexist",
+                reason="Both valid",
+            ),
+        ]
+
+        # detector fixture has no activity_logger
+        results = await detector.resolve_contradictions(pairs, "test-model")
+        assert results["coexisted"] == 1
+        assert results["errors"] == 0
+
+    @pytest.mark.asyncio
+    async def test_merge_resolution_logs_activity_event(
+        self, anima_dir: Path,
+    ) -> None:
+        """Merge resolution also records activity log event."""
+        from core.memory.activity import ActivityLogger
+
+        activity_logger = ActivityLogger(anima_dir)
+        detector = ContradictionDetector(
+            anima_dir, "test-anima", activity_logger=activity_logger,
+        )
+        knowledge_dir = anima_dir / "knowledge"
+
+        file_a = _write_knowledge(
+            knowledge_dir, "merge-x.md", "Content X",
+        )
+        file_b = _write_knowledge(
+            knowledge_dir, "merge-y.md", "Content Y",
+        )
+
+        pairs = [
+            ContradictionPair(
+                file_a=file_a,
+                file_b=file_b,
+                text_a="Content X",
+                text_b="Content Y",
+                confidence=0.70,
+                resolution="merge",
+                reason="Complementary info",
+                merged_content="# Merged\nCombined X and Y",
+            ),
+        ]
+
+        await detector.resolve_contradictions(pairs, "test-model")
+
+        entries = activity_logger.recent(
+            days=1,
+            types=["knowledge_contradiction_resolved"],
+        )
+        assert len(entries) == 1
+        assert entries[0].meta.get("strategy") == "merge"
+
+
+# ── Legacy Migration Tests ───────────────────────────────────
+
+
+class TestLegacyMigration:
+    """Test superseded_at → valid_until migration."""
+
+    def test_read_knowledge_metadata_migrates_superseded_at(
+        self, anima_dir: Path,
+    ) -> None:
+        """read_knowledge_metadata renames superseded_at to valid_until."""
+        from core.memory.manager import MemoryManager
+
+        mm = MemoryManager(anima_dir)
+        knowledge_dir = anima_dir / "knowledge"
+
+        # Write a file with legacy superseded_at field
+        path = _write_knowledge(
+            knowledge_dir, "legacy.md", "Legacy content",
+            {
+                "created_at": "2026-01-01T10:00:00",
+                "superseded_at": "2026-02-01T12:00:00",
+                "superseded_by": "new-file.md",
+            },
+        )
+
+        meta = mm.read_knowledge_metadata(path)
+
+        # superseded_at should be migrated to valid_until
+        assert "valid_until" in meta
+        assert meta["valid_until"] == "2026-02-01T12:00:00"
+        # superseded_at should no longer be present
+        assert "superseded_at" not in meta
+        # superseded_by should remain unchanged
+        assert meta["superseded_by"] == "new-file.md"
+
+    def test_read_knowledge_metadata_preserves_valid_until(
+        self, anima_dir: Path,
+    ) -> None:
+        """Files already using valid_until are returned as-is."""
+        from core.memory.manager import MemoryManager
+
+        mm = MemoryManager(anima_dir)
+        knowledge_dir = anima_dir / "knowledge"
+
+        path = _write_knowledge(
+            knowledge_dir, "modern.md", "Modern content",
+            {
+                "created_at": "2026-01-01T10:00:00",
+                "valid_until": "2026-02-15T10:00:00",
+            },
+        )
+
+        meta = mm.read_knowledge_metadata(path)
+        assert meta["valid_until"] == "2026-02-15T10:00:00"
+
+    def test_indexer_migrates_superseded_at_in_frontmatter(
+        self, anima_dir: Path,
+    ) -> None:
+        """Indexer's _extract_metadata migrates superseded_at in frontmatter."""
+        from unittest.mock import MagicMock
+
+        from core.memory.rag.indexer import MemoryIndexer
+
+        mock_store = MagicMock()
+        mock_model = MagicMock()
+        mock_model.encode.return_value = [[0.1] * 384]
+
+        indexer = MemoryIndexer(
+            mock_store, "test-anima", anima_dir,
+            embedding_model=mock_model,
+        )
+
+        knowledge_dir = anima_dir / "knowledge"
+        test_file = knowledge_dir / "test.md"
+        test_file.write_text("test content", encoding="utf-8")
+
+        # Pass legacy frontmatter with superseded_at
+        legacy_fm = {
+            "superseded_at": "2026-02-01T12:00:00",
+            "superseded_by": "newer.md",
+        }
+        metadata = indexer._extract_metadata(
+            test_file, "test content", "knowledge", 0, 1,
+            frontmatter=legacy_fm,
+        )
+
+        assert metadata["valid_until"] == "2026-02-01T12:00:00"
+
+    def test_indexer_default_valid_until_empty(
+        self, anima_dir: Path,
+    ) -> None:
+        """Chunks without valid_until in frontmatter get empty string default."""
+        from unittest.mock import MagicMock
+
+        from core.memory.rag.indexer import MemoryIndexer
+
+        mock_store = MagicMock()
+        mock_model = MagicMock()
+        mock_model.encode.return_value = [[0.1] * 384]
+
+        indexer = MemoryIndexer(
+            mock_store, "test-anima", anima_dir,
+            embedding_model=mock_model,
+        )
+
+        knowledge_dir = anima_dir / "knowledge"
+        test_file = knowledge_dir / "active.md"
+        test_file.write_text("active content", encoding="utf-8")
+
+        metadata = indexer._extract_metadata(
+            test_file, "active content", "knowledge", 0, 1,
+            frontmatter={},
+        )
+
+        assert metadata["valid_until"] == ""
+
+
+# ── RAG Filter Tests ─────────────────────────────────────────
+
+
+class TestRAGFilter:
+    """Test that superseded knowledge is filtered from RAG search."""
+
+    def test_search_excludes_superseded_by_default(self) -> None:
+        """search() passes valid_until filter when include_superseded=False."""
+        from unittest.mock import MagicMock, patch
+
+        from core.memory.rag.retriever import MemoryRetriever
+
+        mock_store = MagicMock()
+        mock_indexer = MagicMock()
+        mock_indexer._generate_embeddings.return_value = [[0.1] * 384]
+
+        # Return empty results from vector store
+        mock_store.query.return_value = []
+
+        retriever = MemoryRetriever(mock_store, mock_indexer, Path("/tmp"))
+
+        retriever.search(
+            query="test query",
+            anima_name="test-anima",
+            memory_type="knowledge",
+        )
+
+        # Verify filter_metadata was passed with valid_until=""
+        mock_store.query.assert_called_once()
+        call_kwargs = mock_store.query.call_args
+        assert call_kwargs.kwargs.get("filter_metadata") == {"valid_until": ""}
+
+    def test_search_includes_superseded_when_requested(self) -> None:
+        """search() does not filter when include_superseded=True."""
+        from unittest.mock import MagicMock
+
+        from core.memory.rag.retriever import MemoryRetriever
+
+        mock_store = MagicMock()
+        mock_indexer = MagicMock()
+        mock_indexer._generate_embeddings.return_value = [[0.1] * 384]
+
+        mock_store.query.return_value = []
+
+        retriever = MemoryRetriever(mock_store, mock_indexer, Path("/tmp"))
+
+        retriever.search(
+            query="test query",
+            anima_name="test-anima",
+            memory_type="knowledge",
+            include_superseded=True,
+        )
+
+        call_kwargs = mock_store.query.call_args
+        assert call_kwargs.kwargs.get("filter_metadata") is None
+
+    def test_search_no_filter_for_non_knowledge_types(self) -> None:
+        """search() does not filter valid_until for non-knowledge memory types."""
+        from unittest.mock import MagicMock
+
+        from core.memory.rag.retriever import MemoryRetriever
+
+        mock_store = MagicMock()
+        mock_indexer = MagicMock()
+        mock_indexer._generate_embeddings.return_value = [[0.1] * 384]
+
+        mock_store.query.return_value = []
+
+        retriever = MemoryRetriever(mock_store, mock_indexer, Path("/tmp"))
+
+        retriever.search(
+            query="test query",
+            anima_name="test-anima",
+            memory_type="episodes",
+        )
+
+        call_kwargs = mock_store.query.call_args
+        assert call_kwargs.kwargs.get("filter_metadata") is None
 
 
 if __name__ == "__main__":

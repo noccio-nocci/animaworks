@@ -26,6 +26,10 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.memory.activity import ActivityLogger
 
 logger = logging.getLogger("animaworks.contradiction")
 
@@ -74,17 +78,24 @@ class ContradictionDetector:
     NLI_CONTRADICTION_THRESHOLD = 0.65
     VECTOR_SIMILARITY_THRESHOLD = 0.75
 
-    def __init__(self, anima_dir: Path, anima_name: str) -> None:
+    def __init__(
+        self,
+        anima_dir: Path,
+        anima_name: str,
+        activity_logger: ActivityLogger | None = None,
+    ) -> None:
         """Initialize contradiction detector.
 
         Args:
             anima_dir: Path to anima's directory (~/.animaworks/animas/{name})
             anima_name: Name of the anima for logging and RAG collection lookup
+            activity_logger: Optional ActivityLogger for recording resolution events
         """
         self.anima_dir = anima_dir
         self.anima_name = anima_name
         self.knowledge_dir = anima_dir / "knowledge"
         self._nli_validator: object | None = None  # KnowledgeValidator instance
+        self._activity_logger = activity_logger
 
     # ── NLI validator access ────────────────────────────────────
 
@@ -527,24 +538,31 @@ class ContradictionDetector:
 
         for pair in pairs:
             try:
-                if pair.resolution == "supersede":
+                strategy = pair.resolution
+                if strategy == "supersede":
                     self._apply_supersede(pair)
                     results["superseded"] += 1
-                elif pair.resolution == "merge":
+                elif strategy == "merge":
                     merged = await self._apply_merge(pair, model)
                     if merged:
                         results["merged"] += 1
                     else:
                         results["errors"] += 1
-                elif pair.resolution == "coexist":
+                        continue
+                elif strategy == "coexist":
                     self._apply_coexist(pair)
                     results["coexisted"] += 1
                 else:
                     logger.warning(
                         "Unknown resolution type '%s' for %s vs %s",
-                        pair.resolution, pair.file_a.name, pair.file_b.name,
+                        strategy, pair.file_a.name, pair.file_b.name,
                     )
                     results["errors"] += 1
+                    continue
+
+                # Record activity log event for successful resolutions
+                self._log_resolution(pair, strategy)
+
             except Exception:
                 logger.exception(
                     "Failed to resolve contradiction: %s vs %s",
@@ -558,6 +576,37 @@ class ContradictionDetector:
         )
 
         return results
+
+    def _log_resolution(
+        self, pair: ContradictionPair, strategy: str,
+    ) -> None:
+        """Record a knowledge_contradiction_resolved event to the activity log.
+
+        Args:
+            pair: The resolved contradiction pair
+            strategy: Resolution strategy applied (supersede/merge/coexist)
+        """
+        if self._activity_logger is None:
+            return
+        try:
+            self._activity_logger.log(
+                event_type="knowledge_contradiction_resolved",
+                content=(
+                    f"矛盾解決: {pair.file_a.name} vs {pair.file_b.name}"
+                    f" → 戦略: {strategy}"
+                ),
+                summary=f"knowledge矛盾解決({strategy})",
+                meta={
+                    "strategy": strategy,
+                    "newer": pair.file_b.name,
+                    "older": pair.file_a.name,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "Failed to log contradiction resolution event for %s vs %s",
+                pair.file_a.name, pair.file_b.name,
+            )
 
     def _apply_supersede(self, pair: ContradictionPair) -> None:
         """Resolve by superseding the older file with the newer one.
@@ -593,7 +642,7 @@ class ContradictionDetector:
 
         # Update older file metadata before archiving
         older_meta["superseded_by"] = newer.name
-        older_meta["superseded_at"] = now
+        older_meta["valid_until"] = now
         older_content = mm.read_knowledge_content(older)
         mm.write_knowledge_with_meta(older, older_content, older_meta)
 

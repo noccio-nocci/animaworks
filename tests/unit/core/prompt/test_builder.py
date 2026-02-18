@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.prompt.builder import (
+    BuildResult,
     _build_messaging_section,
     _build_org_context,
     _discover_other_animas,
@@ -147,7 +148,8 @@ class TestBuildSystemPrompt:
 
         with patch("core.prompt.builder.load_prompt", return_value="prompt section"):
             result = build_system_prompt(memory)
-            assert isinstance(result, str)
+            assert isinstance(result, BuildResult)
+            assert isinstance(result.system_prompt, str)
             assert len(result) > 0
 
     def test_includes_identity(self, tmp_path, data_dir):
@@ -270,7 +272,8 @@ class TestBuildSystemPrompt:
 
         with patch("core.prompt.builder.load_prompt", return_value="section"):
             result = build_system_prompt(memory)
-            assert "現在の状態" in result
+            # Non-idle state goes to "進行中タスク" branch
+            assert "進行中タスク" in result
             assert "status: working" in result
             assert "未完了タスク" in result
             assert "task 1" in result

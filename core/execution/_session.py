@@ -22,7 +22,7 @@ from datetime import datetime
 from core.memory import MemoryManager
 from core.memory.shortterm import SessionState, ShortTermMemory
 from core.paths import load_prompt
-from core.prompt.builder import build_system_prompt, inject_shortterm
+from core.prompt.builder import BuildResult, build_system_prompt, inject_shortterm
 from core.prompt.context import ContextTracker
 
 logger = logging.getLogger("animaworks.execution.session")
@@ -35,7 +35,7 @@ async def handle_session_chaining(
     shortterm: ShortTermMemory | None,
     memory: MemoryManager,
     current_text: str,
-    system_prompt_builder: Callable[[], str],
+    system_prompt_builder: Callable[[], BuildResult | str],
     max_chains: int,
     chain_count: int,
     *,
@@ -121,8 +121,10 @@ async def handle_session_chaining(
     )
 
     tracker.reset()
+    built = system_prompt_builder()
+    base_prompt = built.system_prompt if isinstance(built, BuildResult) else built
     new_system_prompt = inject_shortterm(
-        system_prompt_builder(),
+        base_prompt,
         shortterm,
     )
     shortterm.clear()

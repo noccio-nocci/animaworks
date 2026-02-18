@@ -25,6 +25,34 @@ from typing import Any
 logger = logging.getLogger("animaworks.consolidation")
 
 
+# ── Path sanitization ─────────────────────────────────────────
+
+
+def _sanitize_filepath(base_dir: Path, filename: str) -> Path:
+    """Sanitize LLM-generated filename to prevent path traversal.
+
+    Resolves the constructed path and verifies it stays within *base_dir*.
+    If a traversal is detected, the filename is cleaned by replacing
+    non-alphanumeric characters (except ``-`` and ``.``) with ``_``,
+    and a ``.md`` suffix is ensured.
+
+    Args:
+        base_dir: Target directory that the file must reside in.
+        filename: LLM-generated filename (may contain ``../``).
+
+    Returns:
+        Safe absolute path guaranteed to be inside *base_dir*.
+    """
+    filepath = (base_dir / filename).resolve()
+    if not filepath.is_relative_to(base_dir.resolve()):
+        logger.warning("Path traversal detected in LLM filename: %s", filename)
+        safe_name = re.sub(r"[^\w\-.]", "_", Path(filename).name)
+        if not safe_name.endswith(".md"):
+            safe_name += ".md"
+        filepath = base_dir / safe_name
+    return filepath
+
+
 # ── ConsolidationEngine ────────────────────────────────────────
 
 
@@ -196,48 +224,46 @@ class ConsolidationEngine:
             for e in episode_entries
         ])
 
-        # ── Procedural distillation: classify and split episodes ──
+        # ── Procedural distillation: LLM-based classification ──
         distillation_result: dict[str, Any] = {
             "procedures_created": [],
         }
-        semantic_entries = episode_entries
         try:
             from core.memory.distillation import ProceduralDistiller
 
             distiller = ProceduralDistiller(self.anima_dir, self.anima_name)
-            semantic_text, procedural_text = distiller.classify_episode_sections(
-                episodes_text,
+            classification = await distiller.classify_and_distill(
+                episodes_text, model=model,
             )
 
-            # Distill procedural episodes into procedure files
-            if procedural_text.strip():
-                procedures = await distiller.distill_procedures(
-                    procedural_text, model=model,
-                )
-                saved_paths: list[str] = []
-                for item in procedures:
-                    path = distiller.save_procedure(item)
-                    if path is not None:
-                        saved_paths.append(str(path))
-                distillation_result["procedures_created"] = saved_paths
+            # Save extracted procedures
+            procedures = await distiller.distill_procedures(
+                episodes_text, model=model,
+            ) if not classification["procedure_items"] else []
+
+            # Use procedure_items from classification if available
+            saved_paths: list[str] = []
+            for item in classification["procedure_items"]:
+                filename = item.get("filename", "")
+                title = filename.replace("procedures/", "").replace(".md", "")
+                if not title or not item.get("content"):
+                    continue
+                proc_item = {
+                    "title": title,
+                    "description": item.get("description", ""),
+                    "tags": item.get("tags", []),
+                    "content": item["content"],
+                }
+                path = distiller.save_procedure(proc_item)
+                if path is not None:
+                    saved_paths.append(str(path))
+
+            distillation_result["procedures_created"] = saved_paths
+            if saved_paths:
                 logger.info(
                     "Daily distillation: created %d procedures for anima=%s",
                     len(saved_paths), self.anima_name,
                 )
-
-            # Filter episode_entries to semantic-only for knowledge consolidation
-            if semantic_text.strip():
-                semantic_entries = self._filter_entries_by_text(
-                    episode_entries, semantic_text,
-                )
-            elif not procedural_text.strip():
-                # Both empty — keep original entries
-                pass
-            else:
-                # All episodes were procedural — still pass originals
-                # to _summarize_episodes so knowledge extraction can
-                # find non-procedural insights
-                pass
 
         except Exception:
             logger.exception(
@@ -246,9 +272,9 @@ class ConsolidationEngine:
                 self.anima_name,
             )
 
-        # Generate consolidation via LLM (semantic episodes only)
+        # Generate consolidation via LLM (all episodes)
         consolidation_result = await self._summarize_episodes(
-            episode_entries=semantic_entries,
+            episode_entries=episode_entries,
             existing_knowledge_files=existing_knowledge,
             model=model,
             resolved_events=resolved_events,
@@ -351,44 +377,42 @@ class ConsolidationEngine:
         episodes_text: str,
         model: str,
     ) -> dict[str, Any]:
-        """Run prediction-error-based reconsolidation on today's episodes.
+        """Run failure-count-based reconsolidation on procedures.
 
-        Detects contradictions between new episodes and existing
-        knowledge/procedures, then applies version-controlled updates.
+        Scans procedure frontmatter for files with failure_count >= 2
+        and confidence < 0.6, then uses an LLM to revise them.
 
         Args:
-            episodes_text: Concatenated episode text for the day.
-            model: LLM model identifier for analysis.
+            episodes_text: Concatenated episode text (unused, kept for API compat).
+            model: LLM model identifier for revision.
 
         Returns:
-            Dict with reconsolidation results (errors_detected, updated, etc.).
+            Dict with reconsolidation results (targets_found, updated, etc.).
         """
         from core.memory.reconsolidation import ReconsolidationEngine
 
         engine = ReconsolidationEngine(self.anima_dir, self.anima_name)
-        errors = await engine.detect_prediction_errors(episodes_text, model)
+        targets = await engine.find_reconsolidation_targets()
 
-        if not errors:
+        if not targets:
             logger.info(
-                "No prediction errors detected for anima=%s",
+                "No reconsolidation targets found for anima=%s",
                 self.anima_name,
             )
-            return {"errors_detected": 0, "updated": 0, "skipped": 0}
+            return {"targets_found": 0, "updated": 0, "skipped": 0}
 
         logger.info(
-            "Detected %d prediction errors for anima=%s, applying reconsolidation",
-            len(errors), self.anima_name,
+            "Found %d reconsolidation targets for anima=%s, applying",
+            len(targets), self.anima_name,
         )
 
-        result = await engine.apply_reconsolidation(errors)
-        result["errors_detected"] = len(errors)
+        result = await engine.apply_reconsolidation(targets, model)
+        result["targets_found"] = len(targets)
 
-        # Re-index updated files
-        updated_files: list[str] = []
-        for error in errors:
-            if error.updated_content and error.source_file.exists():
-                rel = error.source_file.name
-                updated_files.append(rel)
+        # Re-index updated procedure files
+        updated_files: list[str] = [
+            t.name for t in targets if t.exists()
+        ]
         if updated_files:
             self._update_rag_index(updated_files)
 
@@ -919,7 +943,8 @@ class ConsolidationEngine:
                 if not filename.endswith(".md"):
                     filename += ".md"
 
-                filepath = self.knowledge_dir / filename
+                filepath = _sanitize_filepath(self.knowledge_dir, filename)
+                filename = filepath.name
 
                 if filepath.exists():
                     # Read existing metadata and content, then append
@@ -971,7 +996,8 @@ class ConsolidationEngine:
                 if not filename.endswith(".md"):
                     filename += ".md"
 
-                filepath = self.knowledge_dir / filename
+                filepath = _sanitize_filepath(self.knowledge_dir, filename)
+                filename = filepath.name
 
                 if not filepath.exists():
                     # Build source episode filenames
@@ -1165,11 +1191,13 @@ class ConsolidationEngine:
             List of (file1, file2, similarity_score) tuples, sorted by similarity desc.
         """
         try:
-            from core.memory.rag import MemoryRetriever
+            from core.memory.rag.indexer import MemoryIndexer
+            from core.memory.rag.retriever import MemoryRetriever
             from core.memory.rag.singleton import get_vector_store
 
             vector_store = get_vector_store()
-            retriever = MemoryRetriever(vector_store, self.anima_name, self.anima_dir)
+            indexer = MemoryIndexer(vector_store, self.anima_name, self.anima_dir)
+            retriever = MemoryRetriever(vector_store, indexer, self.knowledge_dir)
 
             # Get all knowledge files
             knowledge_files = self._list_knowledge_files()
@@ -1194,14 +1222,16 @@ class ConsolidationEngine:
                     try:
                         results = retriever.search(
                             query=content1[:500],  # Use first 500 chars as query
+                            anima_name=self.anima_name,
                             memory_type="knowledge",
                             top_k=10,
                         )
 
                         # Check if file2 appears in results
                         for result in results:
-                            if file2 in result.get("source_file", ""):
-                                similarity = result.get("score", 0.0)
+                            source_file = result.metadata.get("source_file", "")
+                            if file2 in source_file:
+                                similarity = result.score
                                 if similarity >= threshold:
                                     duplicates.append((file1, file2, similarity))
                                     break
@@ -1302,7 +1332,10 @@ class ConsolidationEngine:
                     if not merged_filename.endswith(".md"):
                         merged_filename += ".md"
 
-                    merged_path = self.knowledge_dir / merged_filename
+                    merged_path = _sanitize_filepath(
+                        self.knowledge_dir, merged_filename,
+                    )
+                    merged_filename = merged_path.name
 
                     # Write merged file
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")

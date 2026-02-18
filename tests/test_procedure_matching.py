@@ -136,10 +136,11 @@ class TestBuilderProcedureInjection:
 
         from core.prompt.builder import build_system_prompt
 
-        prompt = build_system_prompt(
+        result = build_system_prompt(
             memory,
             message="デプロイをお願いします",
         )
+        prompt = result.system_prompt
 
         assert "手順: deploy (手順)" in prompt
         assert "# Deploy Steps" in prompt
@@ -163,16 +164,17 @@ class TestBuilderProcedureInjection:
 
         from core.prompt.builder import build_system_prompt
 
-        prompt = build_system_prompt(
+        result = build_system_prompt(
             memory,
             message="こんにちは",  # Won't match "backup"
         )
+        prompt = result.system_prompt
 
         assert "## 手順書" in prompt
         assert "| backup |" in prompt
 
     def test_injected_procedures_tracked(self, memory, anima_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Injected procedures should be recorded in _last_injected_procedures."""
+        """Injected procedures should be recorded in BuildResult.injected_procedures."""
         (anima_dir / "procedures" / "deploy.md").write_text(
             "---\ndescription: \"「デプロイ」手順\"\n---\n\n# Deploy",
             encoding="utf-8",
@@ -184,15 +186,12 @@ class TestBuilderProcedureInjection:
         monkeypatch.setattr("core.prompt.builder.load_prompt", mock_load_prompt)
         monkeypatch.setattr("core.prompt.builder._build_org_context", lambda *a, **kw: "")
 
-        from core.prompt.builder import _last_injected_procedures, build_system_prompt
+        from core.prompt.builder import build_system_prompt
 
-        build_system_prompt(memory, message="デプロイをお願いします")
+        result = build_system_prompt(memory, message="デプロイをお願いします")
 
-        anima_name = anima_dir.name
-        assert anima_name in _last_injected_procedures
-        paths = _last_injected_procedures[anima_name]
-        assert len(paths) >= 1
-        assert any("deploy" in str(p) for p in paths)
+        assert len(result.injected_procedures) >= 1
+        assert any("deploy" in str(p) for p in result.injected_procedures)
 
 
 # ── 2-3: Priming Channel D with procedures ──────────────

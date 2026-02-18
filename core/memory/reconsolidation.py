@@ -7,306 +7,216 @@ from __future__ import annotations
 # See LICENSES/AGPL-3.0.txt for the full license text.
 
 
-"""Prediction-error-based memory reconsolidation engine.
+"""Failure-count-based memory reconsolidation engine.
 
-When new episodes contradict existing knowledge or procedures, the
-system detects a "prediction error" and reconsolidates (updates) the
-existing memory.  This mirrors the reconsolidation process observed
-in biological memory systems, where reactivated memories become
-labile and susceptible to modification.
+When a procedure has accumulated enough failures (failure_count >= 2)
+and its confidence has dropped below a threshold (confidence < 0.6),
+the system triggers reconsolidation — an LLM-driven revision of the
+procedure content.  After revision the counters are reset and a new
+version is created with an archived copy of the previous one.
 
 Pipeline:
-  1. RAG search for related existing knowledge/procedures
-  2. NLI contradiction check (fast, local)
-  3. LLM detailed analysis of prediction errors
-  4. Version-controlled update of existing memories
+  1. Scan procedure frontmatter for reconsolidation targets
+  2. LLM-based procedure revision
+  3. Version-controlled update with counter reset
+  4. Activity log event recording
 """
 
-import json
 import logging
-import re
 import shutil
-from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("animaworks.reconsolidation")
 
 
-# ── Data Structures ────────────────────────────────────────────
-
-
-@dataclass
-class PredictionError:
-    """A detected contradiction between new episodes and existing memory.
-
-    Attributes:
-        source_file: Path to the contradicted knowledge/procedure file.
-        memory_type: Type of memory ("knowledge" or "procedures").
-        error_type: Category of prediction error.
-        description: Human-readable description of the contradiction.
-        original_content: Original content of the memory file.
-        updated_content: LLM-proposed updated content, or None if no update.
-        confidence: Confidence score of the prediction error detection (0-1).
-    """
-
-    source_file: Path
-    memory_type: str  # "knowledge" | "procedures"
-    error_type: str  # "factual_update" | "procedure_change" | "context_shift"
-    description: str
-    original_content: str
-    updated_content: str | None
-    confidence: float
-
-
 # ── ReconsolidationEngine ──────────────────────────────────────
 
 
 class ReconsolidationEngine:
-    """Prediction-error-based memory reconsolidation engine.
+    """Failure-count-based memory reconsolidation engine.
 
-    Detects when new episodes contradict existing knowledge or procedures
-    ("prediction errors") and updates the affected memories through a
-    version-controlled reconsolidation process.
+    Scans procedure files for those with high failure counts and low
+    confidence, then uses an LLM to revise the procedure content.
+    Each revision is version-controlled with an archived copy.
     """
 
-    PREDICTION_ERROR_NLI_THRESHOLD = 0.6
-
-    def __init__(self, anima_dir: Path, anima_name: str) -> None:
+    def __init__(
+        self,
+        anima_dir: Path,
+        anima_name: str,
+        *,
+        memory_manager: Any | None = None,
+        activity_logger: Any | None = None,
+    ) -> None:
         """Initialize the reconsolidation engine.
 
         Args:
             anima_dir: Path to anima's directory (~/.animaworks/animas/{name}).
-            anima_name: Name of the anima for logging and RAG queries.
+            anima_name: Name of the anima for logging.
+            memory_manager: Optional MemoryManager instance. Created if None.
+            activity_logger: Optional ActivityLogger instance. Created if None.
         """
         self.anima_dir = anima_dir
         self.anima_name = anima_name
-        self.knowledge_dir = anima_dir / "knowledge"
-        self.procedures_dir = anima_dir / "procedures"
-        self._nli_validator: Any | None = None
 
-    # ── Prediction Error Detection ─────────────────────────────
+        if memory_manager is not None:
+            self.memory_manager = memory_manager
+        else:
+            from core.memory.manager import MemoryManager
+            self.memory_manager = MemoryManager(anima_dir)
 
-    async def detect_prediction_errors(
+        if activity_logger is not None:
+            self.activity_logger = activity_logger
+        else:
+            from core.memory.activity import ActivityLogger
+            self.activity_logger = ActivityLogger(anima_dir)
+
+    # ── Target Detection ───────────────────────────────────────
+
+    async def find_reconsolidation_targets(self) -> list[Path]:
+        """Find procedures with failure_count >= 2 and confidence < 0.6.
+
+        Scans all ``*.md`` files in the anima's ``procedures/`` directory,
+        reading YAML frontmatter to check the trigger conditions.
+
+        Returns:
+            List of paths to procedure files that need reconsolidation.
+        """
+        targets: list[Path] = []
+        procedures_dir = self.anima_dir / "procedures"
+        if not procedures_dir.exists():
+            return targets
+        for md_file in procedures_dir.glob("*.md"):
+            meta = self.memory_manager.read_procedure_metadata(md_file)
+            failure_count = meta.get("failure_count", 0)
+            confidence = meta.get("confidence", 1.0)
+            if failure_count >= 2 and confidence < 0.6:
+                targets.append(md_file)
+        return targets
+
+    # ── Reconsolidation Application ────────────────────────────
+
+    async def apply_reconsolidation(
         self,
-        new_episodes: str,
+        targets: list[Path],
         model: str = "anthropic/claude-sonnet-4-20250514",
-    ) -> list[PredictionError]:
-        """Detect prediction errors between new episodes and existing memories.
+    ) -> dict[str, int]:
+        """Revise procedures using LLM and reset counters.
 
-        Pipeline:
-          1. RAG search for related existing knowledge/procedures
-          2. NLI contradiction check per related memory
-          3. LLM detailed analysis for confirmed contradictions
-
-        Args:
-            new_episodes: Text of new episodes to check against existing memory.
-            model: LLM model identifier (LiteLLM format) for detailed analysis.
-
-        Returns:
-            List of detected prediction errors with proposed updates.
-        """
-        errors: list[PredictionError] = []
-        related = self._find_related_memories(new_episodes)
-
-        if not related:
-            logger.debug(
-                "No related memories found for reconsolidation check, "
-                "anima=%s",
-                self.anima_name,
-            )
-            return errors
-
-        logger.info(
-            "Checking %d related memories for prediction errors, anima=%s",
-            len(related), self.anima_name,
-        )
-
-        for mem in related:
-            # NLI contradiction check
-            is_contradiction, nli_score = await self._nli_contradiction_check(
-                new_episodes[:2000], mem["content"][:2000],
-            )
-            if not is_contradiction:
-                continue
-
-            logger.info(
-                "NLI contradiction detected (score=%.2f) for %s, "
-                "running LLM analysis",
-                nli_score, mem["file"],
-            )
-
-            # LLM detailed analysis
-            analysis = await self._analyze_prediction_error(
-                new_episodes, mem, model,
-            )
-            if analysis:
-                errors.append(analysis)
-
-        logger.info(
-            "Prediction error detection complete for anima=%s: %d errors found",
-            self.anima_name, len(errors),
-        )
-        return errors
-
-    def _find_related_memories(self, episodes: str) -> list[dict[str, Any]]:
-        """Find existing knowledge/procedures related to the new episodes.
-
-        Uses RAG vector search to find semantically similar memories.
+        For each target procedure:
+          1. Read current metadata and content
+          2. Use LLM to generate a revised procedure
+          3. Archive the current version
+          4. Write revised content with reset metadata
+          5. Record activity log event
 
         Args:
-            episodes: New episode text to search against.
+            targets: List of procedure file paths to reconsolidate.
+            model: LLM model identifier (LiteLLM format) for revision.
 
         Returns:
-            List of dicts with "file", "content", "memory_type" keys.
+            Dict with counts: "updated", "skipped", "errors".
         """
-        related: list[dict[str, Any]] = []
+        results: dict[str, int] = {"updated": 0, "skipped": 0, "errors": 0}
 
-        try:
-            from core.memory.rag.retriever import MemoryRetriever
-            from core.memory.rag.singleton import get_vector_store
+        for proc_path in targets:
+            try:
+                meta = self.memory_manager.read_procedure_metadata(proc_path)
+                content = self.memory_manager.read_procedure_content(proc_path)
 
-            from core.memory.rag import MemoryIndexer
+                # Use LLM to revise the procedure
+                revised = await self._revise_procedure(content, meta, model)
+                if revised:
+                    version = meta.get("version", 1)
+                    self._archive_version(proc_path, content, version)
 
-            vector_store = get_vector_store()
-            indexer = MemoryIndexer(
-                vector_store, self.anima_name, self.anima_dir,
-            )
+                    meta["version"] = version + 1
+                    meta["failure_count"] = 0
+                    meta["success_count"] = 0
+                    meta["confidence"] = 0.5
+                    meta["previous_version"] = f"v{version}"
+                    meta["reconsolidated_at"] = datetime.now(UTC).isoformat()
 
-            # Search knowledge
-            retriever = MemoryRetriever(
-                vector_store, indexer, self.knowledge_dir,
-            )
-
-            for memory_type, mem_dir in [
-                ("knowledge", self.knowledge_dir),
-                ("procedures", self.procedures_dir),
-            ]:
-                try:
-                    results = retriever.search(
-                        query=episodes[:500],
-                        anima_name=self.anima_name,
-                        memory_type=memory_type,
-                        top_k=5,
+                    self.memory_manager.write_procedure_with_meta(
+                        proc_path, revised, meta,
                     )
-                    for r in results:
-                        source_file = r.metadata.get("source_file", "")
-                        if source_file:
-                            file_path = mem_dir / Path(source_file).name
-                        else:
-                            file_path = mem_dir / f"{r.doc_id}.md"
 
-                        # Read full file content if available
-                        if file_path.exists():
-                            content = file_path.read_text(encoding="utf-8")
-                        else:
-                            content = r.content
+                    # Activity log event
+                    await self._log_reconsolidation(proc_path, version)
+                    results["updated"] += 1
 
-                        related.append({
-                            "file": str(file_path),
-                            "content": content,
-                            "memory_type": memory_type,
-                            "path": file_path,
-                        })
-                except Exception as e:
+                    logger.info(
+                        "Reconsolidated %s: v%d -> v%d",
+                        proc_path.name, version, version + 1,
+                    )
+                else:
+                    results["skipped"] += 1
                     logger.debug(
-                        "RAG search failed for %s: %s", memory_type, e,
+                        "Skipping reconsolidation (LLM returned no revision) "
+                        "for %s",
+                        proc_path.name,
                     )
 
-        except ImportError:
-            logger.debug("RAG not available, skipping related memory search")
-        except Exception as e:
-            logger.warning("Failed to find related memories: %s", e)
+            except Exception as e:
+                logger.warning(
+                    "Reconsolidation failed for %s: %s",
+                    proc_path, e,
+                )
+                results["errors"] += 1
 
-        return related
+        logger.info(
+            "Reconsolidation complete for anima=%s: "
+            "updated=%d skipped=%d errors=%d",
+            self.anima_name,
+            results["updated"],
+            results["skipped"],
+            results["errors"],
+        )
+        return results
 
-    def _get_validator(self) -> Any:
-        """Get or create cached KnowledgeValidator.
+    # ── LLM Procedure Revision ─────────────────────────────────
 
-        Lazily initializes the validator on first use to avoid loading
-        the NLI model until actually needed, and caches it for reuse.
-
-        Returns:
-            Cached KnowledgeValidator instance.
-        """
-        if self._nli_validator is None:
-            from core.memory.validation import KnowledgeValidator
-
-            self._nli_validator = KnowledgeValidator()
-        return self._nli_validator
-
-    async def _nli_contradiction_check(
-        self, new_text: str, existing_text: str,
-    ) -> tuple[bool, float]:
-        """Check if new text contradicts existing text using NLI.
-
-        Reuses the KnowledgeValidator's NLI pipeline for consistency.
-
-        Args:
-            new_text: New episode text (truncated to fit NLI input).
-            existing_text: Existing memory text (truncated to fit NLI input).
-
-        Returns:
-            Tuple of (is_contradiction, nli_score).
-        """
-        try:
-            validator = self._get_validator()
-            label, score = validator._nli_check(new_text, existing_text)
-
-            is_contradiction = (
-                label == "contradiction"
-                and score >= self.PREDICTION_ERROR_NLI_THRESHOLD
-            )
-            return (is_contradiction, score)
-
-        except ImportError:
-            logger.debug("Validation module not available for NLI check")
-            return (False, 0.0)
-        except Exception as e:
-            logger.warning("NLI contradiction check failed: %s", e)
-            return (False, 0.0)
-
-    async def _analyze_prediction_error(
+    async def _revise_procedure(
         self,
-        episodes: str,
-        memory: dict[str, Any],
+        content: str,
+        meta: dict[str, Any],
         model: str,
-    ) -> PredictionError | None:
-        """Use LLM to analyze a potential prediction error in detail.
+    ) -> str | None:
+        """Use LLM to revise a procedure that has been failing.
 
         Args:
-            episodes: Full new episode text.
-            memory: Dict with "file", "content", "memory_type", "path" keys.
+            content: Current procedure body text.
+            meta: Current procedure metadata (failure_count, confidence, etc.).
             model: LLM model identifier (LiteLLM format).
 
         Returns:
-            PredictionError if confirmed, None otherwise.
+            Revised procedure text, or None if revision was not possible.
         """
-        prompt = f"""以下の新しいエピソード（行動記録）と既存の知識/手順を比較してください。
+        failure_count = meta.get("failure_count", 0)
+        confidence = meta.get("confidence", 0.5)
+        description = meta.get("description", "")
 
-【新しいエピソード】
-{episodes[:3000]}
+        prompt = f"""以下の手順書が繰り返し失敗しています。改善してください。
 
-【既存の知識/手順】
-ファイル: {memory['file']}
-{memory['content'][:2000]}
+【手順書の説明】
+{description}
 
-質問:
-1. 新しいエピソードは既存の知識/手順と矛盾していますか？
-2. 矛盾している場合、既存の知識は更新すべきですか？
-3. どのように更新すべきですか？
+【現在の手順書】
+{content[:3000]}
 
-回答はJSON形式で:
-{{"is_error": true, "error_type": "factual_update", "description": "予測誤差の説明", "updated_content": "更新後の知識/手順テキスト（更新不要なら null）"}}
+【メタデータ】
+- 失敗回数: {failure_count}
+- 信頼度: {confidence}
 
-error_type は以下のいずれか:
-- "factual_update": 事実関係の変更（APIエンドポイント、設定値、バージョン等）
-- "procedure_change": 手順・ワークフローの変更
-- "context_shift": 状況・コンテキストの変化（チーム構成、方針転換等）
-- "none": 矛盾なし
+タスク:
+1. なぜこの手順書が失敗しているか考察してください
+2. 改善された手順書を出力してください
 
-is_error が false の場合、error_type は "none" にしてください。"""
+出力形式:
+改善後の手順書テキストのみを出力してください（説明やコメントは不要）。
+コードフェンス（```）で囲まないでください。"""
 
         try:
             import litellm
@@ -323,138 +233,32 @@ is_error が false の場合、error_type は "none" にしてください。"""
             from core.memory.consolidation import ConsolidationEngine
             text = ConsolidationEngine._sanitize_llm_output(text)
 
-            # Extract JSON from response
-            json_match = re.search(r"\{.*\}", text, re.DOTALL)
-            if not json_match:
-                logger.warning(
-                    "No JSON found in LLM prediction error analysis for %s",
-                    memory["file"],
-                )
-                return None
-
-            result = json.loads(json_match.group())
-
-            if not result.get("is_error", False):
-                logger.debug(
-                    "LLM judged no prediction error for %s",
-                    memory["file"],
-                )
-                return None
-
-            error_type = result.get("error_type", "factual_update")
-            if error_type == "none":
-                return None
-
-            return PredictionError(
-                source_file=memory["path"],
-                memory_type=memory["memory_type"],
-                error_type=error_type,
-                description=result.get("description", "")[:500],
-                original_content=memory["content"],
-                updated_content=result.get("updated_content"),
-                confidence=0.7,
-            )
+            if text.strip():
+                return text.strip()
+            return None
 
         except Exception as e:
             logger.warning(
-                "LLM prediction error analysis failed for %s: %s",
-                memory["file"], e,
+                "LLM procedure revision failed: %s", e,
             )
             return None
 
-    # ── Reconsolidation Application ────────────────────────────
-
-    async def apply_reconsolidation(
-        self, errors: list[PredictionError],
-    ) -> dict[str, int]:
-        """Apply prediction errors to update existing memories.
-
-        For each error with updated content:
-          1. Archive the current version of the file
-          2. Update metadata (version, reconsolidation info)
-          3. Write the updated content
-
-        Args:
-            errors: List of prediction errors to apply.
-
-        Returns:
-            Dict with counts: "updated", "skipped", "errors".
-        """
-        results: dict[str, int] = {"updated": 0, "skipped": 0, "errors": 0}
-
-        for error in errors:
-            if not error.updated_content:
-                results["skipped"] += 1
-                logger.debug(
-                    "Skipping reconsolidation (no updated content) for %s",
-                    error.source_file,
-                )
-                continue
-
-            try:
-                # Archive the current version before overwriting
-                self._archive_version(error.source_file)
-
-                # Read and update metadata
-                meta = self._read_metadata(error.source_file)
-                meta["version"] = meta.get("version", 1) + 1
-                meta["updated_at"] = datetime.now().isoformat()
-                meta["reconsolidated_from"] = error.error_type
-                meta["reconsolidation_reason"] = error.description[:200]
-
-                # Reset counters for procedures (fresh evaluation cycle)
-                if error.memory_type == "procedures":
-                    meta["success_count"] = 0
-                    meta["failure_count"] = 0
-                    meta["confidence"] = 0.5
-
-                # Write updated content with metadata
-                from core.memory.manager import MemoryManager
-                mm = MemoryManager(self.anima_dir)
-
-                if error.memory_type == "knowledge":
-                    mm.write_knowledge_with_meta(
-                        error.source_file, error.updated_content, meta,
-                    )
-                elif error.memory_type == "procedures":
-                    mm.write_procedure_with_meta(
-                        error.source_file, error.updated_content, meta,
-                    )
-
-                results["updated"] += 1
-                logger.info(
-                    "Reconsolidated %s: type=%s reason=%s",
-                    error.source_file.name,
-                    error.error_type,
-                    error.description[:100],
-                )
-
-            except Exception as e:
-                logger.warning(
-                    "Reconsolidation failed for %s: %s",
-                    error.source_file, e,
-                )
-                results["errors"] += 1
-
-        logger.info(
-            "Reconsolidation complete for anima=%s: "
-            "updated=%d skipped=%d errors=%d",
-            self.anima_name,
-            results["updated"],
-            results["skipped"],
-            results["errors"],
-        )
-        return results
-
     # ── Version Management ─────────────────────────────────────
 
-    def _archive_version(self, file_path: Path) -> None:
-        """Archive the current version of a file before reconsolidation.
+    def _archive_version(
+        self,
+        file_path: Path,
+        content: str,
+        version: int,
+    ) -> None:
+        """Archive the current version of a procedure before reconsolidation.
 
         Saves a timestamped copy to archive/versions/ for audit trail.
 
         Args:
-            file_path: Path to the file to archive.
+            file_path: Path to the procedure file to archive.
+            content: Current content of the file (body text without frontmatter).
+            version: Current version number from metadata.
         """
         if not file_path.exists():
             return
@@ -462,10 +266,7 @@ is_error が false の場合、error_type は "none" にしてください。"""
         archive_dir = self.anima_dir / "archive" / "versions"
         archive_dir.mkdir(parents=True, exist_ok=True)
 
-        meta = self._read_metadata(file_path)
-        version = meta.get("version", 1)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         dest = archive_dir / f"{file_path.stem}_v{version}_{timestamp}{file_path.suffix}"
         shutil.copy2(str(file_path), str(dest))
 
@@ -474,24 +275,28 @@ is_error が false の場合、error_type は "none" にしてください。"""
             version, file_path.name, dest.name,
         )
 
-    def _read_metadata(self, file_path: Path) -> dict[str, Any]:
-        """Read YAML frontmatter metadata from a memory file.
+    # ── Activity Logging ───────────────────────────────────────
 
-        Supports both knowledge and procedure files.
+    async def _log_reconsolidation(
+        self,
+        proc_path: Path,
+        old_version: int,
+    ) -> None:
+        """Record a procedure_reconsolidated event in the activity log.
 
         Args:
-            file_path: Path to the memory file.
-
-        Returns:
-            Metadata dict, or empty dict if no frontmatter.
+            proc_path: Path to the reconsolidated procedure file.
+            old_version: Version number before reconsolidation.
         """
-        from core.memory.manager import MemoryManager
-        mm = MemoryManager(self.anima_dir)
-
-        # Determine memory type by parent directory
-        if self.knowledge_dir in file_path.parents or file_path.parent == self.knowledge_dir:
-            return mm.read_knowledge_metadata(file_path)
-        elif self.procedures_dir in file_path.parents or file_path.parent == self.procedures_dir:
-            return mm.read_procedure_metadata(file_path)
-        else:
-            return mm.read_knowledge_metadata(file_path)
+        self.activity_logger.log(
+            "procedure_reconsolidated",
+            summary=(
+                f"Reconsolidated {proc_path.name}: "
+                f"v{old_version} -> v{old_version + 1}"
+            ),
+            meta={
+                "procedure": proc_path.name,
+                "old_version": old_version,
+                "new_version": old_version + 1,
+            },
+        )

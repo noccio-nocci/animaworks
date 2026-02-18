@@ -490,9 +490,9 @@ class TestBuilderResolutionInjection:
         mm = MemoryManager(anima_dir)
         mm.append_resolution(issue="テスト問題解決", resolver="builder-test")
 
-        prompt = build_system_prompt(mm)
-        assert "解決済み案件" in prompt
-        assert "テスト問題解決" in prompt
+        result = build_system_prompt(mm)
+        assert "解決済み案件" in result.system_prompt
+        assert "テスト問題解決" in result.system_prompt
 
     def test_builder_no_resolutions_when_empty(self, data_dir):
         """build_system_prompt omits resolution section when none exist."""
@@ -501,8 +501,8 @@ class TestBuilderResolutionInjection:
         from core.prompt.builder import build_system_prompt
 
         mm = MemoryManager(anima_dir)
-        prompt = build_system_prompt(mm)
-        assert "解決済み案件" not in prompt
+        result = build_system_prompt(mm)
+        assert "解決済み案件" not in result.system_prompt
 
 
 # ── Consolidation resolved events test ────────────────────────

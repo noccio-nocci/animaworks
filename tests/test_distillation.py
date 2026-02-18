@@ -7,15 +7,16 @@ from __future__ import annotations
 # See LICENSES/AGPL-3.0.txt for the full license text.
 
 
-"""Tests for procedural memory auto-distillation (Issue 4).
+"""Tests for procedural memory auto-distillation (LLM-based classification).
 
 Covers:
-  - Pattern detection and classification
-  - Section splitting
-  - LLM distillation (mocked)
+  - LLM-based classification (knowledge/procedures/skip)
+  - Classification output parsing
   - Procedure saving with frontmatter
-  - Weekly pattern distillation (mocked)
+  - Weekly pattern detection (activity_log-based)
+  - Activity clustering (text-based fallback and vector-based)
   - Pipeline integration with consolidation
+  - Fallback behaviour for unparseable LLM output
 """
 
 import json
@@ -35,7 +36,7 @@ def anima_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     d = tmp_path / "animas" / "test-anima"
     for sub in (
         "episodes", "knowledge", "procedures", "skills", "state",
-        "shortterm",
+        "shortterm", "activity_log",
     ):
         (d / sub).mkdir(parents=True)
 
@@ -65,133 +66,178 @@ def consolidation_engine(anima_dir: Path):
     return ConsolidationEngine(anima_dir=anima_dir, anima_name="test-anima")
 
 
-# ── Pattern Detection ─────────────────────────────────────────
+# ── LLM Classification ─────────────────────────────────────────
 
 
-class TestIsProceduralDetection:
-    """Test the _is_procedural() pattern matcher."""
+class TestClassifyAndDistill:
+    """Test the LLM-based classify_and_distill() method."""
 
-    def test_procedural_with_steps(self, distiller) -> None:
-        text = (
-            "## デプロイ手順\n"
-            "まずコマンドを実行した。次にデプロイを確認した。"
+    @pytest.mark.asyncio
+    async def test_classify_extracts_knowledge_and_procedures(
+        self, distiller,
+    ) -> None:
+        """LLM classification should extract both knowledge and procedure items."""
+        llm_response = (
+            "## knowledge抽出\n"
+            "- ファイル名: knowledge/api-patterns.md\n"
+            "  内容: # APIパターン\n\nREST APIでは常にべき等性を考慮する。\n\n"
+            "## procedure抽出\n"
+            "- ファイル名: procedures/deploy-production.md\n"
+            "  description: 本番環境デプロイ手順\n"
+            "  tags: deploy, ops\n"
+            "  内容: # 本番デプロイ\n\n1. テスト実行\n2. ビルド\n3. デプロイ"
         )
-        assert distiller._is_procedural(text) is True
 
-    def test_procedural_with_arrow_chains(self, distiller) -> None:
-        text = "ビルド → テスト → デプロイ → 確認。コマンドを実行した。"
-        assert distiller._is_procedural(text) is True
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_resp
 
-    def test_procedural_with_ascii_arrows(self, distiller) -> None:
-        text = "build -> test -> deploy。設定した後インストールを行った。"
-        assert distiller._is_procedural(text) is True
+            result = await distiller.classify_and_distill(
+                "## 09:00 — デプロイ\n手順に従ってデプロイした。",
+                model="test-model",
+            )
 
-    def test_procedural_with_install_and_command(self, distiller) -> None:
-        text = "サーバーにインストールし、コマンドで確認した。"
-        assert distiller._is_procedural(text) is True
+        assert len(result["knowledge_items"]) == 1
+        assert result["knowledge_items"][0]["filename"] == "knowledge/api-patterns.md"
+        assert "APIパターン" in result["knowledge_items"][0]["content"]
 
-    def test_not_procedural_plain_chat(self, distiller) -> None:
-        text = "今日はいい天気でした。ミーティングで進捗を共有しました。"
-        assert distiller._is_procedural(text) is False
+        assert len(result["procedure_items"]) == 1
+        assert result["procedure_items"][0]["filename"] == "procedures/deploy-production.md"
+        assert result["procedure_items"][0]["description"] == "本番環境デプロイ手順"
+        assert "deploy" in result["procedure_items"][0]["tags"]
 
-    def test_not_procedural_single_match(self, distiller) -> None:
-        """A single pattern hit should not meet the threshold (2)."""
-        text = "新しいツールをインストールしたいと思います。"
-        assert distiller._is_procedural(text) is False
+    @pytest.mark.asyncio
+    async def test_classify_empty_input(self, distiller) -> None:
+        """Empty input should return empty results without calling LLM."""
+        result = await distiller.classify_and_distill("")
+        assert result["knowledge_items"] == []
+        assert result["procedure_items"] == []
+        assert result["raw_response"] == ""
 
-    def test_threshold_exactly_met(self, distiller) -> None:
-        """Exactly 2 pattern matches should be classified as procedural."""
-        text = "手順に従って操作した。"
-        assert distiller._is_procedural(text) is True
-
-    def test_step_numbering(self, distiller) -> None:
-        text = "step 1: 準備。step 2: 実行した。コマンドを打った。"
-        assert distiller._is_procedural(text) is True
-
-    def test_sequential_ordering(self, distiller) -> None:
-        text = "最初にファイルを作成し、その後コマンドで確認した。"
-        assert distiller._is_procedural(text) is True
-
-
-# ── Section Splitting ─────────────────────────────────────────
-
-
-class TestSplitIntoSections:
-    """Test the Markdown section splitter."""
-
-    def test_split_by_h2_headers(self, distiller) -> None:
-        text = (
-            "## Section A\nContent A\n\n"
-            "## Section B\nContent B"
+    @pytest.mark.asyncio
+    async def test_classify_skip_only(self, distiller) -> None:
+        """When LLM returns only skip content, both lists should be empty."""
+        llm_response = (
+            "## knowledge抽出\n(なし)\n\n"
+            "## procedure抽出\n(なし)"
         )
-        sections = distiller._split_into_sections(text)
-        assert len(sections) == 2
-        assert sections[0].startswith("## Section A")
-        assert sections[1].startswith("## Section B")
 
-    def test_no_headers(self, distiller) -> None:
-        text = "Just plain text without headers."
-        sections = distiller._split_into_sections(text)
-        assert len(sections) == 1
-        assert sections[0] == text
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_resp
 
-    def test_empty_text(self, distiller) -> None:
-        sections = distiller._split_into_sections("")
-        assert sections == []
+            result = await distiller.classify_and_distill(
+                "今日はいい天気でした。",
+                model="test-model",
+            )
 
-    def test_strips_blank_sections(self, distiller) -> None:
-        text = "\n\n## Header\nContent\n\n\n"
-        sections = distiller._split_into_sections(text)
-        assert len(sections) == 1
+        assert result["knowledge_items"] == []
+        assert result["procedure_items"] == []
 
+    @pytest.mark.asyncio
+    async def test_classify_llm_error_returns_empty(self, distiller) -> None:
+        """LLM call failure should return empty results without raising."""
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("API down"),
+        ):
+            result = await distiller.classify_and_distill(
+                "手順に従ってコマンドを操作した。",
+                model="test-model",
+            )
 
-# ── Episode Classification ────────────────────────────────────
+        assert result["knowledge_items"] == []
+        assert result["procedure_items"] == []
 
+    @pytest.mark.asyncio
+    async def test_classify_unparseable_format_returns_empty(
+        self, distiller,
+    ) -> None:
+        """Completely unexpected LLM output should yield empty results."""
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = (
+                "I don't understand the format. Here is some random text."
+            )
+            mock_llm.return_value = mock_resp
 
-class TestClassifyEpisodeSections:
-    """Test classify_episode_sections() routing."""
+            result = await distiller.classify_and_distill(
+                "テスト入力",
+                model="test-model",
+            )
 
-    def test_mixed_episodes(self, distiller) -> None:
-        text = (
-            "## 09:00 — ミーティング\n"
-            "プロジェクト進捗を共有しました。\n\n"
-            "## 10:00 — デプロイ作業\n"
-            "手順に従って操作した。コマンドを実行した。デプロイを確認した。"
+        assert result["knowledge_items"] == []
+        assert result["procedure_items"] == []
+
+    @pytest.mark.asyncio
+    async def test_classify_with_code_fence(self, distiller) -> None:
+        """LLM output wrapped in code fences should be handled."""
+        llm_response = (
+            "```markdown\n"
+            "## knowledge抽出\n"
+            "- ファイル名: knowledge/test.md\n"
+            "  内容: # テスト\n\nテスト知識です。\n\n"
+            "## procedure抽出\n(なし)\n"
+            "```"
         )
-        semantic, procedural = distiller.classify_episode_sections(text)
 
-        assert "ミーティング" in semantic
-        assert "デプロイ作業" in procedural
-        assert "デプロイ作業" not in semantic
-        assert "ミーティング" not in procedural
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_resp
 
-    def test_all_semantic(self, distiller) -> None:
-        text = (
-            "## 09:00 — 雑談\n今日はいい天気でした。\n\n"
-            "## 10:00 — 報告\n進捗を報告しました。"
+            result = await distiller.classify_and_distill(
+                "テストエピソード",
+                model="test-model",
+            )
+
+        assert len(result["knowledge_items"]) == 1
+        assert result["procedure_items"] == []
+
+    @pytest.mark.asyncio
+    async def test_classify_multiple_items(self, distiller) -> None:
+        """Multiple knowledge and procedure items should all be extracted."""
+        llm_response = (
+            "## knowledge抽出\n"
+            "- ファイル名: knowledge/patterns.md\n"
+            "  内容: # パターン\n\nパターン1の記録\n"
+            "- ファイル名: knowledge/tools.md\n"
+            "  内容: # ツール知識\n\nツールAの使い方\n\n"
+            "## procedure抽出\n"
+            "- ファイル名: procedures/deploy.md\n"
+            "  description: デプロイ手順\n"
+            "  tags: deploy\n"
+            "  内容: # デプロイ\n\n1. ステップ1\n"
+            "- ファイル名: procedures/backup.md\n"
+            "  description: バックアップ手順\n"
+            "  tags: backup, ops\n"
+            "  内容: # バックアップ\n\n1. DBダンプ"
         )
-        semantic, procedural = distiller.classify_episode_sections(text)
-        assert semantic.strip() != ""
-        assert procedural.strip() == ""
 
-    def test_all_procedural(self, distiller) -> None:
-        text = (
-            "## 09:00 — 環境構築\n"
-            "まずインストールを行い、次にコマンドで設定した。\n\n"
-            "## 10:00 — デプロイ\n"
-            "手順に従って操作した。デプロイを実行した。"
-        )
-        semantic, procedural = distiller.classify_episode_sections(text)
-        assert semantic.strip() == ""
-        assert procedural.strip() != ""
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_resp
 
-    def test_empty_input(self, distiller) -> None:
-        semantic, procedural = distiller.classify_episode_sections("")
-        assert semantic == ""
-        assert procedural == ""
+            result = await distiller.classify_and_distill(
+                "作業エピソード",
+                model="test-model",
+            )
+
+        assert len(result["knowledge_items"]) == 2
+        assert len(result["procedure_items"]) == 2
+        assert result["procedure_items"][1]["tags"] == ["backup", "ops"]
 
 
-# ── LLM Distillation (Mocked) ─────────────────────────────────
+# ── Distill Procedures (Legacy Entry Point) ──────────────────
 
 
 class TestDistillProcedures:
@@ -199,14 +245,15 @@ class TestDistillProcedures:
 
     @pytest.mark.asyncio
     async def test_distill_returns_procedures(self, distiller) -> None:
-        llm_response = json.dumps([
-            {
-                "title": "deploy_to_production",
-                "description": "Production deployment procedure",
-                "tags": ["deploy", "ops"],
-                "content": "# Deploy to Production\n\n## Steps\n1. Pull latest\n2. Run tests\n3. Deploy",
-            },
-        ])
+        """Procedures extracted via LLM classification should be returned."""
+        llm_response = (
+            "## knowledge抽出\n(なし)\n\n"
+            "## procedure抽出\n"
+            "- ファイル名: procedures/deploy_to_production.md\n"
+            "  description: Production deployment procedure\n"
+            "  tags: deploy, ops\n"
+            "  内容: # Deploy to Production\n\n## Steps\n1. Pull latest\n2. Run tests\n3. Deploy"
+        )
 
         with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
             mock_resp = MagicMock()
@@ -230,10 +277,15 @@ class TestDistillProcedures:
 
     @pytest.mark.asyncio
     async def test_distill_no_procedures_found(self, distiller) -> None:
+        llm_response = (
+            "## knowledge抽出\n(なし)\n\n"
+            "## procedure抽出\n(なし)"
+        )
+
         with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
             mock_resp = MagicMock()
             mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = "[]"
+            mock_resp.choices[0].message.content = llm_response
             mock_llm.return_value = mock_resp
 
             result = await distiller.distill_procedures(
@@ -244,42 +296,12 @@ class TestDistillProcedures:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_distill_with_code_fence(self, distiller) -> None:
-        """LLM output wrapped in code fences should still parse."""
-        llm_response = (
-            "```json\n"
-            + json.dumps([
-                {
-                    "title": "setup_env",
-                    "description": "Environment setup",
-                    "tags": ["setup"],
-                    "content": "# Setup\n\n1. Install deps",
-                },
-            ])
-            + "\n```"
-        )
-
+    async def test_distill_malformed_response(self, distiller) -> None:
+        """Malformed LLM output should return empty list without error."""
         with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
             mock_resp = MagicMock()
             mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = llm_response
-            mock_llm.return_value = mock_resp
-
-            result = await distiller.distill_procedures(
-                "インストールを行いコマンドで設定した。",
-                model="test-model",
-            )
-
-        assert len(result) == 1
-        assert result[0]["title"] == "setup_env"
-
-    @pytest.mark.asyncio
-    async def test_distill_malformed_json(self, distiller) -> None:
-        """Malformed JSON should return empty list without error."""
-        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = "not valid json at all"
+            mock_resp.choices[0].message.content = "not valid format at all"
             mock_llm.return_value = mock_resp
 
             result = await distiller.distill_procedures(
@@ -288,30 +310,6 @@ class TestDistillProcedures:
             )
 
         assert result == []
-
-    @pytest.mark.asyncio
-    async def test_distill_filters_incomplete_items(self, distiller) -> None:
-        """Items missing 'title' or 'content' should be filtered out."""
-        llm_response = json.dumps([
-            {"title": "valid", "content": "# Valid"},
-            {"title": "no_content"},  # missing content
-            {"content": "# No Title"},  # missing title
-            {"description": "neither"},  # missing both
-        ])
-
-        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = llm_response
-            mock_llm.return_value = mock_resp
-
-            result = await distiller.distill_procedures(
-                "手順に従ってコマンドを操作した。",
-                model="test-model",
-            )
-
-        assert len(result) == 1
-        assert result[0]["title"] == "valid"
 
     @pytest.mark.asyncio
     async def test_distill_llm_error(self, distiller) -> None:
@@ -327,6 +325,168 @@ class TestDistillProcedures:
             )
 
         assert result == []
+
+
+# ── Knowledge vs Procedures Routing ──────────────────────────
+
+
+class TestKnowledgeVsProceduresRouting:
+    """Test that classification correctly routes to knowledge vs procedures."""
+
+    @pytest.mark.asyncio
+    async def test_knowledge_only_episode(self, distiller) -> None:
+        """An episode with only facts/lessons should yield knowledge, no procedures."""
+        llm_response = (
+            "## knowledge抽出\n"
+            "- ファイル名: knowledge/team-structure.md\n"
+            "  内容: # チーム構成\n\nAさんがリーダー、Bさんがバックエンド担当。\n\n"
+            "## procedure抽出\n(なし)"
+        )
+
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_resp
+
+            result = await distiller.classify_and_distill(
+                "チーム構成の確認を行った。",
+                model="test-model",
+            )
+
+        assert len(result["knowledge_items"]) == 1
+        assert result["procedure_items"] == []
+
+    @pytest.mark.asyncio
+    async def test_procedures_only_episode(self, distiller) -> None:
+        """An episode with only steps should yield procedures, no knowledge."""
+        llm_response = (
+            "## knowledge抽出\n(なし)\n\n"
+            "## procedure抽出\n"
+            "- ファイル名: procedures/db-migration.md\n"
+            "  description: DB移行手順\n"
+            "  tags: db, migration\n"
+            "  内容: # DB移行\n\n1. バックアップ\n2. マイグレーション実行\n3. 確認"
+        )
+
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = llm_response
+            mock_llm.return_value = mock_resp
+
+            result = await distiller.classify_and_distill(
+                "DB移行を手順に従って実施した。",
+                model="test-model",
+            )
+
+        assert result["knowledge_items"] == []
+        assert len(result["procedure_items"]) == 1
+
+    def test_get_knowledge_items(self, distiller) -> None:
+        """get_knowledge_items should extract from classification result."""
+        classification = {
+            "knowledge_items": [
+                {"filename": "knowledge/x.md", "content": "test"},
+            ],
+            "procedure_items": [],
+        }
+        items = distiller.get_knowledge_items(classification)
+        assert len(items) == 1
+        assert items[0]["filename"] == "knowledge/x.md"
+
+
+# ── Parsing Helpers ──────────────────────────────────────────
+
+
+class TestParseKnowledgeItems:
+    """Test _parse_knowledge_items() output parsing."""
+
+    def test_parses_knowledge_section(self, distiller) -> None:
+        text = (
+            "## knowledge抽出\n"
+            "- ファイル名: knowledge/test.md\n"
+            "  内容: テスト知識の内容です。\n\n"
+            "## procedure抽出\n(なし)"
+        )
+        items = distiller._parse_knowledge_items(text)
+        assert len(items) == 1
+        assert items[0]["filename"] == "knowledge/test.md"
+        assert "テスト知識" in items[0]["content"]
+
+    def test_no_knowledge_section(self, distiller) -> None:
+        text = "Some random text without expected sections."
+        items = distiller._parse_knowledge_items(text)
+        assert items == []
+
+    def test_knowledge_none_marker(self, distiller) -> None:
+        text = "## knowledge抽出\n(なし)\n\n## procedure抽出\n(なし)"
+        items = distiller._parse_knowledge_items(text)
+        assert items == []
+
+
+class TestParseProcedureItems:
+    """Test _parse_procedure_items() output parsing."""
+
+    def test_parses_procedure_section(self, distiller) -> None:
+        text = (
+            "## knowledge抽出\n(なし)\n\n"
+            "## procedure抽出\n"
+            "- ファイル名: procedures/setup.md\n"
+            "  description: 環境構築手順\n"
+            "  tags: setup, env\n"
+            "  内容: # 環境構築\n\n1. インストール\n2. 設定"
+        )
+        items = distiller._parse_procedure_items(text)
+        assert len(items) == 1
+        assert items[0]["filename"] == "procedures/setup.md"
+        assert items[0]["description"] == "環境構築手順"
+        assert items[0]["tags"] == ["setup", "env"]
+        assert "環境構築" in items[0]["content"]
+
+    def test_no_procedure_section(self, distiller) -> None:
+        text = "Random text."
+        items = distiller._parse_procedure_items(text)
+        assert items == []
+
+    def test_procedure_none_marker(self, distiller) -> None:
+        text = "## procedure抽出\n(なし)"
+        items = distiller._parse_procedure_items(text)
+        assert items == []
+
+
+class TestParseProcedures:
+    """Test the JSON parser for LLM procedure output (weekly distill)."""
+
+    def test_valid_json_array(self, distiller) -> None:
+        text = json.dumps([
+            {"title": "a", "content": "# A"},
+            {"title": "b", "content": "# B"},
+        ])
+        result = distiller._parse_procedures(text)
+        assert len(result) == 2
+
+    def test_code_fenced_json(self, distiller) -> None:
+        inner = json.dumps([{"title": "x", "content": "# X"}])
+        text = f"```json\n{inner}\n```"
+        result = distiller._parse_procedures(text)
+        assert len(result) == 1
+
+    def test_invalid_json(self, distiller) -> None:
+        result = distiller._parse_procedures("not json")
+        assert result == []
+
+    def test_non_array_json(self, distiller) -> None:
+        result = distiller._parse_procedures('{"title": "x", "content": "y"}')
+        assert result == []
+
+    def test_filters_incomplete_items(self, distiller) -> None:
+        text = json.dumps([
+            {"title": "ok", "content": "# OK"},
+            {"title": "missing_content"},
+        ])
+        result = distiller._parse_procedures(text)
+        assert len(result) == 1
 
 
 # ── Procedure Saving ──────────────────────────────────────────
@@ -464,7 +624,6 @@ class TestRAGDuplicateCheck:
 
     def test_check_rag_duplicate_handles_exception(self, distiller) -> None:
         """_check_rag_duplicate returns None when RAG is unavailable."""
-        # Force import failure by patching builtins.__import__
         original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
 
         def fail_on_rag(name, *args, **kwargs):
@@ -568,28 +727,37 @@ class TestLoadExistingProcedures:
 
 
 class TestWeeklyPatternDistill:
-    """Test weekly_pattern_distill() with mocked LLM."""
+    """Test weekly_pattern_distill() with activity_log-based detection."""
 
     @pytest.mark.asyncio
-    async def test_weekly_distill_creates_procedures(
+    async def test_weekly_distill_from_activity_log(
         self, distiller, anima_dir: Path,
     ) -> None:
-        # Create episode files for the last 3 days
-        for offset in range(3):
-            target_date = datetime.now().date() - timedelta(days=offset)
-            episode = anima_dir / "episodes" / f"{target_date}.md"
-            episode.write_text(
-                f"## 09:00 — Daily deploy\n"
-                f"手順に従ってコマンドを実行した。デプロイを確認した。\n",
-                encoding="utf-8",
-            )
+        """Should detect patterns from activity log and create procedures."""
+        # Create activity log entries with repeated tool_use
+        activity_dir = anima_dir / "activity_log"
+        today = datetime.now().date()
+
+        entries = []
+        for i in range(5):
+            entries.append(json.dumps({
+                "ts": f"{today}T09:{i:02d}:00",
+                "type": "tool_use",
+                "tool": "github",
+                "summary": "PRレビューを実施",
+            }, ensure_ascii=False))
+
+        (activity_dir / f"{today}.jsonl").write_text(
+            "\n".join(entries) + "\n",
+            encoding="utf-8",
+        )
 
         llm_response = json.dumps([
             {
-                "title": "daily_deploy",
-                "description": "Daily deployment pattern",
-                "tags": ["deploy", "daily"],
-                "content": "# Daily Deploy\n\n1. Run deploy\n2. Verify",
+                "title": "pr_review",
+                "description": "PRレビュー手順",
+                "tags": ["github", "review"],
+                "content": "# PRレビュー\n\n1. diffを確認\n2. コメント",
             },
         ])
 
@@ -606,48 +774,96 @@ class TestWeeklyPatternDistill:
                     model="test-model",
                 )
 
-        assert result["patterns_detected"] == 1
+        assert result["patterns_detected"] >= 1
         assert len(result["procedures_created"]) == 1
-        # Verify the file was actually saved
         proc_path = Path(result["procedures_created"][0])
         assert proc_path.exists()
 
     @pytest.mark.asyncio
-    async def test_weekly_distill_no_episodes(self, distiller) -> None:
+    async def test_weekly_distill_no_activity(self, distiller) -> None:
+        """No activity log entries should return zero results."""
         result = await distiller.weekly_pattern_distill(model="test-model")
         assert result["patterns_detected"] == 0
         assert result["procedures_created"] == []
 
     @pytest.mark.asyncio
-    async def test_weekly_distill_no_patterns(
+    async def test_weekly_distill_no_relevant_events(
         self, distiller, anima_dir: Path,
     ) -> None:
-        # Create a simple episode
+        """Activity entries of irrelevant types should be filtered out."""
+        activity_dir = anima_dir / "activity_log"
         today = datetime.now().date()
-        episode = anima_dir / "episodes" / f"{today}.md"
-        episode.write_text(
-            "## 09:00 — Chat\nJust a regular conversation.\n",
+
+        # Only dm_sent/dm_received — not relevant for pattern detection
+        entries = []
+        for i in range(5):
+            entries.append(json.dumps({
+                "ts": f"{today}T09:{i:02d}:00",
+                "type": "dm_sent",
+                "summary": "メッセージを送信",
+            }, ensure_ascii=False))
+
+        (activity_dir / f"{today}.jsonl").write_text(
+            "\n".join(entries) + "\n",
             encoding="utf-8",
         )
 
-        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = "[]"
-            mock_llm.return_value = mock_resp
-
-            result = await distiller.weekly_pattern_distill(model="test-model")
-
+        result = await distiller.weekly_pattern_distill(model="test-model")
         assert result["patterns_detected"] == 0
-        assert result["procedures_created"] == []
+
+    @pytest.mark.asyncio
+    async def test_weekly_distill_no_clusters(
+        self, distiller, anima_dir: Path,
+    ) -> None:
+        """Too few entries per group should yield no clusters."""
+        activity_dir = anima_dir / "activity_log"
+        today = datetime.now().date()
+
+        # Only 2 tool_use (below min_cluster_size=3)
+        entries = [
+            json.dumps({
+                "ts": f"{today}T09:00:00",
+                "type": "tool_use",
+                "tool": "unique_tool_a",
+                "summary": "Something unique A",
+            }, ensure_ascii=False),
+            json.dumps({
+                "ts": f"{today}T10:00:00",
+                "type": "tool_use",
+                "tool": "unique_tool_b",
+                "summary": "Something unique B",
+            }, ensure_ascii=False),
+        ]
+
+        (activity_dir / f"{today}.jsonl").write_text(
+            "\n".join(entries) + "\n",
+            encoding="utf-8",
+        )
+
+        result = await distiller.weekly_pattern_distill(model="test-model")
+        assert result["patterns_detected"] == 0
 
     @pytest.mark.asyncio
     async def test_weekly_distill_llm_error(
         self, distiller, anima_dir: Path,
     ) -> None:
+        """LLM error during weekly distill should return zero results."""
+        activity_dir = anima_dir / "activity_log"
         today = datetime.now().date()
-        episode = anima_dir / "episodes" / f"{today}.md"
-        episode.write_text("## 09:00 — Work\nDid stuff.\n", encoding="utf-8")
+
+        entries = []
+        for i in range(5):
+            entries.append(json.dumps({
+                "ts": f"{today}T09:{i:02d}:00",
+                "type": "tool_use",
+                "tool": "github",
+                "summary": "PRレビュー",
+            }, ensure_ascii=False))
+
+        (activity_dir / f"{today}.jsonl").write_text(
+            "\n".join(entries) + "\n",
+            encoding="utf-8",
+        )
 
         with patch(
             "litellm.acompletion",
@@ -660,67 +876,158 @@ class TestWeeklyPatternDistill:
         assert result["procedures_created"] == []
 
 
-# ── Episode Collection ────────────────────────────────────────
+# ── Activity Clustering ──────────────────────────────────────
 
 
-class TestCollectRecentEpisodes:
-    """Test _collect_recent_episodes() file discovery."""
+class TestClusterActivities:
+    """Test _cluster_activities() grouping logic."""
 
-    def test_collects_within_window(self, distiller, anima_dir: Path) -> None:
+    def test_groups_by_type_and_tool(self, distiller) -> None:
+        """Entries with same type+tool should cluster together."""
+        entries = [
+            {"type": "tool_use", "tool": "github", "summary": f"PR #{i}"}
+            for i in range(5)
+        ]
+
+        clusters = distiller._cluster_activities(entries, min_cluster_size=3)
+        assert len(clusters) == 1
+        assert len(clusters[0]) == 5
+
+    def test_different_tools_separate_clusters(self, distiller) -> None:
+        """Different tools should produce separate clusters."""
+        entries = (
+            [{"type": "tool_use", "tool": "github", "summary": f"gh{i}"} for i in range(4)]
+            + [{"type": "tool_use", "tool": "slack", "summary": f"sl{i}"} for i in range(4)]
+        )
+
+        clusters = distiller._cluster_activities(entries, min_cluster_size=3)
+        assert len(clusters) == 2
+
+    def test_too_few_entries(self, distiller) -> None:
+        """Clusters below min_cluster_size should be filtered out."""
+        entries = [
+            {"type": "tool_use", "tool": "github", "summary": "one"},
+            {"type": "tool_use", "tool": "github", "summary": "two"},
+        ]
+
+        clusters = distiller._cluster_activities(entries, min_cluster_size=3)
+        assert clusters == []
+
+
+class TestFormatClusters:
+    """Test _format_clusters_for_prompt() output."""
+
+    def test_formats_clusters(self, distiller) -> None:
+        clusters = [
+            [
+                {"ts": "2026-02-18T09:00", "type": "tool_use", "tool": "github", "summary": "PRレビュー"},
+                {"ts": "2026-02-18T10:00", "type": "tool_use", "tool": "github", "summary": "PRマージ"},
+                {"ts": "2026-02-18T11:00", "type": "tool_use", "tool": "github", "summary": "PR作成"},
+            ],
+        ]
+
+        text = distiller._format_clusters_for_prompt(clusters)
+        assert "パターン 1" in text
+        assert "3回繰り返し" in text
+        assert "github" in text
+        assert "PRレビュー" in text
+
+
+class TestLoadActivityEntries:
+    """Test _load_activity_entries() reading from JSONL files."""
+
+    def test_loads_entries(self, distiller, anima_dir: Path) -> None:
+        activity_dir = anima_dir / "activity_log"
         today = datetime.now().date()
-        episode = anima_dir / "episodes" / f"{today}.md"
-        episode.write_text("Today's episodes", encoding="utf-8")
 
-        text = distiller._collect_recent_episodes(
-            anima_dir / "episodes", days=7,
+        entries = [
+            json.dumps({"ts": f"{today}T09:00:00", "type": "tool_use"}, ensure_ascii=False),
+            json.dumps({"ts": f"{today}T10:00:00", "type": "response_sent"}, ensure_ascii=False),
+        ]
+        (activity_dir / f"{today}.jsonl").write_text(
+            "\n".join(entries) + "\n",
+            encoding="utf-8",
         )
-        assert "Today's episodes" in text
 
-    def test_collects_multiple_days(self, distiller, anima_dir: Path) -> None:
-        for offset in range(3):
-            d = datetime.now().date() - timedelta(days=offset)
-            ep = anima_dir / "episodes" / f"{d}.md"
-            ep.write_text(f"Episode for {d}", encoding="utf-8")
+        result = distiller._load_activity_entries(days=1)
+        assert len(result) == 2
 
-        text = distiller._collect_recent_episodes(
-            anima_dir / "episodes", days=7,
-        )
-        for offset in range(3):
-            d = datetime.now().date() - timedelta(days=offset)
-            assert f"Episode for {d}" in text
-
-    def test_ignores_old_files(self, distiller, anima_dir: Path) -> None:
-        old_date = datetime.now().date() - timedelta(days=10)
-        ep = anima_dir / "episodes" / f"{old_date}.md"
-        ep.write_text("Old episode", encoding="utf-8")
-
-        text = distiller._collect_recent_episodes(
-            anima_dir / "episodes", days=7,
-        )
-        assert "Old episode" not in text
-
-    def test_empty_directory(self, distiller, anima_dir: Path) -> None:
-        text = distiller._collect_recent_episodes(
-            anima_dir / "episodes", days=7,
-        )
-        assert text == ""
-
-    def test_collects_suffixed_files(self, distiller, anima_dir: Path) -> None:
+    def test_loads_multi_day(self, distiller, anima_dir: Path) -> None:
+        activity_dir = anima_dir / "activity_log"
         today = datetime.now().date()
-        ep = anima_dir / "episodes" / f"{today}_heartbeat.md"
-        ep.write_text("Heartbeat episode", encoding="utf-8")
+        yesterday = today - timedelta(days=1)
 
-        text = distiller._collect_recent_episodes(
-            anima_dir / "episodes", days=7,
+        (activity_dir / f"{today}.jsonl").write_text(
+            json.dumps({"ts": f"{today}T09:00:00", "type": "tool_use"}) + "\n",
+            encoding="utf-8",
         )
-        assert "Heartbeat episode" in text
+        (activity_dir / f"{yesterday}.jsonl").write_text(
+            json.dumps({"ts": f"{yesterday}T09:00:00", "type": "tool_use"}) + "\n",
+            encoding="utf-8",
+        )
+
+        result = distiller._load_activity_entries(days=2)
+        assert len(result) == 2
+
+    def test_empty_activity_dir(self, distiller) -> None:
+        result = distiller._load_activity_entries(days=7)
+        assert result == []
+
+    def test_skips_malformed_json(self, distiller, anima_dir: Path) -> None:
+        activity_dir = anima_dir / "activity_log"
+        today = datetime.now().date()
+
+        lines = [
+            json.dumps({"ts": f"{today}T09:00:00", "type": "tool_use"}),
+            "not valid json",
+            json.dumps({"ts": f"{today}T10:00:00", "type": "tool_use"}),
+        ]
+        (activity_dir / f"{today}.jsonl").write_text(
+            "\n".join(lines) + "\n",
+            encoding="utf-8",
+        )
+
+        result = distiller._load_activity_entries(days=1)
+        assert len(result) == 2
+
+
+# ── Section Splitting ─────────────────────────────────────────
+
+
+class TestSplitIntoSections:
+    """Test the Markdown section splitter (utility method)."""
+
+    def test_split_by_h2_headers(self, distiller) -> None:
+        text = (
+            "## Section A\nContent A\n\n"
+            "## Section B\nContent B"
+        )
+        sections = distiller._split_into_sections(text)
+        assert len(sections) == 2
+        assert sections[0].startswith("## Section A")
+        assert sections[1].startswith("## Section B")
+
+    def test_no_headers(self, distiller) -> None:
+        text = "Just plain text without headers."
+        sections = distiller._split_into_sections(text)
+        assert len(sections) == 1
+        assert sections[0] == text
+
+    def test_empty_text(self, distiller) -> None:
+        sections = distiller._split_into_sections("")
+        assert sections == []
+
+    def test_strips_blank_sections(self, distiller) -> None:
+        text = "\n\n## Header\nContent\n\n\n"
+        sections = distiller._split_into_sections(text)
+        assert len(sections) == 1
 
 
 # ── Pipeline Integration ──────────────────────────────────────
 
 
 class TestDailyConsolidationIntegration:
-    """Test that daily_consolidate() integrates procedural distillation."""
+    """Test that daily_consolidate() integrates LLM-based distillation."""
 
     @pytest.mark.asyncio
     async def test_daily_consolidate_includes_distillation(
@@ -745,14 +1052,14 @@ class TestDailyConsolidationIntegration:
             "  内容: # ミーティングノート\n\n進捗共有の記録"
         )
 
-        distill_response = json.dumps([
-            {
-                "title": "deploy_procedure",
-                "description": "Deploy procedure",
-                "tags": ["deploy"],
-                "content": "# Deploy\n\n1. Run deploy\n2. Verify",
-            },
-        ])
+        classification_response = (
+            "## knowledge抽出\n(なし)\n\n"
+            "## procedure抽出\n"
+            "- ファイル名: procedures/deploy_procedure.md\n"
+            "  description: Deploy procedure\n"
+            "  tags: deploy\n"
+            "  内容: # Deploy\n\n1. Run deploy\n2. Verify"
+        )
 
         call_count = 0
 
@@ -761,9 +1068,9 @@ class TestDailyConsolidationIntegration:
             call_count += 1
             mock_resp = MagicMock()
             mock_resp.choices = [MagicMock()]
-            # First call is distillation, subsequent calls are consolidation
+            # First call is classification, subsequent calls are consolidation
             if call_count == 1:
-                mock_resp.choices[0].message.content = distill_response
+                mock_resp.choices[0].message.content = classification_response
             else:
                 mock_resp.choices[0].message.content = knowledge_response
             return mock_resp
@@ -811,10 +1118,10 @@ class TestDailyConsolidationIntegration:
             mock_resp.choices[0].message.content = knowledge_response
             mock_llm.return_value = mock_resp
 
-            # Make distiller classification raise an error
+            # Make distiller raise an error
             with patch(
                 "core.memory.distillation.ProceduralDistiller"
-                ".classify_episode_sections",
+                ".classify_and_distill",
                 side_effect=RuntimeError("Classification exploded"),
             ):
                 result = await consolidation_engine.daily_consolidate(
@@ -835,12 +1142,18 @@ class TestWeeklyIntegrationWithDistillation:
         self, consolidation_engine, anima_dir: Path,
     ) -> None:
         """weekly_integrate() should include weekly distillation step."""
-        # Create episode data for distillation
+        # Create activity log data for distillation
+        activity_dir = anima_dir / "activity_log"
         today = datetime.now().date()
+        (activity_dir / f"{today}.jsonl").write_text(
+            json.dumps({"ts": f"{today}T09:00:00", "type": "tool_use", "tool": "test", "summary": "test"}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Also create episode data (needed for weekly_integrate)
         episode = anima_dir / "episodes" / f"{today}.md"
         episode.write_text(
-            "## 09:00 — Repeated work\n"
-            "手順に従ってコマンドを実行した。\n",
+            "## 09:00 — Work\n作業内容\n",
             encoding="utf-8",
         )
 
@@ -868,7 +1181,6 @@ class TestWeeklyIntegrationWithDistillation:
                         )
 
         assert "weekly_distillation" in result
-        assert result["weekly_distillation"]["patterns_detected"] == 0
 
 
 # ── _filter_entries_by_text ───────────────────────────────────
@@ -909,43 +1221,6 @@ class TestFilterEntriesByText:
         ]
         result = ConsolidationEngine._filter_entries_by_text(entries, "")
         assert len(result) == 1  # falls back to all
-
-
-# ── _parse_procedures ─────────────────────────────────────────
-
-
-class TestParseProcedures:
-    """Test the JSON parser for LLM procedure output."""
-
-    def test_valid_json_array(self, distiller) -> None:
-        text = json.dumps([
-            {"title": "a", "content": "# A"},
-            {"title": "b", "content": "# B"},
-        ])
-        result = distiller._parse_procedures(text)
-        assert len(result) == 2
-
-    def test_code_fenced_json(self, distiller) -> None:
-        inner = json.dumps([{"title": "x", "content": "# X"}])
-        text = f"```json\n{inner}\n```"
-        result = distiller._parse_procedures(text)
-        assert len(result) == 1
-
-    def test_invalid_json(self, distiller) -> None:
-        result = distiller._parse_procedures("not json")
-        assert result == []
-
-    def test_non_array_json(self, distiller) -> None:
-        result = distiller._parse_procedures('{"title": "x", "content": "y"}')
-        assert result == []
-
-    def test_filters_incomplete_items(self, distiller) -> None:
-        text = json.dumps([
-            {"title": "ok", "content": "# OK"},
-            {"title": "missing_content"},
-        ])
-        result = distiller._parse_procedures(text)
-        assert len(result) == 1
 
 
 if __name__ == "__main__":

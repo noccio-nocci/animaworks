@@ -17,6 +17,7 @@ import pytest
 from core.agent import AgentCore
 from core.execution.agent_sdk import StreamDisconnectedError
 from core.memory.shortterm import ShortTermMemory, StreamCheckpoint
+from core.prompt.builder import BuildResult
 
 from tests.helpers.mocks import (
     MockAssistantMessage,
@@ -157,7 +158,7 @@ class TestStreamRetryFullFlow:
         # Mock prompt building to avoid filesystem reads
         monkeypatch.setattr(
             "core.agent.build_system_prompt",
-            lambda *args, **kwargs: "mock system prompt",
+            lambda *args, **kwargs: BuildResult(system_prompt="mock system prompt"),
         )
         monkeypatch.setattr(
             "core.agent.inject_shortterm",
@@ -234,7 +235,7 @@ class TestStreamRetryMaxExceeded:
 
         monkeypatch.setattr(
             "core.agent.build_system_prompt",
-            lambda *args, **kwargs: "mock system prompt",
+            lambda *args, **kwargs: BuildResult(system_prompt="mock system prompt"),
         )
         monkeypatch.setattr(
             "core.agent.inject_shortterm",
@@ -301,7 +302,7 @@ class TestCheckpointClearedOnSuccess:
         )
         monkeypatch.setattr(
             "core.agent.build_system_prompt",
-            lambda *args, **kwargs: "mock system prompt",
+            lambda *args, **kwargs: BuildResult(system_prompt="mock system prompt"),
         )
         monkeypatch.setattr(
             "core.agent.inject_shortterm",
@@ -390,7 +391,7 @@ class TestCheckpointClearedOnSuccess:
         )
         monkeypatch.setattr(
             "core.agent.build_system_prompt",
-            lambda *args, **kwargs: "mock system prompt",
+            lambda *args, **kwargs: BuildResult(system_prompt="mock system prompt"),
         )
         monkeypatch.setattr(
             "core.agent.inject_shortterm",
