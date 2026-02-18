@@ -126,6 +126,7 @@ _EXPRESSION_PROMPTS: dict[str, str] = {
         "Change the character's expression to deeply embarrassed. "
         "Bright red blush across entire face, eyes averted to the side. "
         "Both hands covering cheeks or pressing index fingers together nervously. "
+
         "Bust-up portrait, anime illustration, soft lighting. "
         "Same character identity, outfit, and hairstyle."
     ),
@@ -143,9 +144,9 @@ assert set(_EXPRESSION_PROMPTS.keys()) == _VALID_EXPRESSION_NAMES, (
 _EXPRESSION_GUIDANCE: dict[str, float] = {
     "neutral": 4.0,
     "smile": 5.0,
-    "laugh": 6.0,
+    "laugh": 5.0,
     "troubled": 5.5,
-    "surprised": 6.0,
+    "surprised": 5.0,
     "thinking": 5.0,
     "embarrassed": 5.5,
 }

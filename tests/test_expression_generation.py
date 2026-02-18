@@ -161,16 +161,16 @@ class TestExpressionGuidance:
         assert _EXPRESSION_GUIDANCE["smile"] == 5.0
 
     def test_laugh_guidance_value(self):
-        """Laugh guidance_scale should be 6.0."""
-        assert _EXPRESSION_GUIDANCE["laugh"] == 6.0
+        """Laugh guidance_scale should be 5.0."""
+        assert _EXPRESSION_GUIDANCE["laugh"] == 5.0
 
     def test_troubled_guidance_value(self):
         """Troubled guidance_scale should be 5.5."""
         assert _EXPRESSION_GUIDANCE["troubled"] == 5.5
 
     def test_surprised_guidance_value(self):
-        """Surprised guidance_scale should be 6.0."""
-        assert _EXPRESSION_GUIDANCE["surprised"] == 6.0
+        """Surprised guidance_scale should be 5.0."""
+        assert _EXPRESSION_GUIDANCE["surprised"] == 5.0
 
     def test_thinking_guidance_value(self):
         """Thinking guidance_scale should be 5.0."""
@@ -197,9 +197,9 @@ class TestExpressionGuidance:
     @pytest.mark.parametrize("expression,expected", [
         ("neutral", 4.0),
         ("smile", 5.0),
-        ("laugh", 6.0),
+        ("laugh", 5.0),
         ("troubled", 5.5),
-        ("surprised", 6.0),
+        ("surprised", 5.0),
         ("thinking", 5.0),
         ("embarrassed", 5.5),
     ])
@@ -266,7 +266,7 @@ class TestGenerateBustupExpression:
         self, mock_kontext_cls: MagicMock, pipeline: ImageGenPipeline,
         fake_image_bytes: bytes,
     ):
-        """Laugh expression should use guidance_scale=6.0."""
+        """Laugh expression should use guidance_scale=5.0."""
         mock_client = MagicMock()
         mock_client.generate_from_reference.return_value = b"RESULT_PNG"
         mock_kontext_cls.return_value = mock_client
@@ -282,7 +282,7 @@ class TestGenerateBustupExpression:
             call_kwargs.kwargs.get("guidance_scale")
             or call_kwargs[1].get("guidance_scale")
         )
-        assert actual_guidance == 6.0
+        assert actual_guidance == 5.0
 
     @pytest.mark.parametrize("expression", list(VALID_EMOTIONS))
     @patch("core.tools.image_gen.FluxKontextClient")
