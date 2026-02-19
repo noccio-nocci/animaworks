@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from core.prompt.context import ContextTracker
@@ -222,7 +222,7 @@ def _cleanup_tool_outputs(anima_dir: Path) -> None:
 def _build_pre_tool_hook(
     anima_dir: Path,
     pending_sends: list[dict],
-):
+) -> Callable:
     """Build a PreToolUse hook with security checks, output guards, and send tracking."""
     from claude_agent_sdk.types import (
         HookContext,
@@ -282,7 +282,10 @@ def _build_pre_tool_hook(
                     )
                 )
 
-            # Send intent tracking
+            # Send intent tracking — intentionally matched against the
+            # original command *before* output-guard rewriting, so that
+            # "send <recipient> <msg>" is detected regardless of any
+            # output-guard prefix injected later in this hook.
             m = _BASH_SEND_RE.match(command)
             if m:
                 pending_sends.append({

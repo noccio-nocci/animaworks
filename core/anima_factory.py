@@ -580,13 +580,14 @@ def _place_send_script(anima_dir: Path) -> None:
 
 
 def _place_board_script(anima_dir: Path) -> None:
-    """Place the board wrapper script in anima_dir if not already present."""
+    """Place (or update) the board wrapper script in anima_dir from template."""
     src = BLANK_TEMPLATE_DIR / "board"
     dst = anima_dir / "board"
-    if src.exists() and not dst.exists():
-        shutil.copy2(src, dst)
-        dst.chmod(0o755)
-        logger.debug("Placed board script in %s", anima_dir)
+    if not src.exists():
+        return
+    shutil.copy2(src, dst)
+    dst.chmod(0o755)
+    logger.debug("Updated board script in %s", anima_dir)
 
 
 def ensure_send_scripts(animas_dir: Path) -> None:
@@ -616,7 +617,7 @@ def ensure_board_scripts(animas_dir: Path) -> None:
     Iterates all subdirectories under *animas_dir* that contain an
     ``identity.md`` file (i.e. valid anima directories) and calls
     :func:`_place_board_script` for each.  Existing board scripts are
-    never overwritten.
+    overwritten to ensure they match the latest template.
 
     This should be called during server startup so that animas created
     before the board script feature was added also get the script.
