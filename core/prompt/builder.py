@@ -315,14 +315,29 @@ def _load_a2_reflection() -> str:
         return ""
 
 
-def _build_human_notification_guidance() -> str:
+def _build_human_notification_guidance(execution_mode: str = "") -> str:
     """Build the human notification instruction for top-level Animas."""
-    return """\
+    if execution_mode == "a1":
+        how_to = (
+            "Bashツールから以下のコマンドで人間の管理者に連絡してください:\n\n"
+            "```\n"
+            "animaworks-tool call_human \"件名\" \"本文\" [--priority high]\n"
+            "```\n\n"
+            "優先度: `low` / `normal`（デフォルト）/ `high` / `urgent`\n"
+            "例: `animaworks-tool call_human \"障害発生\" \"本番サーバーがダウンしています\" --priority urgent`\n\n"
+            "連絡内容は外部通知チャネル（Slack等）に届きます。"
+        )
+    else:
+        how_to = (
+            "`call_human` ツールで人間の管理者に連絡してください。\n"
+            "連絡内容はチャット画面と外部通知チャネル（Slack等）の両方に届きます。"
+        )
+
+    return f"""\
 ## 人間への連絡
 
 あなたはトップレベルのPersonです（上司なし）。
-重要な事項は `call_human` ツールで人間の管理者に連絡してください。
-連絡内容はチャット画面と外部通知チャネル（Slack等）の両方に届きます。
+重要な事項は{how_to}
 部下からのエスカレーションを受けた場合、まず報告内容の事実確認を自分で行ってください。
 確認の結果、重要であれば人間に連絡してください。
 大したことがなければ自分の判断で対応を完了して構いません。
@@ -660,7 +675,7 @@ def build_system_prompt(
         _my_pcfg = _cfg.animas.get(pd.name)
         _is_top_level = _my_pcfg is None or _my_pcfg.supervisor is None
         if _is_top_level and _cfg.human_notification.enabled:
-            parts.append(_build_human_notification_guidance())
+            parts.append(_build_human_notification_guidance(execution_mode))
     except Exception:
         logger.debug("Skipped human notification guidance injection", exc_info=True)
 
