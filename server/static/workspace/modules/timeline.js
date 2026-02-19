@@ -20,6 +20,7 @@
 
 import { showMessage as showMessagePopup } from "./message-popup.js";
 import { getIcon, getDisplaySummary, normalizeEvent } from "../../shared/activity-types.js";
+import { renderSimpleMarkdown } from "./utils.js";
 
 // ── Timestamp helper ──────────────────────────────
 
@@ -244,9 +245,16 @@ function _renderList() {
  * @returns {HTMLElement}
  */
 function _createEventElement(evt) {
+  // Use content, or fall back to summary for heartbeat etc. where content is empty
+  const detailText = (evt.content && evt.content.trim()) || (evt.summary && evt.summary.length > 80 ? evt.summary : "");
+  const hasContent = !!detailText;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "tl-event-wrapper";
+  wrapper.dataset.eventId = evt.id;
+
   const el = document.createElement("div");
   el.className = "tl-event";
-  el.dataset.eventId = evt.id;
 
   // Time
   const timeEl = document.createElement("span");
@@ -272,15 +280,41 @@ function _createEventElement(evt) {
   summaryEl.textContent = getDisplaySummary(evt);
   summaryEl.style.cssText = "color:#555; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;";
 
+  // Expand chevron (only for events with content)
+  if (hasContent) {
+    const chevron = document.createElement("span");
+    chevron.className = "tl-event-chevron";
+    chevron.textContent = "\u25B6"; // ▶
+    el.appendChild(chevron);
+  }
+
   el.appendChild(timeEl);
   el.appendChild(iconEl);
   el.appendChild(animasEl);
   el.appendChild(summaryEl);
 
-  // Click → replay
-  el.addEventListener("click", () => _replayEvent(evt, el));
+  wrapper.appendChild(el);
 
-  return el;
+  // Expandable content panel
+  if (hasContent) {
+    const detail = document.createElement("div");
+    detail.className = "tl-event-detail";
+    detail.innerHTML = renderSimpleMarkdown(detailText);
+    wrapper.appendChild(detail);
+  }
+
+  // Click → toggle expand + replay
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (hasContent) {
+      const isExpanded = wrapper.classList.toggle("expanded");
+      const chevron = el.querySelector(".tl-event-chevron");
+      if (chevron) chevron.textContent = isExpanded ? "\u25BC" : "\u25B6"; // ▼ or ▶
+    }
+    _replayEvent(evt, el);
+  });
+
+  return wrapper;
 }
 
 // ── Time formatting ────────────────────────────────

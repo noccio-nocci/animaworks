@@ -1478,6 +1478,53 @@ html, body {
   background: #fff3cd;
 }
 
+/* ── Timeline Event Expand ────────────────────────── */
+
+.tl-event-wrapper.expanded > .tl-event {
+  background: #f0f4ff;
+  border-bottom-color: transparent;
+}
+
+.tl-event-chevron {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  color: #999;
+  transition: transform 0.15s;
+  width: 14px;
+  text-align: center;
+}
+
+.tl-event-detail {
+  display: none;
+  padding: 8px 16px 10px 56px;
+  background: #fafbfc;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: #333;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tl-event-wrapper.expanded > .tl-event-detail {
+  display: block;
+}
+
+.tl-event-detail h1,
+.tl-event-detail h2,
+.tl-event-detail h3,
+.tl-event-detail h4 { margin: 0.5em 0 0.25em; line-height: 1.3; }
+.tl-event-detail h1 { font-size: 1.05em; }
+.tl-event-detail h2 { font-size: 1em; }
+.tl-event-detail h3 { font-size: 0.95em; }
+.tl-event-detail p { margin: 0.3em 0; }
+.tl-event-detail ul,
+.tl-event-detail ol { margin: 0.3em 0; padding-left: 1.3em; }
+.tl-event-detail li { margin: 0.1em 0; }
+.tl-event-detail code { background: #e8ecf0; padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
+.tl-event-detail pre { background: #272822; color: #f8f8f2; padding: 8px 10px; border-radius: 4px; overflow-x: auto; margin: 0.4em 0; }
+.tl-event-detail pre code { background: none; padding: 0; color: inherit; }
+
 /* ── Reveal Animation (Anima Birth) ────────────────── */
 
 .ws-reveal-overlay {

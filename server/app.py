@@ -287,6 +287,17 @@ def create_app(animas_dir: Path, shared_dir: Path) -> FastAPI:
     # Added before setup_guard so request_id is available in all handlers.
     app.add_middleware(RequestLoggingMiddleware)
 
+    # ── Static asset cache control ─────────────────────────
+    # Prevent aggressive browser caching of JS/CSS modules so code
+    # updates are picked up without clearing browser cache.
+    @app.middleware("http")
+    async def static_cache_control(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        path = request.url.path
+        if path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     # ── Setup guard middleware ──────────────────────────────
     @app.middleware("http")
     async def setup_guard(request: Request, call_next):  # type: ignore[no-untyped-def]

@@ -248,10 +248,14 @@ class AgentSDKExecutor(BaseExecutor):
         return m
 
     def _build_env(self) -> dict[str, str]:
-        """Build env dict so the child process uses per-anima credentials.
+        """Build env dict for the Claude Code child process.
 
-        Also sets ``ANIMAWORKS_ANIMA_DIR`` so that ``animaworks-tool``
-        can discover personal tools in the anima's ``tools/`` directory,
+        A1 mode does NOT pass ``ANTHROPIC_API_KEY`` so that the Claude Code
+        subprocess uses its own subscription authentication (Max plan etc.)
+        instead of consuming API credits.
+
+        Sets ``ANIMAWORKS_ANIMA_DIR`` so that ``animaworks-tool`` can
+        discover personal tools in the anima's ``tools/`` directory,
         and prepends ``anima_dir`` to ``PATH`` so the ``send`` script is
         discoverable via ``bash send``.
         ``ANIMAWORKS_PROJECT_DIR`` is propagated so the send script can
@@ -265,9 +269,9 @@ class AgentSDKExecutor(BaseExecutor):
             "PATH": f"{self._anima_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             "CLAUDE_CODE_DISABLE_SKILL_IMPROVEMENT": "true",
         }
-        api_key = self._resolve_api_key()
-        if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
+        # Do NOT pass ANTHROPIC_API_KEY — let Claude Code use its own
+        # subscription auth.  Only pass ANTHROPIC_BASE_URL if a custom
+        # endpoint is configured (e.g. proxy).
         if self._model_config.api_base_url:
             env["ANTHROPIC_BASE_URL"] = self._model_config.api_base_url
         return env

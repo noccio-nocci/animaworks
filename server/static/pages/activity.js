@@ -1,6 +1,6 @@
 // ── Activity Timeline Page ──────────────────
 import { api } from "../modules/api.js";
-import { state, escapeHtml, smartTimestamp } from "../modules/state.js";
+import { state, escapeHtml, smartTimestamp, renderMarkdown } from "../modules/state.js";
 import { getIcon, getDisplaySummary, TYPE_CATEGORIES } from "../shared/activity-types.js";
 
 let _refreshInterval = null;
@@ -241,9 +241,10 @@ function _createDetail(evt) {
 
   let html = "";
 
-  // Content
-  if (evt.content) {
-    html += `<div class="activity-detail-content">${escapeHtml(evt.content)}</div>`;
+  // Content (fallback to summary for heartbeat etc. where content is empty)
+  const detailText = evt.content || (evt.summary && evt.summary.length > 80 ? evt.summary : "");
+  if (detailText) {
+    html += `<div class="activity-detail-content activity-markdown">${renderMarkdown(detailText)}</div>`;
   }
 
   // Metadata fields
