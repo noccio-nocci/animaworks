@@ -13,7 +13,7 @@ export const TYPE_ICONS = {
   human_notify:     "📣",
   tool_use:         "🔧",
   heartbeat_start:  "🔄",
-  heartbeat_end:    "✅",
+  heartbeat_end:    "💓",
   cron_executed:    "⏰",
   memory_write:     "📝",
   error:            "⚠️",
