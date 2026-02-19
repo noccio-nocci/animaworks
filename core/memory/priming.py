@@ -668,11 +668,16 @@ class PrimingEngine:
         Retrieves pending tasks from the persistent task queue.
         Human-origin tasks are marked with 🔴 HIGH priority.
         Budget: 300 tokens.
+
+        Uses asyncio.to_thread to avoid blocking the event loop
+        since TaskQueueManager performs synchronous file I/O.
         """
         try:
             from core.memory.task_queue import TaskQueueManager
             manager = TaskQueueManager(self.anima_dir)
-            return manager.format_for_priming(budget_tokens=_BUDGET_PENDING_TASKS)
+            return await asyncio.to_thread(
+                manager.format_for_priming, _BUDGET_PENDING_TASKS,
+            )
         except Exception:
             logger.debug("Channel E (pending_tasks) failed", exc_info=True)
             return ""

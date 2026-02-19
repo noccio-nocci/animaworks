@@ -15,6 +15,7 @@ import json
 import logging
 import os
 from collections import Counter
+from copy import copy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -97,8 +98,8 @@ class MessageDeduplicator:
 
         for sender, sender_msgs in by_sender.items():
             if len(sender_msgs) >= _CONSOLIDATION_THRESHOLD:
-                # Keep first message with summary of all
-                first = sender_msgs[0]
+                # Keep a copy of the first message with summary of all
+                first = copy(sender_msgs[0])
                 summaries = [
                     m.content[:100] for m in sender_msgs
                 ]
@@ -106,7 +107,6 @@ class MessageDeduplicator:
                     f"[{len(sender_msgs)}件のメッセージを統合] "
                     + " / ".join(summaries)
                 )
-                # Create a modified version of the first message
                 first.content = summary_text
                 consolidated.append(first)
                 suppressed.extend(sender_msgs[1:])

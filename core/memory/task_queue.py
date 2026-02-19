@@ -24,6 +24,10 @@ logger = logging.getLogger("animaworks.task_queue")
 
 # Valid task statuses
 _VALID_STATUSES = frozenset({"pending", "in_progress", "done", "cancelled", "blocked"})
+# Valid task sources
+_VALID_SOURCES = frozenset({"human", "anima"})
+# Maximum characters for original_instruction
+_MAX_INSTRUCTION_CHARS = 10_000
 
 
 class TaskQueueManager:
@@ -55,7 +59,15 @@ class TaskQueueManager:
         """Add a new task to the queue.
 
         Returns the created TaskEntry.
+
+        Raises:
+            ValueError: If source is not 'human' or 'anima'.
         """
+        if source not in _VALID_SOURCES:
+            raise ValueError(f"Invalid source: {source!r} (must be 'human' or 'anima')")
+        if len(original_instruction) > _MAX_INSTRUCTION_CHARS:
+            original_instruction = original_instruction[:_MAX_INSTRUCTION_CHARS]
+            logger.warning("original_instruction truncated to %d chars", _MAX_INSTRUCTION_CHARS)
         now = datetime.now().isoformat()
         entry = TaskEntry(
             task_id=uuid.uuid4().hex[:12],
@@ -225,6 +237,36 @@ class TaskQueueManager:
             total += len(line) + 1
 
         return "\n".join(lines)
+
+    # ── Maintenance ────────────────────────────────────────────
+
+    def compact(self) -> int:
+        """Rewrite JSONL file with only active (non-terminal) tasks.
+
+        Terminal statuses (done, cancelled) are removed.
+        Returns the number of tasks removed.
+        """
+        tasks = self._load_all()
+        active = {tid: t for tid, t in tasks.items() if t.status not in ("done", "cancelled")}
+        removed = len(tasks) - len(active)
+        if removed == 0:
+            return 0
+
+        # Rewrite atomically via temp file
+        tmp_path = self._queue_path.with_suffix(".tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as f:
+                for entry in active.values():
+                    f.write(json.dumps(entry.model_dump(), ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_path.replace(self._queue_path)
+            logger.info("Task queue compacted: removed %d terminal tasks", removed)
+        except Exception:
+            logger.exception("Failed to compact task queue")
+            tmp_path.unlink(missing_ok=True)
+            removed = 0
+        return removed
 
     # ── Internal ─────────────────────────────────────────────
 

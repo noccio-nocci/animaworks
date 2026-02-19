@@ -382,8 +382,9 @@ class LifecycleManager:
             self._pending_triggers.discard(name)
             return
 
-        # Peek at inbox senders for cascade detection
-        senders = {m.from_person for m in anima.messenger.receive()}
+        # Peek at inbox senders for cascade detection and rate limiting
+        inbox_messages = anima.messenger.receive()
+        senders = {m.from_person for m in inbox_messages}
         if senders and self._check_cascade(name, senders):
             self._pending_triggers.discard(name)
             return
@@ -393,7 +394,7 @@ class LifecycleManager:
         # heartbeat and let the next scheduled heartbeat handle them with dedup.
         try:
             sender_counts: dict[str, int] = {}
-            for m in anima.messenger.receive():
+            for m in inbox_messages:
                 sender_counts[m.from_person] = sender_counts.get(m.from_person, 0) + 1
             for sender, count in sender_counts.items():
                 if count >= 5:

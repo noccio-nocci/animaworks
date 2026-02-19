@@ -22,7 +22,6 @@ from core.memory.activity import ActivityLogger
 from core.memory.streaming_journal import StreamingJournal
 from core.memory.conversation import ConversationMemory
 from core.memory import MemoryManager
-from core.memory.task_queue import TaskQueueManager
 from core.messenger import InboxItem, Messenger
 from core.paths import load_prompt
 from core.schemas import CycleResult, AnimaStatus, VALID_EMOTIONS
@@ -719,21 +718,6 @@ class DigitalAnima:
                 except Exception:
                     pass
 
-                # ── Credit exhaustion detection ──
-                _credit_exhausted = False
-                try:
-                    activity_log = ActivityLogger(self.anima_dir)
-                    recent_errors = activity_log.get_recent(hours=1, event_type="error")
-                    _credit_keywords = ("credit", "balance", "rate_limit", "rate limit", "insufficient")
-                    for err in recent_errors:
-                        text = (err.content + " " + err.summary).lower()
-                        if any(kw in text for kw in _credit_keywords):
-                            _credit_exhausted = True
-                            logger.warning("[%s] Credit exhaustion detected, using minimal heartbeat", self.name)
-                            break
-                except Exception:
-                    logger.debug("[%s] Credit exhaustion check failed", self.name, exc_info=True)
-
                 hb_config = self.memory.read_heartbeat_config()
                 checklist = hb_config or load_prompt("heartbeat_default_checklist")
                 parts = [load_prompt("heartbeat", checklist=checklist)]
@@ -792,19 +776,8 @@ class DigitalAnima:
                 except Exception:
                     logger.debug("[%s] Failed to load dialogue context for heartbeat", self.name, exc_info=True)
 
-                # ── Task Queue injection ──
-                task_summary = ""
-                try:
-                    task_queue = TaskQueueManager(self.anima_dir)
-                    task_summary = task_queue.format_for_priming()
-                    if task_summary:
-                        parts.append(
-                            "## 永続タスクキュー\n\n"
-                            "以下の未完了タスクがあります。🔴 HIGH は人間からの指示です。\n\n"
-                            + task_summary
-                        )
-                except Exception:
-                    logger.debug("[%s] Failed to inject task queue into heartbeat", self.name, exc_info=True)
+                # NOTE: Task queue is injected via builder.py (system prompt)
+                # and priming Channel E. No separate heartbeat injection needed.
 
                 # Read unread messages but do NOT archive yet.
                 # Messages stay in inbox until the agent replies to each sender.
@@ -822,10 +795,22 @@ class DigitalAnima:
                         from core.memory.dedup import MessageDeduplicator
                         dedup = MessageDeduplicator(self.anima_dir)
 
-                        # Load previously deferred messages
+                        # Load previously deferred messages and prepend to inbox
                         deferred_raw = dedup.load_deferred()
-                        # Note: deferred messages are raw dicts, not Message objects
-                        # They were already processed in a previous heartbeat
+                        if deferred_raw:
+                            from core.schemas import Message as _Msg
+                            for raw in deferred_raw:
+                                try:
+                                    deferred_msg = _Msg(
+                                        from_person=raw.get("from", "unknown"),
+                                        to_person=self.name,
+                                        content=raw.get("content", ""),
+                                        type=raw.get("type", "message"),
+                                    )
+                                    messages.append(deferred_msg)
+                                except Exception:
+                                    logger.debug("[%s] Skipping invalid deferred message", self.name)
+                            logger.info("[%s] Restored %d deferred messages", self.name, len(deferred_raw))
 
                         # Apply rate limiting first (before consolidation)
                         messages, rate_deferred = dedup.apply_rate_limit(messages)
@@ -911,15 +896,13 @@ class DigitalAnima:
                 # ── Heartbeat Checkpoint ──
                 checkpoint_path = self.anima_dir / "state" / "heartbeat_checkpoint.json"
                 try:
-                    import json as _json
                     checkpoint_data = {
                         "ts": datetime.now().isoformat(),
                         "trigger": "heartbeat",
                         "unread_count": unread_count,
-                        "task_queue_summary": task_summary,
                     }
                     checkpoint_path.write_text(
-                        _json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8",
+                        json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8",
                     )
                 except Exception:
                     logger.debug("[%s] Failed to write heartbeat checkpoint", self.name, exc_info=True)
@@ -1058,7 +1041,6 @@ class DigitalAnima:
                         pass
                     # ── Save recovery note for next heartbeat ──
                     try:
-                        import json as _json
                         recovery_path = self.anima_dir / "state" / "recovery_note.md"
                         recovery_content = (
                             f"### エラー情報\n\n"

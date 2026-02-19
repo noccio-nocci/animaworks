@@ -174,6 +174,63 @@ class TestFormatForPriming:
         assert "taka" in output
 
 
+class TestCompact:
+    def test_compact_removes_done_tasks(self, task_queue):
+        e1 = task_queue.add_task(source="human", original_instruction="t1", assignee="a", summary="s1")
+        e2 = task_queue.add_task(source="human", original_instruction="t2", assignee="b", summary="s2")
+        task_queue.update_status(e1.task_id, "done")
+        removed = task_queue.compact()
+        assert removed == 1
+        tasks = task_queue.list_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].task_id == e2.task_id
+
+    def test_compact_removes_cancelled_tasks(self, task_queue):
+        e1 = task_queue.add_task(source="anima", original_instruction="t1", assignee="a", summary="s1")
+        task_queue.update_status(e1.task_id, "cancelled")
+        removed = task_queue.compact()
+        assert removed == 1
+        assert task_queue.list_tasks() == []
+
+    def test_compact_no_terminal_tasks(self, task_queue):
+        task_queue.add_task(source="human", original_instruction="t1", assignee="a", summary="s1")
+        removed = task_queue.compact()
+        assert removed == 0
+
+    def test_compact_empty_queue(self, task_queue):
+        removed = task_queue.compact()
+        assert removed == 0
+
+
+class TestSourceValidation:
+    def test_invalid_source_raises(self, task_queue):
+        with pytest.raises(ValueError, match="Invalid source"):
+            task_queue.add_task(
+                source="invalid",
+                original_instruction="t",
+                assignee="a",
+                summary="s",
+            )
+
+    def test_valid_sources(self, task_queue):
+        e1 = task_queue.add_task(source="human", original_instruction="t1", assignee="a", summary="s1")
+        e2 = task_queue.add_task(source="anima", original_instruction="t2", assignee="b", summary="s2")
+        assert e1.source == "human"
+        assert e2.source == "anima"
+
+
+class TestInstructionSizeCap:
+    def test_long_instruction_truncated(self, task_queue):
+        long_text = "x" * 20_000
+        entry = task_queue.add_task(
+            source="human",
+            original_instruction=long_text,
+            assignee="a",
+            summary="s",
+        )
+        assert len(entry.original_instruction) == 10_000
+
+
 class TestCorruptedFile:
     def test_corrupted_line_skipped(self, task_queue):
         task_queue.queue_path.parent.mkdir(parents=True, exist_ok=True)
