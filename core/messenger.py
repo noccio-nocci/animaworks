@@ -11,9 +11,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+
+from core.time_utils import now_iso
 
 from core.schemas import Message
 
@@ -157,7 +158,7 @@ class Messenger:
         channels_dir.mkdir(parents=True, exist_ok=True)
         filepath = channels_dir / f"{channel}.jsonl"
         entry = json.dumps({
-            "ts": datetime.now().isoformat(),
+            "ts": now_iso(),
             "from": from_name or self.anima_name,
             "text": text,
             "source": source,
@@ -273,7 +274,7 @@ class Messenger:
         filepath = self._get_dm_log_path(peer)
         filepath.parent.mkdir(parents=True, exist_ok=True)
         entry_dict: dict[str, Any] = {
-            "ts": datetime.now().isoformat(),
+            "ts": now_iso(),
             "from": self.anima_name,
             "to": peer,
             "text": content,

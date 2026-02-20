@@ -13,8 +13,9 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from pathlib import Path
+
+from core.time_utils import ensure_aware, now_jst
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -519,7 +520,7 @@ class ProcessSupervisor:
             if not handle.stopping_since:
                 return
             stopping_duration = (
-                datetime.now() - handle.stopping_since
+                now_jst() - ensure_aware(handle.stopping_since)
             ).total_seconds()
             if stopping_duration > 30:
                 logger.error(
@@ -556,7 +557,7 @@ class ProcessSupervisor:
             # Streaming duration timeout
             started_at = handle.streaming_started_at
             if started_at is not None:
-                streaming_sec = (datetime.now() - started_at).total_seconds()
+                streaming_sec = (now_jst() - ensure_aware(started_at)).total_seconds()
                 if streaming_sec > self._max_streaming_duration_sec:
                     logger.error(
                         "Streaming timeout for %s (%.0fs > %ds)",
@@ -569,7 +570,7 @@ class ProcessSupervisor:
             return
 
         # Skip if in startup grace period
-        uptime = (datetime.now() - handle.stats.started_at).total_seconds()
+        uptime = (now_jst() - ensure_aware(handle.stats.started_at)).total_seconds()
         if uptime < self.health_config.startup_grace_sec:
             logger.debug("Skipping health check for %s (startup grace)", anima_name)
             return
@@ -1109,7 +1110,7 @@ class ProcessSupervisor:
         if not handle:
             return {"status": "not_found"}
 
-        uptime = (datetime.now() - handle.stats.started_at).total_seconds()
+        uptime = (now_jst() - ensure_aware(handle.stats.started_at)).total_seconds()
 
         return {
             "status": "bootstrapping" if self.is_bootstrapping(anima_name) else handle.state.value,

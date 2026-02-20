@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from core.paths import load_prompt
+from core.time_utils import ensure_aware, now_iso, now_jst
 
 logger = logging.getLogger("animaworks.consolidation")
 
@@ -121,7 +122,7 @@ class ConsolidationEngine:
                 shutil.copy2(path, backup_dir / path.name)
 
                 # Try to extract created_at from [AUTO-CONSOLIDATED: YYYY-MM-DD HH:MM]
-                created_at = datetime.now().isoformat()
+                created_at = now_iso()
                 ts_match = re.search(
                     r"\[AUTO-CONSOLIDATED:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\]",
                     text,
@@ -159,7 +160,7 @@ class ConsolidationEngine:
 
         # Write marker
         marker.write_text(
-            datetime.now().isoformat() + "\n",
+            now_iso() + "\n",
             encoding="utf-8",
         )
         if migrated > 0:
@@ -478,12 +479,12 @@ class ConsolidationEngine:
         Returns:
             List of episode entries, each with 'date', 'time', 'content'
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = now_jst() - timedelta(hours=hours)
         entries: list[dict[str, str]] = []
 
         # Check today and yesterday's episode files
         for day_offset in range(2):
-            target_date = datetime.now().date() - timedelta(days=day_offset)
+            target_date = now_jst().date() - timedelta(days=day_offset)
             episode_files = sorted(self.episodes_dir.glob(f"{target_date}*.md"))
 
             for episode_file in episode_files:
@@ -503,10 +504,10 @@ class ConsolidationEngine:
 
                         # Parse timestamp
                         try:
-                            entry_dt = datetime.strptime(
+                            entry_dt = ensure_aware(datetime.strptime(
                                 f"{target_date} {time_str}",
                                 "%Y-%m-%d %H:%M",
-                            )
+                            ))
 
                             # Only include if within time window
                             if entry_dt >= cutoff:
@@ -522,9 +523,9 @@ class ConsolidationEngine:
                             )
                 else:
                     # Fallback: treat entire file as a single entry using mtime
-                    file_mtime = datetime.fromtimestamp(
+                    file_mtime = ensure_aware(datetime.fromtimestamp(
                         episode_file.stat().st_mtime,
-                    )
+                    ))
                     if file_mtime >= cutoff:
                         entries.append({
                             "date": str(target_date),
@@ -956,20 +957,20 @@ class ConsolidationEngine:
                     existing_meta = mm.read_knowledge_metadata(filepath)
                     existing_content = mm.read_knowledge_content(filepath)
 
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    timestamp = now_jst().strftime("%Y-%m-%d %H:%M")
                     updated_content = (
                         f"{existing_content}\n\n"
                         f"[AUTO-CONSOLIDATED: {timestamp}]\n\n{content}"
                     )
 
                     # Update metadata
-                    existing_meta["updated_at"] = datetime.now().isoformat()
+                    existing_meta["updated_at"] = now_iso()
                     mm.write_knowledge_with_meta(filepath, updated_content, existing_meta)
                     files_updated.append(filename)
                     logger.info("Updated knowledge file: %s", filename)
                 else:
                     # File doesn't exist, create with frontmatter
-                    timestamp = datetime.now().isoformat()
+                    timestamp = now_iso()
                     metadata = {
                         "created_at": timestamp,
                         "confidence": 0.7,
@@ -1010,13 +1011,13 @@ class ConsolidationEngine:
 
                 if not filepath.exists():
                     # Build source episode filenames
-                    today = datetime.now().date()
+                    today = now_jst().date()
                     source_episodes = [
                         f"{today}.md",
                         f"{(today - timedelta(days=1))}.md",
                     ]
 
-                    timestamp = datetime.now().isoformat()
+                    timestamp = now_iso()
                     metadata = {
                         "created_at": timestamp,
                         "source_episodes": source_episodes,
@@ -1336,7 +1337,7 @@ class ConsolidationEngine:
                     merged_filename = merged_path.name
 
                     # Write merged file
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    timestamp = now_jst().strftime("%Y-%m-%d %H:%M")
                     header = f"# {merged_path.stem}\n\n[AUTO-MERGED: {timestamp}]\n"
                     header += f"[SOURCE: {file1}, {file2}]\n\n"
 
@@ -1379,7 +1380,7 @@ class ConsolidationEngine:
         Returns:
             Number of episodes compressed
         """
-        cutoff_date = datetime.now().date() - timedelta(days=retention_days)
+        cutoff_date = now_jst().date() - timedelta(days=retention_days)
         compressed_count = 0
 
         # Iterate through episode files
@@ -1427,7 +1428,7 @@ class ConsolidationEngine:
                     shutil.copy2(str(episode_file), str(backup_dir / episode_file.name))
 
                     # Replace original file with compressed version
-                    compressed_header = f"# {date_str}\n\n[COMPRESSED: {datetime.now().strftime('%Y-%m-%d %H:%M')}]\n\n"
+                    compressed_header = f"# {date_str}\n\n[COMPRESSED: {now_jst().strftime('%Y-%m-%d %H:%M')}]\n\n"
                     episode_file.write_text(
                         compressed_header + summary,
                         encoding="utf-8"

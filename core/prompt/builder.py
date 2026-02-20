@@ -17,6 +17,7 @@ from core.memory.manager import match_skills_by_description
 from core.paths import PROJECT_DIR, get_data_dir, load_prompt
 from core.memory.shortterm import ShortTermMemory
 from core.schemas import SkillMeta
+from core.time_utils import now_jst
 
 logger = logging.getLogger("animaworks.prompt_builder")
 
@@ -340,6 +341,10 @@ def build_system_prompt(
         data_dir=data_dir,
         anima_name=pd.name,
     ))
+
+    # Current time injection (immediately after environment)
+    current_time = now_jst().strftime("%Y-%m-%d %H:%M (%Z)")
+    parts.append(f"**現在時刻**: {current_time}")
 
     # Bootstrap instructions (highest priority after environment)
     bootstrap = memory.read_bootstrap()

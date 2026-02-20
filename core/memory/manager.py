@@ -11,10 +11,11 @@ import logging
 import os
 import re
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from core.memory._io import atomic_write_text
+from core.time_utils import now_iso, now_jst
 from core.paths import get_common_knowledge_dir, get_common_skills_dir, get_company_dir, get_shared_dir
 from core.schemas import ModelConfig, SkillMeta
 
@@ -618,7 +619,7 @@ class MemoryManager:
 
         import json as _json
         entry = _json.dumps({
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_iso(),
             "task": task_name,
             "summary": summary[:500],
             "duration_ms": duration_ms,
@@ -673,7 +674,7 @@ class MemoryManager:
         import json as _json
         entry = _json.dumps(
             {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_iso(),
                 "task": task_name,
                 "exit_code": exit_code,
                 "stdout_lines": stdout_line_count,
@@ -767,7 +768,7 @@ class MemoryManager:
         path = shared_dir / "resolutions.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
-            "ts": datetime.now().isoformat(),
+            "ts": now_iso(),
             "issue": issue,
             "resolver": resolver,
         }
@@ -782,7 +783,7 @@ class MemoryManager:
         path = shared_dir / "resolutions.jsonl"
         if not path.exists():
             return []
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (now_jst() - timedelta(days=days)).isoformat()
         entries: list[dict[str, str]] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():

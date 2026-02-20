@@ -21,8 +21,9 @@ import logging
 import re
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
+
+from core.time_utils import ensure_aware, now_jst
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Union
@@ -85,7 +86,7 @@ class AnimaRunner:
         self.scheduler: AsyncIOScheduler | None = None
         self.shutdown_event = asyncio.Event()
         self._ready_event = asyncio.Event()
-        self._started_at = datetime.now()
+        self._started_at = now_jst()
 
         # Rate-limit state for inbox watcher
         self._pending_trigger: bool = False
@@ -318,11 +319,27 @@ class AnimaRunner:
 
         interval, active_start, active_end = parse_heartbeat_config(config)
 
+        # Determine active hours (3-tier, matching lifecycle.py):
+        # 1. heartbeat.md explicit time range (already parsed above)
+        # 2. AnimaConfig.active_hours if set
+        # 3. Default: 24h (hour="*")
+        m = re.search(r"(\d{1,2}):\d{0,2}\s*-\s*(\d{1,2})", config)
+        if m:
+            hour_spec = f"{active_start}-{active_end - 1}"
+            log_active = f"active {active_start}:00-{active_end}:00"
+        elif self.anima and self.anima.config.active_hours is not None:
+            ah_start, ah_end = self.anima.config.active_hours
+            hour_spec = f"{ah_start}-{ah_end - 1}"
+            log_active = f"active {ah_start}:00-{ah_end}:00"
+        else:
+            hour_spec = "*"
+            log_active = "24h"
+
         self.scheduler.add_job(
             self._heartbeat_tick,
             CronTrigger(
                 minute=f"*/{interval}",
-                hour=f"{active_start}-{active_end - 1}",
+                hour=hour_spec,
             ),
             id=f"{self.anima_name}_heartbeat",
             name=f"{self.anima_name} heartbeat",
@@ -331,8 +348,8 @@ class AnimaRunner:
             max_instances=1,
         )
         logger.info(
-            "Heartbeat registered: %s every %dmin, active %d:00-%d:00",
-            self.anima_name, interval, active_start, active_end,
+            "Heartbeat registered: %s every %dmin, %s",
+            self.anima_name, interval, log_active,
         )
 
     async def _heartbeat_tick(self) -> None:
@@ -461,7 +478,7 @@ class AnimaRunner:
                     # NOTE: update_pending() overwrites the file. If multiple
                     # command-type cron tasks run concurrently, only the last
                     # result is retained.
-                    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    ts = now_jst().strftime("%Y-%m-%d %H:%M")
                     pending = (
                         f"## cron結果: {task.name} ({ts})\n\n"
                         f"{stdout}\n"
@@ -893,7 +910,7 @@ class AnimaRunner:
         ``status: "ok"`` once ready.  The parent process polls this to
         confirm readiness.
         """
-        uptime = (datetime.now() - self._started_at).total_seconds()
+        uptime = (now_jst() - ensure_aware(self._started_at)).total_seconds()
         status = "ok" if self._ready_event.is_set() else "initializing"
         return {
             "status": status,

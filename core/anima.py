@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.time_utils import now_iso, now_jst
+
 from core.agent import AgentCore
 from core.background import BackgroundTask
 from core.memory.activity import ActivityLogger
@@ -308,7 +310,7 @@ class DigitalAnima:
                     result = await self.agent.run_cycle(
                         prompt, trigger="bootstrap"
                     )
-                    self._last_activity = datetime.now()
+                    self._last_activity = now_jst()
 
                     logger.info(
                         "[%s] run_bootstrap END duration_ms=%d",
@@ -368,7 +370,7 @@ class DigitalAnima:
                         prompt, trigger=f"message:{from_person}",
                         images=images,
                     )
-                    self._last_activity = datetime.now()
+                    self._last_activity = now_jst()
 
                     # Record assistant response in conversation memory
                     conv_memory.append_turn("assistant", result.summary)
@@ -542,7 +544,7 @@ class DigitalAnima:
 
                         if chunk.get("type") == "cycle_done":
                             cycle_done = True
-                            self._last_activity = datetime.now()
+                            self._last_activity = now_jst()
                             # Record assistant response in conversation memory
                             cycle_result = chunk.get("cycle_result", {})
                             summary = cycle_result.get("summary", "")
@@ -665,7 +667,7 @@ class DigitalAnima:
                 result = await self.agent.run_cycle(
                     prompt, trigger="greet:user",
                 )
-                self._last_activity = datetime.now()
+                self._last_activity = now_jst()
 
                 # Extract emotion from response (inline to avoid circular import)
                 import re as _re
@@ -948,7 +950,7 @@ class DigitalAnima:
 
         # Record received message content to episodes so that
         # inter-Anima communications survive in episodic memory.
-        _msg_ts = datetime.now().strftime("%H:%M")
+        _msg_ts = now_jst().strftime("%H:%M")
         _recordable = [m for m in messages if m.type != "ack"]
         if len(_recordable) > 50:
             logger.warning(
@@ -999,7 +1001,7 @@ class DigitalAnima:
         checkpoint_path = self.anima_dir / "state" / "heartbeat_checkpoint.json"
         try:
             checkpoint_data = {
-                "ts": datetime.now().isoformat(),
+                "ts": now_iso(),
                 "trigger": "heartbeat",
                 "unread_count": unread_count,
             }
@@ -1063,7 +1065,7 @@ class DigitalAnima:
                     summary=accumulated_text or "(no result)",
                 )
 
-            self._last_activity = datetime.now()
+            self._last_activity = now_jst()
 
             # Activity log: heartbeat end
             try:
@@ -1081,7 +1083,7 @@ class DigitalAnima:
 
             # A-3: Record important heartbeat actions to episodes
             if result.summary and "HEARTBEAT_OK" not in result.summary:
-                ts = datetime.now().strftime("%H:%M")
+                ts = now_jst().strftime("%H:%M")
                 episode_entry = (
                     f"## {ts} ハートビート活動\n\n"
                     f"{result.summary[:500]}"
@@ -1217,7 +1219,7 @@ class DigitalAnima:
                 f"### エラー情報\n\n"
                 f"- エラー種別: {type(error).__name__}\n"
                 f"- エラー内容: {str(error)[:200]}\n"
-                f"- 発生日時: {datetime.now().isoformat()}\n"
+                f"- 発生日時: {now_iso()}\n"
                 f"- 未処理メッセージ数: {unread_count}\n"
             )
             recovery_path.write_text(recovery_content, encoding="utf-8")
@@ -1249,7 +1251,7 @@ class DigitalAnima:
         try:
             async with self._lock:
                 self._status = "checking"
-                self._last_heartbeat = datetime.now()
+                self._last_heartbeat = now_jst()
                 inbox_items: list[InboxItem] = []
                 unread_count = 0
 
@@ -1326,7 +1328,7 @@ class DigitalAnima:
                     result = await self.agent.run_cycle(
                         prompt, trigger=f"cron:{task_name}"
                     )
-                    self._last_activity = datetime.now()
+                    self._last_activity = now_jst()
 
                     # Record cron execution result
                     self.memory.append_cron_log(
@@ -1433,7 +1435,7 @@ class DigitalAnima:
                         stderr = "Neither command nor tool specified"
                         exit_code = 1
 
-                    self._last_activity = datetime.now()
+                    self._last_activity = now_jst()
 
                 except Exception as exc:
                     stderr = f"{type(exc).__name__}: {exc}"

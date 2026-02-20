@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from core.paths import load_prompt
+from core.time_utils import ensure_aware, now_jst
 
 logger = logging.getLogger("animaworks.forgetting")
 
@@ -145,7 +146,7 @@ class ForgettingEngine:
 
         if last_used_str:
             try:
-                last_used_dt = datetime.fromisoformat(str(last_used_str))
+                last_used_dt = ensure_aware(datetime.fromisoformat(str(last_used_str)))
                 days_since = (now - last_used_dt).total_seconds() / 86400.0
             except (ValueError, TypeError):
                 days_since = float("inf")
@@ -202,8 +203,8 @@ class ForgettingEngine:
         Skip: Protected memory types, important chunks, already low
         """
         logger.info("Starting synaptic downscaling for anima=%s", self.anima_name)
-        now = datetime.now()
-        now_iso = now.isoformat()
+        now = now_jst()
+        now_iso_str = now.isoformat()
         total_scanned = 0
         total_marked = 0
         store = self._get_vector_store()
@@ -234,7 +235,7 @@ class ForgettingEngine:
                         ids_to_mark.append(chunk["id"])
                         metas_to_mark.append({
                             "activation_level": "low",
-                            "low_activation_since": now_iso,
+                            "low_activation_since": now_iso_str,
                         })
                     continue
 
@@ -244,7 +245,7 @@ class ForgettingEngine:
 
                 if last_accessed_str:
                     try:
-                        last_accessed = datetime.fromisoformat(str(last_accessed_str))
+                        last_accessed = ensure_aware(datetime.fromisoformat(str(last_accessed_str)))
                         days_since = (now - last_accessed).total_seconds() / 86400.0
                     except (ValueError, TypeError):
                         days_since = float("inf")
@@ -253,7 +254,7 @@ class ForgettingEngine:
                     updated_str = meta.get("updated_at", "")
                     if updated_str:
                         try:
-                            updated_at = datetime.fromisoformat(str(updated_str))
+                            updated_at = ensure_aware(datetime.fromisoformat(str(updated_str)))
                             days_since = (now - updated_at).total_seconds() / 86400.0
                         except (ValueError, TypeError):
                             days_since = float("inf")
@@ -265,7 +266,7 @@ class ForgettingEngine:
                     ids_to_mark.append(chunk["id"])
                     metas_to_mark.append({
                         "activation_level": "low",
-                        "low_activation_since": now_iso,
+                        "low_activation_since": now_iso_str,
                     })
 
             # Batch update
@@ -471,19 +472,19 @@ class ForgettingEngine:
             indexer = MemoryIndexer(store, self.anima_name, self.anima_dir)
 
             # Generate new ID
-            merged_id = f"{self.anima_name}/{memory_type}/merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}#0"
+            merged_id = f"{self.anima_name}/{memory_type}/merged_{now_jst().strftime('%Y%m%d_%H%M%S')}#0"
 
             embedding = indexer._generate_embeddings([content])[0]
 
-            now_iso = datetime.now().isoformat()
+            now_iso_str = now.isoformat()
             metadata = {
                 "anima": self.anima_name,
                 "memory_type": memory_type,
                 "source_file": "merged",
                 "chunk_index": 0,
                 "total_chunks": 1,
-                "created_at": now_iso,
-                "updated_at": now_iso,
+                "created_at": now_iso_str,
+                "updated_at": now_iso_str,
                 "importance": "normal",
                 "access_count": 0,
                 "last_accessed_at": "",
@@ -536,7 +537,7 @@ class ForgettingEngine:
         # Archive directory for merged originals
         archive_dir = self.anima_dir / "archive" / "merged"
         archive_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now_jst().strftime("%Y%m%d_%H%M%S")
 
         # Archive primary original
         if primary_path.exists():
@@ -581,7 +582,7 @@ class ForgettingEngine:
         Action: Move source file to archive/forgotten/, delete from vector index
         """
         logger.info("Starting complete forgetting for anima=%s", self.anima_name)
-        now = datetime.now()
+        now = now_jst()
         store = self._get_vector_store()
         total_forgotten = 0
         archived_files: list[str] = []
@@ -610,7 +611,7 @@ class ForgettingEngine:
                     continue
 
                 try:
-                    low_since = datetime.fromisoformat(str(low_since_str))
+                    low_since = ensure_aware(datetime.fromisoformat(str(low_since_str)))
                     days_low = (now - low_since).total_seconds() / 86400.0
                 except (ValueError, TypeError):
                     continue
@@ -665,7 +666,7 @@ class ForgettingEngine:
 
         # Add timestamp suffix if destination exists
         if dest_path.exists():
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = now_jst().strftime("%Y%m%d_%H%M%S")
             dest_path = self.archive_dir / f"{source_path.stem}_{timestamp}{source_path.suffix}"
 
         try:

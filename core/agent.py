@@ -20,9 +20,10 @@ import logging
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from core.time_utils import now_iso
 
 from core.background import BackgroundTaskManager
 from core.prompt.context import ContextTracker
@@ -751,7 +752,7 @@ class AgentCore:
             shortterm.save(
                 SessionState(
                     session_id=result_msg.session_id if result_msg else "",
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=now_iso(),
                     trigger=trigger,
                     original_prompt=prompt,
                     accumulated_response=accumulated_text,
@@ -938,7 +939,7 @@ class AgentCore:
                         # Save checkpoint after each tool completion
                         from core.memory.shortterm import StreamCheckpoint
                         shortterm.save_checkpoint(StreamCheckpoint(
-                            timestamp=datetime.now().isoformat(),
+                            timestamp=now_iso(),
                             trigger=trigger,
                             original_prompt=prompt,
                             completed_tools=completed_tools,
@@ -995,7 +996,7 @@ class AgentCore:
                 checkpoint = shortterm.load_checkpoint()
                 if checkpoint is None:
                     checkpoint = StreamCheckpoint(
-                        timestamp=datetime.now().isoformat(),
+                        timestamp=now_iso(),
                         trigger=trigger,
                         original_prompt=prompt,
                         completed_tools=completed_tools,
@@ -1050,7 +1051,7 @@ class AgentCore:
             shortterm.save(
                 SessionState(
                     session_id=result_message.session_id if result_message else "",
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=now_iso(),
                     trigger=trigger,
                     original_prompt=prompt,
                     accumulated_response="\n".join(full_text_parts),

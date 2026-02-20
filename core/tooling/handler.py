@@ -21,9 +21,10 @@ import shlex
 import subprocess
 import uuid
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from core.time_utils import now_iso
 
 from core.background import BackgroundTaskManager
 from core.memory.activity import ActivityLogger
@@ -822,7 +823,7 @@ class ToolHandler:
             "subject": subject,
             "body": body,
             "priority": priority,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_iso(),
         }
         self._pending_notifications.append(notif_data)
 
@@ -1040,7 +1041,7 @@ class ToolHandler:
             meta["failure_count"] = meta.get("failure_count", 0) + 1
 
         # Update last_used
-        meta["last_used"] = datetime.now().isoformat()
+        meta["last_used"] = now_iso()
 
         # Recalculate confidence
         s = meta.get("success_count", 0)

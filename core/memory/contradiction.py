@@ -24,11 +24,11 @@ import logging
 import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.paths import load_prompt
+from core.time_utils import now_iso
 
 if TYPE_CHECKING:
     from core.memory.activity import ActivityLogger
@@ -720,7 +720,7 @@ class ContradictionDetector:
             newer_meta = meta_b
             older_meta = meta_a
 
-        now = datetime.now().isoformat()
+        now = now_iso()
 
         # Update older file metadata before archiving
         older_meta["superseded_by"] = newer.name
@@ -791,7 +791,7 @@ class ContradictionDetector:
         merged_path = self.knowledge_dir / merged_filename
 
         # Write merged file with metadata
-        now = datetime.now().isoformat()
+        now = now_iso()
         metadata = {
             "created_at": now,
             "merged_from": [pair.file_a.name, pair.file_b.name],

@@ -125,16 +125,28 @@ class LifecycleManager:
 
         _HEARTBEAT_INTERVAL = 30  # Fixed system-wide; not configurable per anima
 
-        active_start, active_end = 9, 22
+        # Determine active hours:
+        # 1. heartbeat.md explicit time range takes priority
+        # 2. AnimaConfig.active_hours if set
+        # 3. Default: 24h (hour="*")
         m = re.search(r"(\d{1,2}):\d{0,2}\s*-\s*(\d{1,2})", config)
         if m:
             active_start, active_end = int(m.group(1)), int(m.group(2))
+            hour_spec = f"{active_start}-{active_end - 1}"
+            log_active = f"active {active_start}:00-{active_end}:00"
+        elif anima.config.active_hours is not None:
+            active_start, active_end = anima.config.active_hours
+            hour_spec = f"{active_start}-{active_end - 1}"
+            log_active = f"active {active_start}:00-{active_end}:00"
+        else:
+            hour_spec = "*"
+            log_active = "24h"
 
         self.scheduler.add_job(
             self._heartbeat_wrapper,
             CronTrigger(
                 minute=f"*/{_HEARTBEAT_INTERVAL}",
-                hour=f"{active_start}-{active_end - 1}",
+                hour=hour_spec,
             ),
             id=f"{anima.name}_heartbeat",
             name=f"{anima.name} heartbeat",
@@ -142,11 +154,10 @@ class LifecycleManager:
             replace_existing=True,
         )
         logger.info(
-            "Heartbeat '%s': every %dmin, active %d:00-%d:00",
+            "Heartbeat '%s': every %dmin, %s",
             anima.name,
             _HEARTBEAT_INTERVAL,
-            active_start,
-            active_end,
+            log_active,
         )
 
     async def _heartbeat_wrapper(self, name: str) -> None:

@@ -23,6 +23,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from core.time_utils import ensure_aware, now_iso, now_jst
 from typing import TYPE_CHECKING, Any
 
 from core.memory._io import atomic_write_text
@@ -78,7 +80,7 @@ class ConversationTurn:
 
     def __post_init__(self) -> None:
         if not self.timestamp:
-            self.timestamp = datetime.now().isoformat()
+            self.timestamp = now_iso()
         if not self.token_estimate:
             self.token_estimate = len(self.content) // _CHARS_PER_TOKEN
 
@@ -531,7 +533,7 @@ class ConversationMemory:
         from core.memory.manager import MemoryManager
 
         memory_mgr = MemoryManager(self.anima_dir)
-        timestamp = datetime.now()
+        timestamp = now_jst()
         time_str = timestamp.strftime("%H:%M")
         episode_entry = f"## {time_str} — {parsed.title}\n\n{parsed.episode_body}\n"
         memory_mgr.append_episode(episode_entry)
@@ -591,7 +593,7 @@ class ConversationMemory:
         if not new_turns:
             return False
         last_ts = datetime.fromisoformat(new_turns[-1].timestamp)
-        elapsed = (datetime.now() - last_ts).total_seconds()
+        elapsed = (now_jst() - ensure_aware(last_ts)).total_seconds()
         if elapsed < SESSION_GAP_MINUTES * 60:
             return False
         # Load any pending injected procedures stored by the agent
@@ -746,14 +748,14 @@ class ConversationMemory:
         # Append resolved items with checkmark
         for item in parsed.resolved_items:
             if item not in current:
-                marker = f"- ✅ {item}（自動検出: {datetime.now().strftime('%m/%d %H:%M')}）"
+                marker = f"- ✅ {item}（自動検出: {now_jst().strftime('%m/%d %H:%M')}）"
                 current += f"\n{marker}"
                 updated = True
 
         # Append new tasks
         for task in parsed.new_tasks:
             if task not in current:
-                current += f"\n- [ ] {task}（自動検出: {datetime.now().strftime('%m/%d %H:%M')}）"
+                current += f"\n- [ ] {task}（自動検出: {now_jst().strftime('%m/%d %H:%M')}）"
                 updated = True
 
         if updated:
@@ -813,7 +815,7 @@ class ConversationMemory:
                 else:
                     meta["success_count"] = meta.get("success_count", 0) + 1
 
-                meta["last_used"] = datetime.now().isoformat()
+                meta["last_used"] = now_iso()
 
                 s = meta.get("success_count", 0)
                 f = meta.get("failure_count", 0)
