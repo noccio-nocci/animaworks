@@ -527,6 +527,7 @@ class ToolHandler:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         # Auto-add YAML frontmatter for procedure overwrite writes
+        auto_frontmatter_applied = False
         if (rel.startswith("procedures/") and rel.endswith(".md")
                 and mode == "overwrite"
                 and not content.lstrip().startswith("---")):
@@ -538,6 +539,7 @@ class ToolHandler:
                 "confidence": 0.5,
             }
             self._memory.write_procedure_with_meta(path, content, metadata)
+            auto_frontmatter_applied = True
         elif mode == "append":
             with open(path, "a", encoding="utf-8") as f:
                 f.write(content)
@@ -578,7 +580,8 @@ class ToolHandler:
                 result = f"{result}\n\n⚠️ スキルフォーマット検証:\n{validation_msg}"
 
         # Validate procedure file format (soft validation: warn but don't block)
-        if rel.startswith("procedures/") and rel.endswith(".md"):
+        # Skip when auto-frontmatter was just applied (content already structured)
+        if rel.startswith("procedures/") and rel.endswith(".md") and not auto_frontmatter_applied:
             validation_msg = _validate_procedure_format(args["content"])
             if validation_msg:
                 result = f"{result}\n\n⚠️ 手順書フォーマット検証:\n{validation_msg}"
