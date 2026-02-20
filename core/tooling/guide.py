@@ -15,6 +15,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from core.exceptions import ToolConfigError
+
 logger = logging.getLogger("animaworks.tool_guide")
 
 

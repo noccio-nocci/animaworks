@@ -25,6 +25,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from core.exceptions import AnimaWorksError
+
 logger = logging.getLogger("animaworks.background")
 
 
