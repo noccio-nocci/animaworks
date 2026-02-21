@@ -14,6 +14,7 @@ tools via the Agent SDK subprocess.  Supports both blocking and streaming
 execution, plus a ``PostToolUse`` hook for context monitoring.
 """
 
+import json
 import logging
 import os
 import re
@@ -23,9 +24,9 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import asdict
 from typing import Any
 
-from core.prompt.context import ContextTracker
+from core.prompt.context import ContextTracker, resolve_context_window
 from core.exceptions import ExecutionError, LLMAPIError, MemoryWriteError  # noqa: F401
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.schemas import ModelConfig
 from core.memory.shortterm import ShortTermMemory
 from pathlib import Path
@@ -305,6 +306,29 @@ def _log_tool_use(
         logger.debug("Failed to log tool_use for %s", tool_name, exc_info=True)
 
 
+def _parse_tool_result_from_transcript(transcript_path: str, tool_use_id: str) -> str:
+    """Agent SDKのtranscriptからtool結果を取得するフォールバック."""
+    if not transcript_path or not Path(transcript_path).exists():
+        return ""
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in reversed(f.readlines()):
+                entry = json.loads(line.strip())
+                if (entry.get("type") == "tool_result"
+                        and entry.get("tool_use_id") == tool_use_id):
+                    content = entry.get("content", "")
+                    if isinstance(content, list):
+                        # content blocksの場合はテキスト部分を結合
+                        return " ".join(
+                            b.get("text", "") for b in content
+                            if b.get("type") == "text"
+                        )
+                    return str(content)
+    except Exception:
+        return ""
+    return ""
+
+
 def _build_pre_tool_hook(
     anima_dir: Path,
 ) -> Callable:
@@ -502,6 +526,7 @@ class AgentSDKExecutor(BaseExecutor):
         threshold = self._model_config.context_threshold
         _hook_fired = False
         _transcript_path = ""
+        _tool_results_cache: dict[str, str] = {}
 
         async def _post_tool_hook(
             input_data: HookInput,
@@ -509,10 +534,25 @@ class AgentSDKExecutor(BaseExecutor):
             context: HookContext,
         ) -> SyncHookJSONOutput:
             nonlocal _hook_fired, _transcript_path
-            if tracker is None:
-                return SyncHookJSONOutput()
+            # ── Capture tool result into cache ──
             transcript_path = input_data.get("transcript_path", "")
             _transcript_path = transcript_path or _transcript_path
+            tool_output = (
+                input_data.get("tool_output")
+                or input_data.get("output")
+                or input_data.get("content")
+                or ""
+            )
+            if not tool_output and tool_use_id and _transcript_path:
+                tool_output = _parse_tool_result_from_transcript(
+                    _transcript_path, tool_use_id,
+                )
+            if tool_output and tool_use_id:
+                _tool_results_cache[tool_use_id] = str(tool_output)
+
+            # ── Context threshold check ──
+            if tracker is None:
+                return SyncHookJSONOutput()
             ratio = tracker.estimate_from_transcript(transcript_path)
             if ratio >= threshold and not _hook_fired:
                 _hook_fired = True
@@ -577,13 +617,21 @@ class AgentSDKExecutor(BaseExecutor):
                             response_text.append(block.text)
                         elif hasattr(block, 'name') and hasattr(block, 'id'):
                             # ToolUseBlock from Agent SDK
+                            context_window = resolve_context_window(
+                                self._model_config.model,
+                            )
+                            result_text = _tool_results_cache.pop(block.id, "")
                             all_tool_records.append(ToolCallRecord(
                                 tool_name=block.name,
                                 tool_id=block.id,
                                 input_summary=_truncate_for_record(
-                                    str(getattr(block, 'input', '')), 200,
+                                    str(getattr(block, 'input', '')),
+                                    tool_input_save_budget(context_window),
                                 ),
-                                result_summary="",  # Not available - managed by Agent SDK internally
+                                result_summary=_truncate_for_record(
+                                    result_text,
+                                    tool_result_save_budget(block.name, context_window),
+                                ),
                             ))
                 elif isinstance(message, SystemMessage):
                     if message.subtype == "init" and message.data:
@@ -627,6 +675,7 @@ class AgentSDKExecutor(BaseExecutor):
         prompt: str,
         tracker: ContextTracker,
         images: list[dict[str, Any]] | None = None,
+        prior_messages: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream events from Claude Agent SDK.
 
@@ -662,6 +711,7 @@ class AgentSDKExecutor(BaseExecutor):
         threshold = self._model_config.context_threshold
         _hook_fired = False
         _transcript_path = ""
+        _tool_results_cache: dict[str, str] = {}
 
         async def _post_tool_hook(
             input_data: HookInput,
@@ -669,8 +719,23 @@ class AgentSDKExecutor(BaseExecutor):
             context: HookContext,
         ) -> SyncHookJSONOutput:
             nonlocal _hook_fired, _transcript_path
+            # ── Capture tool result into cache ──
             transcript_path = input_data.get("transcript_path", "")
             _transcript_path = transcript_path or _transcript_path
+            tool_output = (
+                input_data.get("tool_output")
+                or input_data.get("output")
+                or input_data.get("content")
+                or ""
+            )
+            if not tool_output and tool_use_id and _transcript_path:
+                tool_output = _parse_tool_result_from_transcript(
+                    _transcript_path, tool_use_id,
+                )
+            if tool_output and tool_use_id:
+                _tool_results_cache[tool_use_id] = str(tool_output)
+
+            # ── Context threshold check ──
             ratio = tracker.estimate_from_transcript(transcript_path)
             if ratio >= threshold and not _hook_fired:
                 _hook_fired = True
@@ -758,13 +823,21 @@ class AgentSDKExecutor(BaseExecutor):
                         if isinstance(block, TextBlock):
                             response_text.append(block.text)
                         elif isinstance(block, ToolUseBlock):
+                            context_window = resolve_context_window(
+                                self._model_config.model,
+                            )
+                            result_text = _tool_results_cache.pop(block.id, "")
                             all_tool_records.append(ToolCallRecord(
                                 tool_name=block.name,
                                 tool_id=block.id,
                                 input_summary=_truncate_for_record(
-                                    str(getattr(block, 'input', '')), 200,
+                                    str(getattr(block, 'input', '')),
+                                    tool_input_save_budget(context_window),
                                 ),
-                                result_summary="",  # Not available - managed by Agent SDK internally
+                                result_summary=_truncate_for_record(
+                                    result_text,
+                                    tool_result_save_budget(block.name, context_window),
+                                ),
                             ))
                             if block.id in active_tool_ids:
                                 active_tool_ids.discard(block.id)

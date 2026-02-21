@@ -22,10 +22,10 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from core.prompt.context import ContextTracker
+from core.prompt.context import ContextTracker, resolve_context_window
 from core.execution._session import build_continuation_prompt, handle_session_chaining
 from core.execution._streaming import stream_error_boundary
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.memory import MemoryManager
 from core.prompt.builder import build_system_prompt
 from core.schemas import ModelConfig
@@ -39,6 +39,39 @@ from core.tooling.schemas import (
 import httpx
 
 logger = logging.getLogger("animaworks.execution.anthropic_fallback")
+
+
+def _extract_tool_uses_from_messages(messages: list[dict]) -> list[dict]:
+    """Extract tool_use info from Anthropic-format messages."""
+    tool_uses: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        tool_uses.append({
+                            "name": block.get("name", ""),
+                            "input": str(block.get("input", ""))[:500],
+                        })
+                    elif hasattr(block, "type") and block.type == "tool_use":
+                        tool_uses.append({
+                            "name": getattr(block, "name", ""),
+                            "input": str(getattr(block, "input", ""))[:500],
+                        })
+        elif msg.get("role") == "user":
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result" and tool_uses:
+                        result_content = block.get("content", "")
+                        if isinstance(result_content, list):
+                            result_content = " ".join(
+                                b.get("text", "") for b in result_content
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            )
+                        tool_uses[-1]["result"] = str(result_content)[:500]
+    return tool_uses[-20:]  # Keep last 20 entries
 
 
 class AnthropicFallbackExecutor(BaseExecutor):
@@ -123,6 +156,7 @@ class AnthropicFallbackExecutor(BaseExecutor):
         """Run Anthropic SDK with tool_use loop."""
         client = self._build_client()
         tools = self._build_tools()
+        context_window = resolve_context_window(self._model_config.model)
         if prior_messages:
             messages = prior_messages  # Structured history including current msg
         else:
@@ -179,6 +213,7 @@ class AnthropicFallbackExecutor(BaseExecutor):
                     original_prompt=prompt,
                     accumulated_response="\n".join(all_response_text),
                     turn_count=iteration,
+                    tool_uses=_extract_tool_uses_from_messages(messages),
                 )
                 if new_sys is not None:
                     all_response_text.append(current_text)
@@ -219,8 +254,8 @@ class AnthropicFallbackExecutor(BaseExecutor):
                 all_tool_records.append(ToolCallRecord(
                     tool_name=tu.name,
                     tool_id=tu.id,
-                    input_summary=_truncate_for_record(str(tu.input), 200),
-                    result_summary=_truncate_for_record(str(result), 300),
+                    input_summary=_truncate_for_record(str(tu.input), tool_input_save_budget(context_window)),
+                    result_summary=_truncate_for_record(str(result), tool_result_save_budget(tu.name, context_window)),
                 ))
             messages.append({"role": "user", "content": tool_results})
 
@@ -253,6 +288,7 @@ class AnthropicFallbackExecutor(BaseExecutor):
         """
         client = self._build_client()
         tools = self._build_tools()
+        context_window = resolve_context_window(self._model_config.model)
         if prior_messages:
             messages = prior_messages
         else:
@@ -359,8 +395,8 @@ class AnthropicFallbackExecutor(BaseExecutor):
                     all_tool_records.append(ToolCallRecord(
                         tool_name=tu.name,
                         tool_id=tu.id,
-                        input_summary=_truncate_for_record(str(tu.input), 200),
-                        result_summary=_truncate_for_record(str(result), 300),
+                        input_summary=_truncate_for_record(str(tu.input), tool_input_save_budget(context_window)),
+                        result_summary=_truncate_for_record(str(result), tool_result_save_budget(tu.name, context_window)),
                     ))
                     yield {
                         "type": "tool_end",

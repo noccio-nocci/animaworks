@@ -33,7 +33,7 @@ from core.execution._streaming import (
     parse_accumulated_tool_calls,
     stream_error_boundary,
 )
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.memory import MemoryManager
 from core.prompt.builder import build_system_prompt
 from core.schemas import ModelConfig
@@ -110,6 +110,24 @@ def _partition_tool_calls(
 
     serial_batches = [calls for calls in serial_by_path.values() if calls]
     return parallel, serial_batches
+
+
+def _extract_tool_uses_from_messages(messages: list[dict]) -> list[dict]:
+    """Extract tool_use info from LiteLLM-format messages."""
+    tool_uses: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                tool_uses.append({
+                    "name": fn.get("name", ""),
+                    "input": fn.get("arguments", "")[:500],
+                })
+        elif msg.get("role") == "tool":
+            # Attach result to the most recent tool_use entry
+            if tool_uses:
+                tool_uses[-1]["result"] = str(msg.get("content", ""))[:500]
+    return tool_uses[-20:]  # Keep last 20 entries
 
 
 class LiteLLMExecutor(BaseExecutor):
@@ -286,6 +304,7 @@ class LiteLLMExecutor(BaseExecutor):
 
         tools = self._build_base_tools()
         active_categories: set[str] = set()
+        context_window = resolve_context_window(self._model_config.model)
 
         messages = self._build_initial_messages(
             system_prompt, prompt, images, prior_messages=prior_messages,
@@ -355,6 +374,7 @@ class LiteLLMExecutor(BaseExecutor):
                     original_prompt=prompt,
                     accumulated_response="\n".join(all_response_text),
                     turn_count=iteration,
+                    tool_uses=_extract_tool_uses_from_messages(messages),
                 )
                 if new_sys is not None:
                     if current_text:
@@ -388,6 +408,7 @@ class LiteLLMExecutor(BaseExecutor):
             parsed_calls = _convert_litellm_tool_calls(tool_calls)
             async for _event in self._process_streaming_tool_calls(
                 parsed_calls, messages, tools, active_categories,
+                context_window=context_window,
             ):
                 if "record" in _event:
                     all_tool_records.append(_event["record"])
@@ -448,6 +469,7 @@ class LiteLLMExecutor(BaseExecutor):
 
         tools = self._build_base_tools()
         active_categories: set[str] = set()
+        context_window = resolve_context_window(self._model_config.model)
 
         messages = self._build_initial_messages(system_prompt, prompt, images, prior_messages=prior_messages)
         all_response_text: list[str] = []
@@ -599,6 +621,7 @@ class LiteLLMExecutor(BaseExecutor):
                 # H2: Execute tool calls and yield tool_end per-tool
                 async for event in self._process_streaming_tool_calls(
                     parsed_calls, messages, tools, active_categories,
+                    context_window=context_window,
                 ):
                     if "record" in event:
                         all_tool_records.append(event["record"])
@@ -636,6 +659,7 @@ class LiteLLMExecutor(BaseExecutor):
 
         tools = self._build_base_tools()
         active_categories: set[str] = set()
+        context_window = resolve_context_window(self._model_config.model)
 
         messages = self._build_initial_messages(system_prompt, prompt, images, prior_messages=prior_messages)
         all_response_text: list[str] = []
@@ -735,6 +759,7 @@ class LiteLLMExecutor(BaseExecutor):
                 # H2: Execute and yield tool_end per-tool in real-time
                 async for event in self._process_streaming_tool_calls(
                     parsed_calls, messages, tools, active_categories,
+                    context_window=context_window,
                 ):
                     if "record" in event:
                         all_tool_records.append(event["record"])
@@ -851,6 +876,7 @@ class LiteLLMExecutor(BaseExecutor):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         active_categories: set[str],
+        context_window: int = 128_000,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Process parsed tool calls: discover_tools, refresh_tools, and execute.
 
@@ -884,7 +910,7 @@ class LiteLLMExecutor(BaseExecutor):
                     "record": ToolCallRecord(
                         tool_name=fn_name, tool_id=tc_id,
                         input_summary="(invalid arguments)",
-                        result_summary=_truncate_for_record(error_content, 300),
+                        result_summary=_truncate_for_record(error_content, tool_result_save_budget(fn_name, context_window)),
                     ),
                 }
                 continue
@@ -913,8 +939,8 @@ class LiteLLMExecutor(BaseExecutor):
                     "type": "tool_end", "tool_id": tc_id, "tool_name": fn_name,
                     "record": ToolCallRecord(
                         tool_name=fn_name, tool_id=tc_id,
-                        input_summary=_truncate_for_record(str(fn_args), 200),
-                        result_summary=_truncate_for_record(result, 300),
+                        input_summary=_truncate_for_record(str(fn_args), tool_input_save_budget(context_window)),
+                        result_summary=_truncate_for_record(result, tool_result_save_budget(fn_name, context_window)),
                     ),
                 }
                 continue
@@ -931,8 +957,8 @@ class LiteLLMExecutor(BaseExecutor):
                     "type": "tool_end", "tool_id": tc_id, "tool_name": fn_name,
                     "record": ToolCallRecord(
                         tool_name=fn_name, tool_id=tc_id,
-                        input_summary=_truncate_for_record(str(fn_args), 200),
-                        result_summary=_truncate_for_record(result, 300),
+                        input_summary=_truncate_for_record(str(fn_args), tool_input_save_budget(context_window)),
+                        result_summary=_truncate_for_record(result, tool_result_save_budget(fn_name, context_window)),
                     ),
                 }
                 continue
@@ -982,10 +1008,10 @@ class LiteLLMExecutor(BaseExecutor):
                         "tool_call_id": shim.id,
                         "content": error_content,
                     })
-                    result_summary = _truncate_for_record(error_content, 300)
+                    result_summary = _truncate_for_record(error_content, tool_result_save_budget(shim.function.name, context_window))
                 else:
                     messages.append(r)
-                    result_summary = _truncate_for_record(r.get("content", ""), 300)
+                    result_summary = _truncate_for_record(r.get("content", ""), tool_result_save_budget(shim.function.name, context_window))
                 yield {
                     "type": "tool_end",
                     "tool_id": shim.id,
@@ -993,7 +1019,7 @@ class LiteLLMExecutor(BaseExecutor):
                     "record": ToolCallRecord(
                         tool_name=shim.function.name,
                         tool_id=shim.id,
-                        input_summary=_truncate_for_record(str(args_map[shim.id]), 200),
+                        input_summary=_truncate_for_record(str(args_map[shim.id]), tool_input_save_budget(context_window)),
                         result_summary=result_summary,
                     ),
                 }
@@ -1003,7 +1029,7 @@ class LiteLLMExecutor(BaseExecutor):
                 try:
                     r = await self._execute_tool_call(shim, args_map[shim.id])
                     messages.append(r)
-                    result_summary = _truncate_for_record(r.get("content", ""), 300)
+                    result_summary = _truncate_for_record(r.get("content", ""), tool_result_save_budget(shim.function.name, context_window))
                 except Exception as e:
                     logger.warning("Serial tool execution error: %s", e)
                     error_content = _json.dumps({
@@ -1016,7 +1042,7 @@ class LiteLLMExecutor(BaseExecutor):
                         "tool_call_id": shim.id,
                         "content": error_content,
                     })
-                    result_summary = _truncate_for_record(error_content, 300)
+                    result_summary = _truncate_for_record(error_content, tool_result_save_budget(shim.function.name, context_window))
                 yield {
                     "type": "tool_end",
                     "tool_id": shim.id,
@@ -1024,7 +1050,7 @@ class LiteLLMExecutor(BaseExecutor):
                     "record": ToolCallRecord(
                         tool_name=shim.function.name,
                         tool_id=shim.id,
-                        input_summary=_truncate_for_record(str(args_map[shim.id]), 200),
+                        input_summary=_truncate_for_record(str(args_map[shim.id]), tool_input_save_budget(context_window)),
                         result_summary=result_summary,
                     ),
                 }

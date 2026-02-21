@@ -412,6 +412,10 @@ class DigitalAnima:
                         content, fmt=fmt,
                     )
                     prompt = content  # Raw message; history is in prior_messages
+                elif mode == "b":
+                    prompt = conv_memory.build_chat_prompt(
+                        content, from_person, max_history_chars=2000,
+                    )
                 else:
                     prompt = conv_memory.build_chat_prompt(content, from_person)
 
@@ -567,6 +571,10 @@ class DigitalAnima:
                         content, fmt=fmt,
                     )
                     prompt = content
+                elif mode == "b":
+                    prompt = conv_memory.build_chat_prompt(
+                        content, from_person, max_history_chars=2000,
+                    )
                 else:
                     prompt = conv_memory.build_chat_prompt(content, from_person)
 
@@ -786,6 +794,17 @@ class DigitalAnima:
                 self._current_task = prev_task
 
     # ── Heartbeat private methods ──────────────────────────
+
+    def _build_prior_messages(
+        self, prompt_text: str,
+    ) -> list[dict[str, Any]] | None:
+        """Build prior_messages for A2/A1F modes, None otherwise."""
+        mode = self.agent.execution_mode
+        if mode not in ("a2", "a1_fallback"):
+            return None
+        conv = ConversationMemory(self.anima_dir, self.model_config)
+        fmt = "openai" if mode == "a2" else "anthropic"
+        return conv.build_structured_messages(prompt_text, fmt=fmt)
 
     async def _build_heartbeat_prompt(self) -> list[str]:
         """Build heartbeat prompt parts.
@@ -1067,8 +1086,15 @@ class DigitalAnima:
         prompt: str,
         inbox_items: list[InboxItem],
         unread_count: int,
+        prior_messages: list[dict[str, Any]] | None = None,
     ) -> CycleResult:
         """Write checkpoint, execute agent cycle, record results.
+
+        Args:
+            prompt: The heartbeat prompt text.
+            inbox_items: Inbox items being processed.
+            unread_count: Number of unread messages.
+            prior_messages: Structured conversation history for A2/A1F modes.
 
         Returns the CycleResult from the agent execution.
         """
@@ -1102,7 +1128,8 @@ class DigitalAnima:
 
         try:
             async for chunk in self.agent.run_cycle_streaming(
-                prompt, trigger="heartbeat"
+                prompt, trigger="heartbeat",
+                prior_messages=prior_messages,
             ):
                 # Relay text_delta chunks to waiting user stream
                 if chunk.get("type") == "text_delta":
@@ -1376,10 +1403,11 @@ class DigitalAnima:
                         self._heartbeat_context = "定期巡回中"
 
                     # 3. Execute agent cycle
+                    heartbeat_text = "\n\n".join(parts)
+                    prior_msgs = self._build_prior_messages(heartbeat_text)
                     result = await self._execute_heartbeat_cycle(
-                        "\n\n".join(parts),
-                        inbox_items,
-                        unread_count,
+                        heartbeat_text, inbox_items, unread_count,
+                        prior_messages=prior_msgs,
                     )
 
                     # 4. Archive processed messages

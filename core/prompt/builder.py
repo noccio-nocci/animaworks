@@ -254,6 +254,40 @@ def _load_a2_reflection() -> str:
         return ""
 
 
+def _build_recent_tool_section(anima_dir: Path, model_config: Any) -> str:
+    """Build a summary of recent tool results for system prompt injection.
+
+    Reads the last few turns from ConversationMemory and extracts tool
+    records with result summaries, constrained to a ~2000 token budget.
+    """
+    try:
+        from core.memory.conversation import ConversationMemory
+        conv_memory = ConversationMemory(anima_dir, model_config)
+        state = conv_memory.load()
+    except Exception:
+        return ""
+    if not state.turns:
+        return ""
+
+    tool_lines: list[str] = []
+    budget_remaining = 2000  # approximate token budget (~8000 chars)
+    for turn in reversed(state.turns[-3:]):
+        for tr in turn.tool_records[:5]:
+            if not tr.result_summary:
+                continue
+            line = f"- {tr.tool_name}: {tr.result_summary[:500]}"
+            budget_remaining -= len(line) // 4
+            if budget_remaining <= 0:
+                break
+            tool_lines.append(line)
+        if budget_remaining <= 0:
+            break
+
+    if not tool_lines:
+        return ""
+    return "## Recent Tool Results\n\n" + "\n".join(tool_lines)
+
+
 def _build_human_notification_guidance(execution_mode: str = "") -> str:
     """Build the human notification instruction for top-level Animas."""
     if execution_mode == "a1":
@@ -397,6 +431,15 @@ def build_system_prompt(
     # Priming section (automatic memory recall)
     if priming_section:
         parts.append(priming_section)
+
+    # Recent tool results (last few turns)
+    try:
+        _model_cfg = memory.read_model_config()
+        recent_tools = _build_recent_tool_section(pd, _model_cfg)
+        if recent_tools:
+            parts.append(recent_tools)
+    except Exception:
+        logger.debug("Failed to inject recent tool results", exc_info=True)
 
     # ── Group 4: 記憶と能力 ───────────────────────────────────
     parts.append("# 4. 記憶と能力")

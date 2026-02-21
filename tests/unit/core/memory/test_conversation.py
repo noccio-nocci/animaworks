@@ -483,7 +483,7 @@ class TestFormatHistoryDisplayLimit:
             assert f"turn-{i}" in result
 
     def test_at_limit_all_displayed(self, conv):
-        state = self._make_state(_MAX_DISPLAY_TURNS)  # 20
+        state = self._make_state(_MAX_DISPLAY_TURNS)
         result = conv._format_history(state)
         for i in range(_MAX_DISPLAY_TURNS):
             assert f"turn-{i}" in result

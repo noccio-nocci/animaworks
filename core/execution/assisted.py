@@ -33,11 +33,11 @@ from pathlib import Path
 from typing import Any
 
 from core.exceptions import LLMAPIError, ToolExecutionError, ConfigError  # noqa: F401
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.execution._streaming import stream_error_boundary
 from core.memory import MemoryManager
 from core.messenger import Messenger
-from core.prompt.context import ContextTracker
+from core.prompt.context import ContextTracker, resolve_context_window
 from core.schemas import ModelConfig
 from core.memory.shortterm import ShortTermMemory
 from core.tooling.handler import ToolHandler
@@ -327,6 +327,7 @@ class AssistedExecutor(BaseExecutor):
         tool_spec = self._build_tool_spec_text()
         full_system = system_prompt + "\n\n" + tool_spec if system_prompt else tool_spec
 
+        context_window = resolve_context_window(self._model_config.model)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": full_system},
             {"role": "user", "content": prompt},
@@ -417,8 +418,8 @@ class AssistedExecutor(BaseExecutor):
             all_tool_records.append(ToolCallRecord(
                 tool_name=tool_name,
                 tool_id=tool_id,
-                input_summary=_truncate_for_record(str(tool_args), 200),
-                result_summary=_truncate_for_record(result, 300),
+                input_summary=_truncate_for_record(str(tool_args), tool_input_save_budget(context_window)),
+                result_summary=_truncate_for_record(result, tool_result_save_budget(tool_name, context_window)),
             ))
 
             # ── 6. Inject result and continue ─────────────────
@@ -450,6 +451,7 @@ class AssistedExecutor(BaseExecutor):
         prompt: str,
         tracker: ContextTracker,
         images: list[dict[str, Any]] | None = None,
+        prior_messages: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream execution events from the text-based tool-call loop.
 
@@ -477,6 +479,7 @@ class AssistedExecutor(BaseExecutor):
         tool_spec = self._build_tool_spec_text()
         full_system = system_prompt + "\n\n" + tool_spec if system_prompt else tool_spec
 
+        context_window = resolve_context_window(self._model_config.model)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": full_system},
             {"role": "user", "content": prompt},
@@ -584,8 +587,8 @@ class AssistedExecutor(BaseExecutor):
                 all_tool_records.append(ToolCallRecord(
                     tool_name=tool_name,
                     tool_id=tool_id,
-                    input_summary=_truncate_for_record(str(tool_args), 200),
-                    result_summary=_truncate_for_record(result, 300),
+                    input_summary=_truncate_for_record(str(tool_args), tool_input_save_budget(context_window)),
+                    result_summary=_truncate_for_record(result, tool_result_save_budget(tool_name, context_window)),
                 ))
 
                 # ── 8. Yield tool_end ────────────────────────

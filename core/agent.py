@@ -21,10 +21,11 @@ import logging
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from core.time_utils import now_iso
+from core.time_utils import now_iso, now_jst
 
 from core.background import BackgroundTaskManager
 from core.prompt.context import ContextTracker
@@ -48,6 +49,32 @@ _PROMPT_SOFT_LIMIT_BYTES = 600_000   # Force compression
 _PROMPT_HARD_LIMIT_BYTES = 1_200_000  # Fall back to A1 Fallback
 
 
+_PROMPT_LOG_RETENTION_DAYS = 3
+_last_rotation_date: str = ""
+
+
+def _rotate_prompt_logs(log_dir: Path) -> None:
+    """Delete prompt_log files older than *_PROMPT_LOG_RETENTION_DAYS*.
+
+    Uses the filename date (``YYYY-MM-DD.jsonl``) for comparison so no
+    filesystem stat is required.  Runs at most once per calendar day
+    (module-level ``_last_rotation_date`` cache).
+    """
+    global _last_rotation_date
+    today = now_jst().strftime("%Y-%m-%d")
+    if _last_rotation_date == today:
+        return  # already rotated today
+    _last_rotation_date = today
+
+    cutoff = now_jst() - timedelta(days=_PROMPT_LOG_RETENTION_DAYS)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+    for f in log_dir.glob("*.jsonl"):
+        # Filename expected format: YYYY-MM-DD.jsonl
+        date_str = f.stem
+        if date_str < cutoff_str:
+            f.unlink(missing_ok=True)
+
+
 def _save_prompt_log(
     anima_dir: Path,
     *,
@@ -59,6 +86,9 @@ def _save_prompt_log(
     user_message: str,
     tools: list[str],
     session_id: str,
+    context_window: int = 0,
+    prior_messages: list | None = None,
+    tool_schemas: list | None = None,
 ) -> None:
     """Persist the full prompt payload to a JSONL log for post-hoc debugging.
 
@@ -68,9 +98,14 @@ def _save_prompt_log(
     try:
         log_dir = anima_dir / "prompt_logs"
         log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-rotate old log files (at most once per day)
+        _rotate_prompt_logs(log_dir)
+
         today = now_iso()[:10]  # YYYY-MM-DD
         entry = {
             "ts": now_iso(),
+            "type": "request_start",
             "trigger": trigger,
             "from": sender,
             "model": model,
@@ -80,13 +115,50 @@ def _save_prompt_log(
             "user_message": user_message,
             "tools": tools,
             "session_id": session_id,
+            "context_window": context_window,
+            "prior_messages": prior_messages,
+            "prior_messages_count": len(prior_messages) if prior_messages else 0,
+            "tool_schemas": tool_schemas,
         }
         log_file = log_dir / f"{today}.jsonl"
         with log_file.open("a", encoding="utf-8") as f:
-            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+            f.write(_json.dumps(entry, ensure_ascii=False, default=str) + "\n")
         logger.debug("Prompt log saved: %s (%d bytes)", log_file, len(system_prompt))
     except Exception:
         logger.warning("Failed to save prompt log", exc_info=True)
+
+
+def _save_prompt_log_end(
+    anima_dir: Path,
+    session_id: str,
+    final_messages: list[dict] | None = None,
+    tool_call_count: int = 0,
+    total_tokens_estimate: int = 0,
+) -> None:
+    """Persist post-execution metadata to the same JSONL log.
+
+    Writes a ``request_end`` entry after the tool loop completes, capturing
+    final message counts and token estimates.
+    """
+    try:
+        log_dir = anima_dir / "prompt_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        today = now_iso()[:10]
+        log_file = log_dir / f"{today}.jsonl"
+
+        entry = {
+            "ts": now_iso(),
+            "type": "request_end",
+            "session_id": session_id,
+            "final_messages_count": len(final_messages) if final_messages else 0,
+            "final_messages": final_messages,
+            "tool_call_count": tool_call_count,
+            "total_tokens_estimate": total_tokens_estimate,
+        }
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        logger.warning("Failed to save prompt log end", exc_info=True)
 
 
 class AgentCore:
@@ -738,6 +810,16 @@ class AgentCore:
             logger.info("Injected short-term memory into system prompt")
 
         # ── Prompt log: save full payload for debugging ───
+        from core.prompt.context import resolve_context_window
+        from core.tooling.schemas import load_all_tool_schemas
+        _ctx_win = resolve_context_window(
+            self.model_config.model,
+            overrides=self._load_context_window_overrides(),
+        )
+        _tool_schemas = load_all_tool_schemas(
+            tool_registry=self._tool_registry,
+            personal_tools=self._personal_tools,
+        )
         _save_prompt_log(
             self.anima_dir,
             trigger=trigger,
@@ -748,6 +830,9 @@ class AgentCore:
             user_message=prompt,
             tools=self._tool_registry,
             session_id=self._tool_handler.session_id,
+            context_window=_ctx_win,
+            prior_messages=prior_messages,
+            tool_schemas=_tool_schemas,
         )
 
         # ── Helper: convert ExecutionResult tool records to dicts ──
@@ -762,6 +847,11 @@ class AgentCore:
                 system_prompt=system_prompt,
                 trigger=trigger,
                 images=images,
+            )
+            _save_prompt_log_end(
+                self.anima_dir,
+                session_id=self._tool_handler.session_id,
+                tool_call_count=len(result.tool_call_records),
             )
             duration_ms = int((time.monotonic() - start) * 1000)
             logger.info(
@@ -785,6 +875,11 @@ class AgentCore:
                 shortterm=shortterm,
                 images=images,
                 prior_messages=prior_messages,
+            )
+            _save_prompt_log_end(
+                self.anima_dir,
+                session_id=self._tool_handler.session_id,
+                tool_call_count=len(result.tool_call_records),
             )
             shortterm.clear()
             duration_ms = int((time.monotonic() - start) * 1000)
@@ -904,6 +999,12 @@ class AgentCore:
                 total_turns += result_msg.num_turns
 
         shortterm.clear()
+
+        _save_prompt_log_end(
+            self.anima_dir,
+            session_id=self._tool_handler.session_id,
+            tool_call_count=len(accumulated_tool_records),
+        )
 
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
@@ -1025,6 +1126,16 @@ class AgentCore:
             return
 
         # ── Prompt log: save full payload for debugging ───
+        from core.prompt.context import resolve_context_window as _rcw
+        from core.tooling.schemas import load_all_tool_schemas as _lats
+        _ctx_win_s = _rcw(
+            self.model_config.model,
+            overrides=self._load_context_window_overrides(),
+        )
+        _tool_schemas_s = _lats(
+            tool_registry=self._tool_registry,
+            personal_tools=self._personal_tools,
+        )
         _save_prompt_log(
             self.anima_dir,
             trigger=trigger,
@@ -1035,6 +1146,9 @@ class AgentCore:
             user_message=prompt,
             tools=self._tool_registry,
             session_id=self._tool_handler.session_id,
+            context_window=_ctx_win_s,
+            prior_messages=prior_messages,
+            tool_schemas=_tool_schemas_s,
         )
 
         # ── Stream retry configuration ────────────────────
@@ -1248,6 +1362,12 @@ class AgentCore:
                 break
 
         shortterm.clear()
+
+        _save_prompt_log_end(
+            self.anima_dir,
+            session_id=self._tool_handler.session_id,
+            tool_call_count=len(all_tool_call_records),
+        )
 
         full_text = "\n".join(full_text_parts)
         duration_ms = int((time.monotonic() - start) * 1000)
