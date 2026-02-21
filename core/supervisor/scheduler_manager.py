@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from core.config.models import load_config
 from core.schedule_parser import parse_cron_md, parse_schedule, parse_heartbeat_config
 from core.schemas import CronTask
 from core.time_utils import now_jst
@@ -96,12 +98,11 @@ class SchedulerManager:
         active_start, active_end = parse_heartbeat_config(hb_content)
 
         # Interval from config.json (not parsed from heartbeat.md)
-        from core.config.models import load_config
         app_config = load_config()
         interval = app_config.heartbeat.interval_minutes
 
-        # Fixed offset: hash(anima_name) % 10 → deterministic 0-9 min spread
-        offset = hash(self._anima_name) % 10
+        # Fixed offset: crc32(anima_name) % 10 → deterministic 0-9 min spread
+        offset = zlib.crc32(self._anima_name.encode()) % 10
 
         # Build minute spec: base slots (0, 30 for 30min interval) + offset
         # e.g. offset=3, interval=30 → minute="3,33"
@@ -113,8 +114,7 @@ class SchedulerManager:
         minute_spec = ",".join(slots)
 
         # Determine active hours
-        m_match = re.search(r"(\d{1,2}):\d{0,2}\s*-\s*(\d{1,2})", hb_content)
-        if m_match:
+        if active_start is not None:
             hour_spec = f"{active_start}-{active_end - 1}"
             log_active = f"active {active_start}:00-{active_end}:00"
         else:

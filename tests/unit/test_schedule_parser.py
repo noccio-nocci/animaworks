@@ -36,13 +36,13 @@ class TestParseHeartbeatConfig:
     def test_defaults_when_no_match(self):
         content = "some random content without patterns"
         start, end = parse_heartbeat_config(content)
-        assert start == 9
-        assert end == 22
+        assert start is None
+        assert end is None
 
     def test_empty_content(self):
         start, end = parse_heartbeat_config("")
-        assert start == 9
-        assert end == 22
+        assert start is None
+        assert end is None
 
 
 class TestParseCronMd:

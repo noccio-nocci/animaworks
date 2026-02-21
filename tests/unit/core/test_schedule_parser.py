@@ -318,10 +318,10 @@ class TestParseHeartbeatConfig:
         assert end == 22
 
     def test_defaults_without_time_range(self):
-        """Defaults returned when no time range in content."""
+        """None returned when no time range in content."""
         start, end = parse_heartbeat_config("15分間隔")
-        assert start == 9
-        assert end == 22
+        assert start is None
+        assert end is None
 
 
 # ── skip_pattern tests ───────────────────────────────────

@@ -604,7 +604,7 @@ class ToolHandler:
 
         to = args["to"]
         content = args["content"]
-        intent = args.get("intent", "")[:50]
+        intent = args.get("intent", "")
 
         # ── Per-run DM limits ──
         # 1. Intent restriction: only report/delegation allowed for DM

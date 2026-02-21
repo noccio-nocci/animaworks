@@ -33,21 +33,20 @@ _CRON_EXPR_RE = re.compile(r"^[\d\*\/\-\,]+(\s+[\d\*\/\-\,]+){4}$")
 # ── Heartbeat parsing ────────────────────────────────────
 
 
-def parse_heartbeat_config(content: str) -> tuple[int, int]:
+def parse_heartbeat_config(content: str) -> tuple[int | None, int | None]:
     """Parse heartbeat.md content to extract active hours.
 
     Interval is managed by config.json (heartbeat.interval_minutes),
     NOT parsed from heartbeat.md content.
 
     Returns:
-        Tuple of (active_start_hour, active_end_hour)
+        Tuple of (active_start_hour, active_end_hour).
+        Both are None if no time range found in content.
     """
-    active_start, active_end = 9, 22
     m = re.search(r"(\d{1,2}):\d{0,2}\s*-\s*(\d{1,2})", content)
     if m:
-        active_start, active_end = int(m.group(1)), int(m.group(2))
-
-    return active_start, active_end
+        return int(m.group(1)), int(m.group(2))
+    return None, None
 
 
 # ── Cron parsing ─────────────────────────────────────────

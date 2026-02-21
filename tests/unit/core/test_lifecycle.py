@@ -297,7 +297,8 @@ class TestCronWrapper:
 
 def _expected_minute_spec(name: str, interval: int = 30) -> str:
     """Compute the expected minute spec for a given anima name and interval."""
-    offset = hash(name) % 10
+    import zlib
+    offset = zlib.crc32(name.encode()) % 10
     slots = []
     m = offset
     while m < 60:

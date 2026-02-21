@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
+import zlib
 from typing import Any, Callable, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -132,12 +132,11 @@ class LifecycleManager:
         hb_content = anima.memory.read_heartbeat_config()
 
         # Interval from config.json (not parsed from heartbeat.md)
-        from core.config.models import load_config
         app_config = load_config()
         interval = app_config.heartbeat.interval_minutes
 
-        # Fixed offset: hash(anima_name) % 10 → deterministic 0-9 min spread
-        offset = hash(anima.name) % 10
+        # Fixed offset: crc32(anima_name) % 10 → deterministic 0-9 min spread
+        offset = zlib.crc32(anima.name.encode()) % 10
 
         # Build minute spec: base slots + offset
         slots = []
@@ -149,8 +148,7 @@ class LifecycleManager:
 
         # Determine active hours from heartbeat.md
         active_start, active_end = parse_heartbeat_config(hb_content)
-        m_match = re.search(r"(\d{1,2}):\d{0,2}\s*-\s*(\d{1,2})", hb_content)
-        if m_match:
+        if active_start is not None:
             hour_spec = f"{active_start}-{active_end - 1}"
             log_active = f"active {active_start}:00-{active_end}:00"
         else:

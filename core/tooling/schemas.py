@@ -111,7 +111,7 @@ MEMORY_TOOLS: list[dict[str, Any]] = [
                     ),
                 },
             },
-            "required": ["to", "content"],
+            "required": ["to", "content", "intent"],
         },
     },
 ]

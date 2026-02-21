@@ -261,6 +261,66 @@ class TestHandleRouting:
             )
         assert "Message sent" in result
 
+    def test_send_message_duplicate_recipient_returns_error(
+        self, handler_with_messenger: ToolHandler, anima_dir: Path,
+    ):
+        """Sending a second message to the same recipient returns an error."""
+        alice_dir = anima_dir.parent / "alice"
+        alice_dir.mkdir(exist_ok=True)
+        with patch("core.paths.get_animas_dir", return_value=anima_dir.parent):
+            result1 = handler_with_messenger.handle(
+                "send_message", {"to": "alice", "content": "first", "intent": "report"},
+            )
+            assert "Message sent to alice" in result1
+            result2 = handler_with_messenger.handle(
+                "send_message", {"to": "alice", "content": "second", "intent": "report"},
+            )
+        assert "Error" in result2
+        assert "alice" in result2
+
+    def test_send_message_max_recipients_returns_error(
+        self, handler_with_messenger: ToolHandler, anima_dir: Path,
+    ):
+        """After sending to 2 recipients, a 3rd recipient is rejected."""
+        alice_dir = anima_dir.parent / "alice"
+        alice_dir.mkdir(exist_ok=True)
+        bob_dir = anima_dir.parent / "bob"
+        bob_dir.mkdir(exist_ok=True)
+        charlie_dir = anima_dir.parent / "charlie"
+        charlie_dir.mkdir(exist_ok=True)
+        with patch("core.paths.get_animas_dir", return_value=anima_dir.parent):
+            result1 = handler_with_messenger.handle(
+                "send_message", {"to": "alice", "content": "hi", "intent": "report"},
+            )
+            assert "Message sent to alice" in result1
+            result2 = handler_with_messenger.handle(
+                "send_message", {"to": "bob", "content": "hi", "intent": "report"},
+            )
+            assert "Message sent to bob" in result2
+            result3 = handler_with_messenger.handle(
+                "send_message", {"to": "charlie", "content": "hi", "intent": "report"},
+            )
+        assert "Error" in result3
+        assert "2" in result3
+
+    def test_send_message_two_recipients_allowed(
+        self, handler_with_messenger: ToolHandler, anima_dir: Path,
+    ):
+        """Sending to two different recipients should both succeed."""
+        alice_dir = anima_dir.parent / "alice"
+        alice_dir.mkdir(exist_ok=True)
+        bob_dir = anima_dir.parent / "bob"
+        bob_dir.mkdir(exist_ok=True)
+        with patch("core.paths.get_animas_dir", return_value=anima_dir.parent):
+            result1 = handler_with_messenger.handle(
+                "send_message", {"to": "alice", "content": "hi", "intent": "report"},
+            )
+            result2 = handler_with_messenger.handle(
+                "send_message", {"to": "bob", "content": "hi", "intent": "report"},
+            )
+        assert "Message sent to alice" in result1
+        assert "Message sent to bob" in result2
+
     def test_unknown_tool(self, handler: ToolHandler):
         result = handler.handle("totally_unknown_tool", {})
         assert "Unknown tool" in result
