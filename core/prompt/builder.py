@@ -26,6 +26,8 @@ class BuildResult:
 
     system_prompt: str
     injected_procedures: list[Path] = field(default_factory=list)
+    injected_knowledge_files: list[str] = field(default_factory=list)
+    overflow_files: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         """Backward compatibility: str() returns prompt."""
@@ -499,6 +501,41 @@ def build_system_prompt(
         shared_users_list=shared_users_list,
     ))
 
+    # ── Distilled Knowledge Injection ─────────────────────
+    # CLS theory: knowledge/ + procedures/ = neocortex (always-active)
+    from core.prompt.context import resolve_context_window
+
+    injected_knowledge_files: list[str] = []
+    overflow_files: list[str] = []
+
+    try:
+        _model_config = memory.read_model_config()
+        ctx_window = resolve_context_window(_model_config.model)
+    except Exception:
+        ctx_window = 128_000
+
+    knowledge_budget = int(ctx_window * 0.10)
+    distilled = memory.collect_distilled_knowledge()
+
+    used_tokens = 0
+    injection_parts: list[str] = []
+    for entry in distilled:
+        est_tokens = len(entry["content"]) // 3
+        if used_tokens + est_tokens <= knowledge_budget:
+            injection_parts.append(
+                f"### {entry['name']}\n\n{entry['content']}"
+            )
+            used_tokens += est_tokens
+            injected_knowledge_files.append(entry["name"])
+        else:
+            overflow_files.append(entry["name"])
+
+    if injection_parts:
+        parts.append(
+            "## Distilled Knowledge\n\n"
+            + "\n\n---\n\n".join(injection_parts)
+        )
+
     # Common knowledge reference hint
     common_knowledge_dir = data_dir / "common_knowledge"
     if common_knowledge_dir.exists() and any(common_knowledge_dir.rglob("*.md")):
@@ -616,6 +653,8 @@ def build_system_prompt(
     )
     return BuildResult(
         system_prompt=prompt,
+        injected_knowledge_files=injected_knowledge_files,
+        overflow_files=overflow_files,
     )
 
 
