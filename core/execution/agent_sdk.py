@@ -25,7 +25,7 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import asdict
 from typing import Any
 
-from core.prompt.context import ContextTracker, resolve_context_window
+from core.prompt.context import CHARS_PER_TOKEN, ContextTracker, resolve_context_window
 from core.exceptions import ExecutionError, LLMAPIError, MemoryWriteError  # noqa: F401
 from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.execution.reminder import MSG_CONTEXT_THRESHOLD
@@ -77,6 +77,10 @@ _WRITE_COMMANDS = frozenset({
 # small when system_prompt + conversation history grow large; 4 MB gives
 # comfortable headroom while still catching genuinely broken messages.
 _SDK_MAX_BUFFER_SIZE = 4 * 1024 * 1024  # 4 MB
+
+# When estimated context usage leaves fewer than max_tokens * this factor
+# free, the PreToolUse hook triggers session termination for auto-compact.
+_CONTEXT_AUTOCOMPACT_SAFETY = 2
 
 
 def _check_a1_file_access(
@@ -374,8 +378,19 @@ def _cache_subordinate_paths(
 
 def _build_pre_tool_hook(
     anima_dir: Path,
+    *,
+    max_tokens: int = 4096,
+    context_window: int = 200_000,
+    session_stats: dict[str, Any] | None = None,
 ) -> Callable:
-    """Build a PreToolUse hook with security checks, output guards, and tool logging."""
+    """Build a PreToolUse hook with security checks, output guards, and tool logging.
+
+    When *session_stats* is provided the hook also performs mid-session
+    context budget estimation.  If the estimated token usage leaves fewer
+    than ``max_tokens * _CONTEXT_AUTOCOMPACT_SAFETY`` tokens free, the
+    hook returns ``continue_=False`` to trigger session termination so
+    that AgentCore can chain into a fresh session.
+    """
     from claude_agent_sdk.types import (
         HookContext,
         HookInput,
@@ -393,6 +408,41 @@ def _build_pre_tool_hook(
     ) -> SyncHookJSONOutput:
         tool_name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input", {})
+
+        # ── Context budget check ──────────────────────────
+        if session_stats is not None:
+            session_stats["tool_call_count"] += 1
+            estimated_tokens = (
+                session_stats["system_prompt_tokens"]
+                + session_stats["user_prompt_tokens"]
+                + session_stats["total_result_bytes"] // CHARS_PER_TOKEN
+            )
+            remaining = context_window - estimated_tokens
+            budget = max_tokens * _CONTEXT_AUTOCOMPACT_SAFETY
+            if remaining < budget:
+                session_stats["force_chain"] = True
+                _log_tool_use(
+                    anima_dir, tool_name, tool_input,
+                    blocked=True,
+                    block_reason=(
+                        f"context_autocompact: estimated {estimated_tokens} tokens, "
+                        f"remaining {remaining} < max_tokens*{_CONTEXT_AUTOCOMPACT_SAFETY}"
+                    ),
+                )
+                logger.warning(
+                    "Context auto-compact triggered: estimated=%d remaining=%d "
+                    "budget=%d (max_tokens=%d * %d) context_window=%d",
+                    estimated_tokens, remaining, budget,
+                    max_tokens, _CONTEXT_AUTOCOMPACT_SAFETY, context_window,
+                )
+                return SyncHookJSONOutput(
+                    continue_=False,
+                    stopReason=(
+                        f"Context auto-compact: approaching context window limit "
+                        f"(estimated {estimated_tokens}/{context_window} tokens). "
+                        f"Session will be chained."
+                    ),
+                )
 
         # Write / Edit: check file path
         if tool_name in ("Write", "Edit"):
@@ -493,6 +543,22 @@ def _handle_tool_use_block(
         journal.write_tool_start(block.name, record.input_summary, tool_id=block.id)
     logger.debug("ToolUseBlock registered: tool=%s id=%s", block.name, block.id)
     return record
+
+
+def _tool_result_content_len(block: Any) -> int:
+    """Return the character length of a ToolResultBlock's textual content.
+
+    Used by session_stats tracking to estimate context consumption
+    without duplicating the full content extraction in the outer loop.
+    """
+    content = block.content
+    if isinstance(content, list):
+        return sum(
+            len(str(c.get("text", "")))
+            for c in content
+            if isinstance(c, dict)
+        )
+    return len(str(content)) if content else 0
 
 
 def _handle_tool_result_block(
@@ -671,6 +737,20 @@ class AgentSDKExecutor(BaseExecutor):
             UserMessage,
         )
 
+        # ── Session stats: shared between PreToolUse hook closure and this
+        #    outer message loop.  The hook reads these values to decide
+        #    whether to terminate the session for auto-compact; the loop
+        #    updates total_result_bytes after each ToolResultBlock.
+        #    Both run in the same async task — no concurrent access.
+        _cw = resolve_context_window(self._model_config.model)
+        session_stats: dict[str, Any] = {
+            "tool_call_count": 0,
+            "total_result_bytes": 0,
+            "system_prompt_tokens": len(system_prompt) // CHARS_PER_TOKEN,
+            "user_prompt_tokens": len(prompt) // CHARS_PER_TOKEN,
+            "force_chain": False,
+        }
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob",
@@ -688,13 +768,15 @@ class AgentSDKExecutor(BaseExecutor):
                     "env": self._build_mcp_env(),
                 },
             },
-            # NOTE: PostToolUse hook (context threshold monitoring) was removed
-            # because it cannot reliably capture tool results via the SDK.
-            # Context threshold monitoring needs reimplementation — see separate issue.
             hooks={
                 "PreToolUse": [HookMatcher(
-                    matcher="Write|Edit|Bash|Read|Grep|Glob",
-                    hooks=[_build_pre_tool_hook(self._anima_dir)],
+                    matcher=".*",
+                    hooks=[_build_pre_tool_hook(
+                        self._anima_dir,
+                        max_tokens=self._model_config.max_tokens or 4096,
+                        context_window=_cw,
+                        session_stats=session_stats,
+                    )],
                 )],
             },
         )
@@ -728,6 +810,9 @@ class AgentSDKExecutor(BaseExecutor):
                         if isinstance(message.content, list):
                             for block in message.content:
                                 if isinstance(block, ToolResultBlock):
+                                    session_stats["total_result_bytes"] += (
+                                        _tool_result_content_len(block)
+                                    )
                                     _handle_tool_result_block(
                                         block, pending_records, None,
                                         self._model_config.model,
@@ -768,6 +853,7 @@ class AgentSDKExecutor(BaseExecutor):
             result_message=result_message,
             replied_to_from_transcript=replied_to,
             tool_call_records=all_tool_records,
+            force_chain=session_stats.get("force_chain", False),
         )
 
     # ── Streaming execution ──────────────────────────────────
@@ -807,6 +893,17 @@ class AgentSDKExecutor(BaseExecutor):
         )
         from claude_agent_sdk.types import StreamEvent
 
+        # ── Session stats: shared between PreToolUse hook closure and this
+        #    outer message loop (see execute() for detailed comment).
+        _cw = resolve_context_window(self._model_config.model)
+        session_stats: dict[str, Any] = {
+            "tool_call_count": 0,
+            "total_result_bytes": 0,
+            "system_prompt_tokens": len(system_prompt) // CHARS_PER_TOKEN,
+            "user_prompt_tokens": len(prompt) // CHARS_PER_TOKEN,
+            "force_chain": False,
+        }
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob",
@@ -825,13 +922,15 @@ class AgentSDKExecutor(BaseExecutor):
                     "env": self._build_mcp_env(),
                 },
             },
-            # NOTE: PostToolUse hook (context threshold monitoring) was removed
-            # because it cannot reliably capture tool results via the SDK.
-            # Context threshold monitoring needs reimplementation — see separate issue.
             hooks={
                 "PreToolUse": [HookMatcher(
-                    matcher="Write|Edit|Bash|Read|Grep|Glob",
-                    hooks=[_build_pre_tool_hook(self._anima_dir)],
+                    matcher=".*",
+                    hooks=[_build_pre_tool_hook(
+                        self._anima_dir,
+                        max_tokens=self._model_config.max_tokens or 4096,
+                        context_window=_cw,
+                        session_stats=session_stats,
+                    )],
                 )],
             },
         )
@@ -893,6 +992,9 @@ class AgentSDKExecutor(BaseExecutor):
                         if isinstance(message.content, list):
                             for block in message.content:
                                 if isinstance(block, ToolResultBlock):
+                                    session_stats["total_result_bytes"] += (
+                                        _tool_result_content_len(block)
+                                    )
                                     _handle_tool_result_block(
                                         block, pending_records, None,
                                         self._model_config.model,
@@ -954,4 +1056,5 @@ class AgentSDKExecutor(BaseExecutor):
             "result_message": result_message,
             "replied_to_from_transcript": replied_to,
             "tool_call_records": [asdict(r) for r in all_tool_records],
+            "force_chain": session_stats.get("force_chain", False),
         }
