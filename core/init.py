@@ -75,7 +75,78 @@ def _ensure_tool_prompt_db(data_dir: Path) -> None:
         guides=DEFAULT_GUIDES,
         sections=sections,
     )
+
+    # Apply incremental migrations for existing DBs
+    _migrate_memory_prompts_v1(tool_store, prompts_dir)
+
     logger.info("Tool prompt DB initialised: %s", tool_db_path)
+
+
+def _migrate_memory_prompts_v1(
+    tool_store: "ToolPromptStore",  # noqa: F821
+    prompts_dir: Path,
+) -> None:
+    """One-shot migration: update memory-related prompts to v1 (active style).
+
+    Idempotent — records migration key ``memory_prompt_v1`` in a ``migrations``
+    table and skips if already applied.
+    """
+    from core.tooling.prompt_db import (
+        DEFAULT_DESCRIPTIONS,
+        DEFAULT_GUIDES,
+        SECTION_CONDITIONS,
+    )
+
+    # Ensure migrations table exists
+    conn = tool_store._connect()
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS migrations "
+            "(key TEXT PRIMARY KEY, applied_at TEXT)"
+        )
+        row = conn.execute(
+            "SELECT 1 FROM migrations WHERE key = ?",
+            ("memory_prompt_v1",),
+        ).fetchone()
+        if row:
+            return  # already applied
+
+        # 1-4: Update tool descriptions
+        for name in (
+            "search_memory",
+            "write_memory_file",
+            "report_procedure_outcome",
+            "report_knowledge_outcome",
+        ):
+            desc = DEFAULT_DESCRIPTIONS.get(name)
+            if desc:
+                tool_store.set_description(name, desc)
+
+        # 5-6: Update tool guides
+        for key in ("a1_mcp", "non_a1"):
+            guide = DEFAULT_GUIDES.get(key)
+            if guide:
+                tool_store.set_guide(key, guide)
+
+        # 7: Update behavior_rules section from runtime prompts file
+        br_path = prompts_dir / "behavior_rules.md"
+        if br_path.exists():
+            content = br_path.read_text(encoding="utf-8").strip()
+            if content:
+                condition = SECTION_CONDITIONS.get("behavior_rules")
+                tool_store.set_section("behavior_rules", content, condition)
+
+        # Record migration
+        from core.time_utils import now_jst
+
+        conn.execute(
+            "INSERT INTO migrations (key, applied_at) VALUES (?, ?)",
+            ("memory_prompt_v1", now_jst().isoformat()),
+        )
+        conn.commit()
+        logger.info("Applied migration: memory_prompt_v1")
+    finally:
+        conn.close()
 
 
 def ensure_runtime_dir(*, skip_animas: bool = False) -> Path:

@@ -25,6 +25,12 @@ Prioritize technical accuracy and truthfulness over validating the user's belief
 - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
 - Don't create helpers, utilities, or abstractions for one-time operations. Don't design for hypothetical future requirements. The right amount of complexity is the minimum needed for the current task.
 
+### 記憶の活用
+
+- **検索してから行動**: コマンド実行・設定変更・報告の前に、関連する手順書や過去の教訓を記憶検索で確認する
+- **発見したら記録**: 問題解決・正しいパラメータ発見・手順確立などの重要な知見は、即座にknowledge/またはprocedures/に書き込む
+- **使ったら報告**: 手順書に従った後はreport_procedure_outcome、知識を使った後はreport_knowledge_outcomeで結果を報告する
+
 ### 通信ルール
 - テキスト + ファイル参照のみ。内部状態の直接共有は禁止
 - 自分の言葉で圧縮・解釈して伝える

@@ -54,10 +54,13 @@ CREATE TABLE IF NOT EXISTS system_sections (
 DEFAULT_DESCRIPTIONS: dict[str, str] = {
     # -- Memory tools --
     "search_memory": (
-        "長期記憶（knowledge, episodes, procedures）をキーワード検索する。"
-        "コンテキスト内の記憶では不足する場合、過去の特定のやり取りの詳細を確認したい時、"
-        "手順書に従って作業する時、未知のトピックについて調べる時に使う。"
-        "コンテキストで判断できることに対しては不要。"
+        "長期記憶（knowledge, episodes, procedures）をキーワード検索する。\n"
+        "以下の場面で積極的に使うこと:\n"
+        "- コマンド実行・設定変更の前に、関連する手順書や過去の教訓を確認する\n"
+        "- 報告・判断の前に、関連する既存知識で事実を裏付ける\n"
+        "- 未知または曖昧なトピックについて、過去の経験を参照する\n"
+        "- Primingの記憶だけでは具体的な手順・数値が不足する場合\n"
+        "コンテキスト内で明確に判断できる単純な応答には不要。"
     ),
     "read_memory_file": (
         "自分の記憶ディレクトリ内のファイルを相対パスで読む。"
@@ -66,12 +69,15 @@ DEFAULT_DESCRIPTIONS: dict[str, str] = {
         "Primingで「->」ポインタが示すファイルの具体的内容を確認する時に使う。"
     ),
     "write_memory_file": (
-        "自分の記憶ディレクトリ内のファイルに書き込みまたは追記する。"
-        "重要な方針・教訓を即座に記録したい時は knowledge/ に、"
-        "作業手順をまとめたい時は procedures/ に、"
-        "新しいスキルを習得した時は skills/ に書き込む。"
-        "heartbeat.md や cron.md の更新にも使う。"
-        "mode='overwrite' で全体置換、mode='append' で末尾追記。"
+        "自分の記憶ディレクトリ内のファイルに書き込みまたは追記する。\n"
+        "以下の場面で記録すべき:\n"
+        "- 問題を解決した → knowledge/ に原因と解決策を記録\n"
+        "- 正しいパラメータ・設定値を発見した → knowledge/ に記録\n"
+        "- 作業手順を確立・改善した → procedures/ に手順書を作成\n"
+        "- 新しいスキル・テクニックを習得した → skills/ に記録\n"
+        "- heartbeat.md や cron.md の更新\n"
+        "mode='overwrite' で全体置換、mode='append' で末尾追記。\n"
+        "自動統合（日次consolidation）を待たず、重要な発見は即座に書き込むこと。"
     ),
     "send_message": (
         "他のAnimaまたは人間ユーザーにDMを送信する。"
@@ -166,15 +172,17 @@ DEFAULT_DESCRIPTIONS: dict[str, str] = {
     ),
     # -- Procedure/Knowledge outcome --
     "report_procedure_outcome": (
-        "手順書・スキルの実行結果を報告する。"
-        "成功/失敗のカウントと信頼度が更新される。"
-        "手順書に従って作業を完了した後に呼んで、その手順の信頼性を追跡する。"
+        "手順書・スキルの実行結果を報告する。成功/失敗のカウントと信頼度が更新される。\n"
+        "手順書（procedures/）やスキル（skills/）に従って作業した後は、必ずこのツールで結果を報告すること。\n"
+        "成功時はsuccess=true、失敗・問題発生時はsuccess=falseとnotesに詳細を記録する。\n"
+        "信頼度の低い手順は自動的に改善対象としてマークされる。"
     ),
     "report_knowledge_outcome": (
-        "知識ファイルの有用性を報告する。"
-        "知識が役に立った場合はsuccess=true、"
-        "不正確・無関係だった場合はsuccess=falseで呼ぶ。"
-        "知識の品質を追跡し、能動的忘却の判断材料になる。"
+        "知識ファイルの有用性を報告する。\n"
+        "search_memoryやPrimingで取得した知識を実際に使った後、必ず報告すること:\n"
+        "- 知識が正確で役立った → success=true\n"
+        "- 不正確・古い・無関係だった → success=false + notesに問題点を記録\n"
+        "報告データは能動的忘却と知識品質の維持に使われる。未報告の知識は品質評価できない。"
     ),
     # -- Task tools --
     "add_task": (
@@ -199,103 +207,201 @@ DEFAULT_DESCRIPTIONS: dict[str, str] = {
 
 DEFAULT_GUIDES: dict[str, str] = {
     "a1_builtin": """\
-## ビルトインツールの使い方（A1モード）
+## Builtin Tools (A1 Mode)
 
-あなたは以下のビルトインツールを使用できます。これらはファイル操作、検索、コマンド実行のための基本ツールです。
+### Read
 
-### Read — ファイル読み取り
+Reads a file from the local filesystem. You can access any file directly by using this tool.
+Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
-ファイルの内容を読み取ります。
+Usage:
+- The file_path parameter must be an absolute path, not a relative path
+- By default, it reads up to 2000 lines starting from the beginning of the file
+- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
+- Any lines longer than 2000 characters will be truncated
+- Results are returned using cat -n format, with line numbers starting at 1
+- This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
+- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific page ranges (e.g., pages: "1-5"). Reading a large PDF without the pages parameter will fail. Maximum 20 pages per request.
+- This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, combining code, text, and visualizations.
+- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.
+- You can call multiple tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.
+- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.
+- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
 
-**いつ使うか:**
-- 自分の記憶ディレクトリ内のファイルを確認する時（heartbeat.md, cron.md, knowledge/, procedures/ 等）
-- Primingで「->」ポインタが示すファイルの具体的内容を確認する時
-- shared/users/{ユーザー名}/index.md でユーザー情報を確認する時
-- 共通スキルや共通知識の詳細を読む時
+### Write
 
-**使い方:**
-- パスは絶対パスで指定する（例: 自分の記憶ディレクトリ内の `knowledge/deploy-notes.md` 等）
-- 自分のディレクトリ、shared/、common_skills/、common_knowledge/ が読み取り可能
+Writes a file to the local filesystem.
 
-### Write — ファイル書き込み
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.
+- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
 
-ファイルの内容を作成または上書きします。
+### Edit
 
-**いつ使うか:**
-- 重要な方針・教訓を即座に記録したい時 → knowledge/ に書き込み
-- 作業手順をまとめたい時 → procedures/ に書き込み
-- 新しいスキルを習得した時 → skills/ に書き込み
-- heartbeat.md や cron.md を更新する時
-- shared/users/{ユーザー名}/index.md や log.md を更新する時
+Performs exact string replacements in files.
 
-**注意:**
-- 既存ファイルを更新する場合は、まずReadで現在の内容を確認してから書き込むこと
-- エピソード記憶（episodes/）は自動記録されるため、手動での書き込みは不要
+Usage:
+- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
+- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
+- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
+- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.
 
-### Edit — ファイル部分編集
+### Grep
 
-ファイル内の特定の文字列を別の文字列に置換します。
+A powerful search tool built on ripgrep
 
-**いつ使うか:**
-- heartbeat.md のチェックリストに項目を追加・変更する時
-- cron.md に新しい定時タスクを追加する時
-- knowledge/ の既存ファイルの一部を更新する時
-- ファイル全体を書き換えずに一部だけ変更したい時
+  Usage:
+  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
+  - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
+  - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
+  - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts
+  - Use Task tool for open-ended searches requiring multiple rounds
+  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\\{\\}` to find `interface{}` in Go code)
+  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{[\\s\\S]*?field`, use `multiline: true`
 
-**使い方:**
-- old_string: 置換対象の文字列（ファイル内で一意に特定できる長さにすること）
-- new_string: 置換後の文字列
+### Glob
 
-### Bash — コマンド実行
+- Fast file pattern matching tool that works with any codebase size
+- Supports glob patterns like "**/*.js" or "src/**/*.ts"
+- Returns matching file paths sorted by modification time
+- Use this tool when you need to find files by name patterns
+- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead
+- You can call multiple tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful.
 
-シェルコマンドを実行します。
+### Bash
 
-**いつ使うか:**
-- permissions.md で許可されたコマンドを実行する時
-- 外部ツール（animaworks-tool）を実行する時
+Executes a given bash command with optional timeout. Working directory persists between commands; shell state (everything else) does not. The shell environment is initialized from the user's profile (bash or zsh).
 
-**注意:**
-- ファイル操作にはRead/Write/Editを優先し、cat/head/tail/sed/awk は使わない
-- ファイル検索にはGlob/Grepを使い、find/grep コマンドは使わない
+IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
 
-### Grep — テキスト検索
+Before executing the command, please follow these steps:
 
-ファイル内のテキストを正規表現パターンで検索します。
+1. Directory Verification:
+   - If the command will create new directories or files, first use `ls` to verify the parent directory exists and is the correct location
+   - For example, before running "mkdir foo/bar", first use `ls foo` to check that "foo" exists and is the intended parent directory
 
-**いつ使うか:**
-- 記憶ディレクトリ内で特定のキーワードを含むファイルを探す時
-- 共通知識や手順書内の関連情報を検索する時
+2. Command Execution:
+   - Always quote file paths that contain spaces with double quotes (e.g., cd "path with spaces/file.txt")
+   - Examples of proper quoting:
+     - cd "/Users/name/My Documents" (correct)
+     - cd /Users/name/My Documents (incorrect - will fail)
+     - python "/path/with spaces/script.py" (correct)
+     - python /path/with spaces/script.py (incorrect - will fail)
+   - After ensuring proper quoting, execute the command.
+   - Capture the output of the command.
 
-### Glob — ファイル検索
+Usage notes:
+  - The command argument is required.
+  - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 120000ms (2 minutes).
+  - It is very helpful if you write a clear, concise description of what this command does. For simple commands, keep it brief (5-10 words). For complex commands (piped commands, obscure flags, or anything hard to understand at a glance), add enough context to clarify what it does.
+  - If the output exceeds 30000 characters, output will be truncated before being returned to you.
+  - You can use the `run_in_background` parameter to run the command in the background. Only use this if you don't need the result immediately and are OK being notified when the command completes later. You do not need to check the output right away - you'll be notified when it finishes. You do not need to use '&' at the end of the command when using this parameter.
+  - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
+    - File search: Use Glob (NOT find or ls)
+    - Content search: Use Grep (NOT grep or rg)
+    - Read files: Use Read (NOT cat/head/tail)
+    - Edit files: Use Edit (NOT sed/awk)
+    - Write files: Use Write (NOT echo >/cat <<EOF)
+    - Communication: Output text directly (NOT echo/printf)
+  - When issuing multiple commands:
+    - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel.
+    - If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m "message" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead.
+    - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail
+    - DO NOT use newlines to separate commands (newlines are ok in quoted strings)
+  - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it.
+    <good-example>
+    pytest /foo/bar/tests
+    </good-example>
+    <bad-example>
+    cd /foo/bar && pytest tests
+    </bad-example>
 
-ファイルパターンに一致するファイルを検索します。
+# Committing changes with git
 
-**いつ使うか:**
-- ディレクトリ内のファイル一覧を確認する時
-- 特定の拡張子やパターンのファイルを探す時
+Only create commits when requested by the user. If unclear, ask first. When the user asks you to create a new git commit, follow these steps carefully:
 
-### 記憶操作の基本パターン
+Git Safety Protocol:
+- NEVER update the git config
+- NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these commands when given direct instructions
+- NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it
+- NEVER run force push to main/master, warn the user if they request it
+- CRITICAL: Always create NEW commits rather than amending, unless the user explicitly requests a git amend. When a pre-commit hook fails, the commit did NOT happen -- so --amend would modify the PREVIOUS commit, which may result in destroying work or losing previous changes. Instead, after hook failure, fix the issue, re-stage, and create a NEW commit
+- When staging files, prefer adding specific files by name rather than using "git add -A" or "git add .", which can accidentally include sensitive files (.env, credentials) or large binaries
+- NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive
 
-#### 記憶の検索
-コンテキスト内の記憶で不足する場合のみ、追加検索を行うこと:
-1. `mcp__aw__search_memory` でキーワード検索
-2. 結果のファイルパスを `Read` で詳細確認
+1. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following bash commands in parallel, each using the Bash tool:
+  - Run a git status command to see all untracked files. IMPORTANT: Never use the -uall flag as it can cause memory issues on large repos.
+  - Run a git diff command to see both staged and unstaged changes that will be committed.
+  - Run a git log command to see recent commit messages, so that you can follow this repository's commit message style.
+2. Analyze all staged changes (both previously staged and newly added) and draft a commit message:
+  - Summarize the nature of the changes (eg. new feature, enhancement to an existing feature, bug fix, refactoring, test, docs, etc.). Ensure the message accurately reflects the changes and their purpose (i.e. "add" means a wholly new feature, "update" means an enhancement to an existing feature, "fix" means a bug fix, etc.).
+  - Do not commit files that likely contain secrets (.env, credentials.json, etc). Warn the user if they specifically request to commit those files
+  - Draft a concise (1-2 sentences) commit message that focuses on the "why" rather than the "what"
+  - Ensure it accurately reflects the changes and their purpose
+3. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following commands:
+   - Add relevant untracked files to the staging area.
+   - Create the commit with a message ending with:
+   Co-Authored-By: Claude <noreply@anthropic.com>
+   - Run git status after the commit completes to verify success.
+   Note: git status depends on the commit completing, so run it sequentially after the commit.
+4. If the commit fails due to pre-commit hook: fix the issue and create a NEW commit
 
-#### 記憶の書き込み
-- knowledge/: 重要な方針・教訓 → `Write` で作成
-- procedures/: 作業手順 → `Write` で作成（第1見出しは目的が一目でわかる具体的な1行）
-- skills/: 新しいスキル → `Write` で作成
+Important notes:
+- NEVER run additional commands to read or explore code, besides git bash commands
+- DO NOT push to the remote repository unless the user explicitly asks you to do so
+- IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
+- IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
+- If there are no changes to commit (i.e., no untracked files and no modifications), do not create an empty commit
+- In order to ensure good formatting, ALWAYS pass the commit message via a HEREDOC, a la this example:
+<example>
+git commit -m "$(cat <<'EOF'
+   Commit message here.
 
-#### Heartbeat/Cron の更新
-1. `Read` で現在の heartbeat.md / cron.md を確認
-2. `Edit` で必要な項目を追加・変更
-   - heartbeat.md: 「## 活動時間」「## 通知ルール」セクションは変更しない
-   - cron.md: type: llm / type: command を正しく指定
+   Co-Authored-By: Claude <noreply@anthropic.com>
+   EOF
+   )"
+</example>
 
-#### ユーザー記憶の更新
-1. `Read` で shared/users/{ユーザー名}/index.md を確認
-2. `Edit` または `Write` で該当セクションを更新
-3. shared/users/{ユーザー名}/log.md の先頭に追記（`## YYYY-MM-DD {自分の名前}: {要約1行}`）
+# Creating pull requests
+Use the gh command via the Bash tool for ALL GitHub-related tasks including working with issues, pull requests, checks, and releases. If given a Github URL use the gh command to get the information needed.
+
+IMPORTANT: When the user asks you to create a pull request, follow these steps carefully:
+
+1. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following bash commands in parallel using the Bash tool, in order to understand the current state of the branch since it diverged from the main branch:
+   - Run a git status command to see all untracked files (never use -uall flag)
+   - Run a git diff command to see both staged and unstaged changes that will be committed
+   - Check if the current branch tracks a remote branch and is up to date with the remote, so you know if you need to push to the remote
+   - Run a git log command and `git diff [base-branch]...HEAD` to understand the full commit history for the current branch (from the time it diverged from the base branch)
+2. Analyze all changes that will be included in the pull request, making sure to look at all relevant commits (NOT just the latest commit, but ALL commits that will be included in the pull request!!!), and draft a pull request title and summary:
+   - Keep the PR title short (under 70 characters)
+   - Use the description/body for details, not the title
+3. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following commands in parallel:
+   - Create new branch if needed
+   - Push to remote with -u flag if needed
+   - Create PR using gh pr create with the format below. Use a HEREDOC to pass the body to ensure correct formatting.
+<example>
+gh pr create --title "the pr title" --body "$(cat <<'EOF'
+## Summary
+<1-3 bullet points>
+
+## Test plan
+[Bulleted markdown checklist of TODOs for testing the pull request...]
+
+Generated with Claude Code
+EOF
+)"
+</example>
+
+Important:
+- Return the PR URL when you're done, so the user can see it
+
+# Other common operations
+- View comments on a Github PR: gh api repos/foo/bar/pulls/123/comments
 """,
     "a1_mcp": """\
 ## MCPツール（mcp__aw__*）
@@ -307,15 +413,29 @@ DEFAULT_GUIDES: dict[str, str] = {
 - **mcp__aw__update_task**: タスクのステータスを更新。完了時はstatus='done'
 - **mcp__aw__list_tasks**: タスク一覧取得。heartbeat時の進捗確認に使う
 
-### 記憶検索
-- **mcp__aw__search_memory**: 長期記憶をキーワード検索。コンテキスト内で不足する場合のみ使う。結果のファイルはReadツールで詳細確認
+### 記憶の検索と活用
+- **mcp__aw__search_memory**: 長期記憶をキーワード検索。以下の場面で積極的に使うこと:
+  - コマンド実行・設定変更の前に手順書や過去の教訓を確認
+  - 報告・判断の前に既存知識で事実を裏付ける
+  - 結果のファイルはReadツールで詳細確認
+
+### 記憶の書き込み（A1モード）
+A1モードでは **Writeツール**（ネイティブ）を使って直接記憶ファイルを書き込める。
+以下の場面で積極的に記録すること:
+- 問題を解決した → `knowledge/` に原因と解決策
+- 正しいパラメータ・設定値を発見した → `knowledge/` に記録
+- 作業手順を確立した → `procedures/` に手順書作成
+  - 第1見出し（`# ...`）は手順の目的が一目でわかる具体的な1行にすること
+  - YAMLフロントマターは不要（システムが自動付与する）
+- 新スキル習得 → `skills/` に記録
+自動統合（日次consolidation）を待たず、重要な発見は即座に書き込むこと。
+
+### 成果追跡
+- **mcp__aw__report_procedure_outcome**: 手順書・スキル実行後に必ず結果を報告（成功/失敗の追跡）
+- **mcp__aw__report_knowledge_outcome**: search_memoryやPrimingで得た知識の有用性を報告。知識品質の維持に必要
 
 ### 人間通知
 - **mcp__aw__call_human**: 人間の管理者に通知を送信。重要な報告・エスカレーション用。日常報告にはsend_messageを使う
-
-### 成果追跡
-- **mcp__aw__report_procedure_outcome**: 手順書の実行結果を記録（成功/失敗と信頼度の追跡）
-- **mcp__aw__report_knowledge_outcome**: 知識ファイルの有用性を記録（品質追跡と能動的忘却の判断材料）
 
 ### ツール発見
 - **mcp__aw__discover_tools**: 利用可能な外部ツールカテゴリを確認。外部サービスを使いたい時にまず呼ぶ
@@ -354,15 +474,21 @@ DEFAULT_GUIDES: dict[str, str] = {
 - 日次・週次でシステムが自動的にエピソードから教訓やパターンを抽出し、知識記憶（knowledge/）に統合する
 
 #### 意図的な記録（あなたが判断して行う）
-以下の場合のみ、write_memory_file で直接書き込むこと:
-- 重要な方針・教訓を即座に記録したい時 → knowledge/ に書き込み
-- 作業手順をまとめたい時 → procedures/ に書き込み
+以下の場面では write_memory_file で積極的に記録すること:
+- 問題を解決したとき → knowledge/ に原因・調査過程・解決策を記録
+- 正しいパラメータ・設定値を発見したとき → knowledge/ に記録
+- 重要な方針・判断基準を確立したとき → knowledge/ に記録
+- 作業手順を確立・改善したとき → procedures/ に手順書を作成
   - 第1見出し（`# ...`）は手順の目的が一目でわかる具体的な1行にすること
   - YAMLフロントマターは不要（システムが自動付与する）
-- 新しいスキルを習得した時 → skills/ に書き込み
-- これは「メモを取る」行為であり、記録義務ではない
+- 新しいスキル・テクニックを習得したとき → skills/ に記録
+自動統合（日次consolidation）を待たず、重要な発見は即座に書き込むこと。
 
 **記憶の書き込みについては報告不要**
+
+#### 成果追跡
+手順書やスキルに従って作業した後は、report_procedure_outcome で必ず結果を報告すること。
+search_memoryやPrimingで取得した知識を使った後は、report_knowledge_outcome で有用性を報告すること。
 
 #### ユーザー記憶の更新
 ユーザーについて新しい情報を得たら shared/users/{ユーザー名}/index.md の該当セクションを更新し、log.md の先頭に追記する
