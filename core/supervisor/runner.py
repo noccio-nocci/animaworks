@@ -457,8 +457,8 @@ class AnimaRunner:
 
         scheduler = self._scheduler_mgr.scheduler if self._scheduler_mgr else None
         return {
-            "status": self.anima._status,
-            "current_task": self.anima._current_task or None,
+            "status": self.anima.primary_status,
+            "current_task": self.anima.primary_task or None,
             "needs_bootstrap": self.anima.needs_bootstrap,
             "scheduler_running": scheduler.running if scheduler else False,
             "scheduler_jobs": len(scheduler.get_jobs()) if scheduler else 0,

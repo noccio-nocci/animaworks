@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.schemas import CycleResult
+from core.tooling.handler import active_session_type
 
 pytestmark = pytest.mark.e2e
 
@@ -43,6 +44,8 @@ def _make_digital_anima(anima_dir: Path, shared_dir: Path):
         dp.agent.reset_reply_tracking = MagicMock()
         dp.agent.replied_to = set()
         dp.agent.background_manager = None
+        # Wire set_active_session_type to use the real ContextVar
+        dp.agent._tool_handler.set_active_session_type = lambda st: active_session_type.set(st)
         return dp
 
 
@@ -198,6 +201,7 @@ class TestHeartbeatWithInboxMessages:
             dp.agent.reset_reply_tracking = MagicMock()
             dp.agent.replied_to = {"episode_sender"}
             dp.agent.background_manager = None
+            dp.agent._tool_handler.set_active_session_type = lambda st: active_session_type.set(st)
 
             async def mock_stream(prompt, trigger="manual", **kwargs):
                 yield {

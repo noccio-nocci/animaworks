@@ -1077,6 +1077,8 @@ class AgentSDKExecutor(BaseExecutor):
             "force_chain": False,
         }
 
+        # execute_streaming is only used for conversation (process_message_stream).
+        # Heartbeat/cron use execute() which derives session_type from trigger.
         session_type = "chat"
         session_id_to_resume = _load_session_id(self._anima_dir, session_type)
 
