@@ -43,6 +43,11 @@ suppress_board_fanout: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "suppress_board_fanout", default=False,
 )
 
+# ── Active session type (context-scoped for concurrent HB+conversation) ──
+active_session_type: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_session_type", default="chat",
+)
+
 # Type alias for the message-sent callback (from, to, content).
 OnMessageSentFn = Callable[[str, str, str], None]
 
@@ -292,7 +297,6 @@ class ToolHandler:
         self._background_manager = background_manager
         self._pending_notifications: list[dict[str, Any]] = []
         self._replied_to: dict[str, set[str]] = {"chat": set(), "background": set()}
-        self._active_session_type: str = "chat"
         self._session_id: str = uuid.uuid4().hex[:12]
         self._activity = ActivityLogger(self._anima_dir)
         self._external = ExternalToolDispatcher(
@@ -381,9 +385,12 @@ class ToolHandler:
         """Names already replied to in a specific session type."""
         return self._replied_to.get(session_type, set())
 
-    def set_active_session_type(self, session_type: str) -> None:
-        """Set the active session type for reply tracking."""
-        self._active_session_type = session_type
+    def set_active_session_type(self, session_type: str) -> contextvars.Token:
+        """Set the active session type for the current context.
+
+        Returns a reset token for use with ``active_session_type.reset(token)``.
+        """
+        return active_session_type.set(session_type)
 
     @property
     def session_id(self) -> str:
@@ -768,11 +775,12 @@ class ToolHandler:
             )
 
         # 2. Per-recipient limit: 1 message per recipient per run
-        if to in self.replied_to:
+        current_replied = self.replied_to_for(active_session_type.get())
+        if to in current_replied:
             return f"Error: このrunで既に {to} にメッセージを送信済みです。追加の連絡はBoardを使用してください。"
 
         # 3. Max recipients limit: 2 people per run
-        if len(self.replied_to) >= 2 and to not in self.replied_to:
+        if len(current_replied) >= 2 and to not in current_replied:
             return (
                 "Error: 1回のrunでDMを送れるのは最大2人までです。"
                 "3人以上への伝達はBoardを使用してください（post_channel ツール）。"
@@ -813,7 +821,7 @@ class ToolHandler:
                 "send_message routed externally: to=%s channel=%s",
                 to, resolved.channel,
             )
-            self._replied_to.setdefault(self._active_session_type, set()).add(to)
+            self._replied_to.setdefault(active_session_type.get(), set()).add(to)
             self._persist_replied_to(to, success=True)
 
             # Log to dm_logs via messenger (Activity Timeline)
@@ -854,7 +862,7 @@ class ToolHandler:
             return f"Error: {msg.content}"
 
         logger.info("send_message to=%s thread=%s", internal_to, msg.thread_id)
-        self._replied_to.setdefault(self._active_session_type, set()).add(internal_to)
+        self._replied_to.setdefault(active_session_type.get(), set()).add(internal_to)
         self._persist_replied_to(internal_to, success=True)
 
         if self._on_message_sent:

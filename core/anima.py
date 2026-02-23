@@ -357,10 +357,12 @@ class DigitalAnima:
             )
 
         logger.info("[%s] run_bootstrap START", self.name)
+        from core.tooling.handler import active_session_type
         try:
             async with self._conversation_lock:
                 self._status_slots["conversation"] = "bootstrapping"
                 self._task_slots["conversation"] = "Initial bootstrap"
+                _session_token = self.agent._tool_handler.set_active_session_type("chat")
 
                 conv_memory = ConversationMemory(self.anima_dir, self.model_config)
                 prompt = conv_memory.build_chat_prompt(
@@ -383,6 +385,7 @@ class DigitalAnima:
                     logger.exception("[%s] run_bootstrap FAILED", self.name)
                     raise
                 finally:
+                    active_session_type.reset(_session_token)
                     self._status_slots["conversation"] = "idle"
                     self._task_slots["conversation"] = ""
         finally:
@@ -400,6 +403,7 @@ class DigitalAnima:
             "[%s] process_message WAITING from=%s content_len=%d images=%d",
             self.name, from_person, len(content), len(images or []),
         )
+        from core.tooling.handler import active_session_type
         try:
             async with self._conversation_lock:
                 logger.info(
@@ -408,6 +412,7 @@ class DigitalAnima:
                 )
                 self._status_slots["conversation"] = "thinking"
                 self._task_slots["conversation"] = f"Responding to {from_person}"
+                _session_token = self.agent._tool_handler.set_active_session_type("chat")
 
                 # Build history-aware prompt via conversation memory
                 conv_memory = ConversationMemory(self.anima_dir, self.model_config)
@@ -483,6 +488,7 @@ class DigitalAnima:
                     conv_memory.save()
                     raise
                 finally:
+                    active_session_type.reset(_session_token)
                     self._status_slots["conversation"] = "idle"
                     self._task_slots["conversation"] = ""
         finally:
@@ -518,6 +524,7 @@ class DigitalAnima:
             "[%s] process_message_stream WAITING from=%s content_len=%d images=%d",
             self.name, from_person, len(content), len(images or []),
         )
+        from core.tooling.handler import active_session_type
         try:
             async with self._conversation_lock:
                 logger.info(
@@ -526,6 +533,7 @@ class DigitalAnima:
                 )
                 self._status_slots["conversation"] = "thinking"
                 self._task_slots["conversation"] = f"Responding to {from_person}"
+                _session_token = self.agent._tool_handler.set_active_session_type("chat")
 
                 # Build history-aware prompt via conversation memory
                 conv_memory = ConversationMemory(self.anima_dir, self.model_config)
@@ -658,6 +666,7 @@ class DigitalAnima:
                         conv_memory.save()
                     # Close journal (no-op if already finalized)
                     journal.close()
+                    active_session_type.reset(_session_token)
                     self._status_slots["conversation"] = "idle"
                     self._task_slots["conversation"] = ""
         finally:
@@ -689,9 +698,11 @@ class DigitalAnima:
             }
 
         logger.info("[%s] process_greet START", self.name)
+        from core.tooling.handler import active_session_type
         async with self._conversation_lock:
             prev_status = self._status_slots.get("conversation", "idle")
             prev_task = self._task_slots.get("conversation", "")
+            _session_token = self.agent._tool_handler.set_active_session_type("chat")
 
             # Build greet prompt with current state (use primary to include background)
             status_text = self.primary_status if self.primary_status != "idle" else "待機中"
@@ -760,6 +771,7 @@ class DigitalAnima:
                 conv_memory.save()
                 raise
             finally:
+                active_session_type.reset(_session_token)
                 self._status_slots["conversation"] = prev_status
                 self._task_slots["conversation"] = prev_task
 
@@ -1350,9 +1362,9 @@ class DigitalAnima:
                         item.msg.type == "board_mention"
                         for item in inbox_items
                     )
-                    from core.tooling.handler import suppress_board_fanout
+                    from core.tooling.handler import suppress_board_fanout, active_session_type
                     _fanout_token = suppress_board_fanout.set(True) if has_board_mention else None
-                    self.agent._tool_handler.set_active_session_type("background")
+                    _session_token = self.agent._tool_handler.set_active_session_type("background")
                     heartbeat_text = "\n\n".join(parts)
                     prior_msgs = self._build_prior_messages(heartbeat_text)
                     try:
@@ -1363,7 +1375,7 @@ class DigitalAnima:
                     finally:
                         if _fanout_token is not None:
                             suppress_board_fanout.reset(_fanout_token)
-                        self.agent._tool_handler.set_active_session_type("chat")
+                        active_session_type.reset(_session_token)
 
                     # 4. Archive processed messages
                     if unread_count > 0:

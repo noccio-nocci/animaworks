@@ -13,7 +13,7 @@ Incrementally persists streaming text chunks to disk so that a hard crash
 
 File layout::
 
-    {anima_dir}/shortterm/streaming_journal.jsonl
+    {anima_dir}/shortterm/streaming_journal_{session_type}.jsonl
 
 Lifecycle:
     open()  → write_text() / write_tool_*()  → finalize()  (normal)
@@ -33,8 +33,6 @@ from typing import Any
 from core.time_utils import now_jst
 
 logger = logging.getLogger("animaworks.streaming_journal")
-
-_JOURNAL_FILENAME = "streaming_journal.jsonl"
 
 # ── Buffering configuration ───────────────────────────────────────
 _FLUSH_INTERVAL_SEC = 1.0   # Flush at most every 1 second
@@ -212,7 +210,14 @@ class StreamingJournal:
     def has_orphan(cls, anima_dir: Path, session_type: str = "chat") -> bool:
         """Check whether an orphaned journal exists."""
         path = anima_dir / "shortterm" / f"streaming_journal_{session_type}.jsonl"
-        return path.exists()
+        if path.exists():
+            return True
+        # Check legacy filename (pre-concurrency migration)
+        if session_type == "chat":
+            legacy = anima_dir / "shortterm" / "streaming_journal.jsonl"
+            if legacy.exists():
+                return True
+        return False
 
     @classmethod
     def recover(cls, anima_dir: Path, session_type: str = "chat") -> JournalRecovery | None:
@@ -222,6 +227,12 @@ class StreamingJournal:
         are silently skipped.
         """
         path = anima_dir / "shortterm" / f"streaming_journal_{session_type}.jsonl"
+        # Migrate legacy filename if needed
+        if not path.exists() and session_type == "chat":
+            legacy = anima_dir / "shortterm" / "streaming_journal.jsonl"
+            if legacy.exists():
+                legacy.rename(path)
+                logger.info("Migrated legacy journal: %s -> %s", legacy, path)
         if not path.exists():
             return None
 
@@ -334,6 +345,13 @@ class StreamingJournal:
             path.unlink(missing_ok=True)
         except OSError:
             logger.warning("Failed to delete recovered journal: %s", path)
+        # Also clean up legacy file if present
+        if session_type == "chat":
+            legacy = anima_dir / "shortterm" / "streaming_journal.jsonl"
+            try:
+                legacy.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # ── Private helpers ───────────────────────────────────────
 

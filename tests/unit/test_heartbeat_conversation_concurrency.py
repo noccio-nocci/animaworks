@@ -304,5 +304,13 @@ class TestRepliedToSessionSeparation:
         assert handler._replied_to["background"] == {"bob"}
 
     def test_set_active_session_type(self, handler: "ToolHandler") -> None:
-        handler.set_active_session_type("background")
-        assert handler._active_session_type == "background"
+        from core.tooling.handler import active_session_type
+        token = handler.set_active_session_type("background")
+        assert active_session_type.get() == "background"
+        active_session_type.reset(token)
+        assert active_session_type.get() == "chat"
+
+    def test_active_session_type_is_contextvar(self) -> None:
+        """active_session_type should be a ContextVar with default 'chat'."""
+        from core.tooling.handler import active_session_type
+        assert active_session_type.get() == "chat"
