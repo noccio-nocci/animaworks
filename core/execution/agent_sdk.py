@@ -775,6 +775,9 @@ class AgentSDKExecutor(BaseExecutor):
             "CLAUDE_CODE_DISABLE_SKILL_IMPROVEMENT": "true",
             # Block API key leaking from parent (load_dotenv) — force Max plan auth.
             "ANTHROPIC_API_KEY": "",
+            # Prevent nested-session detection when animaworks itself runs
+            # inside Claude Code (the bundled CLI checks this variable).
+            "CLAUDECODE": "",
         }
         # Only pass ANTHROPIC_BASE_URL if a custom endpoint is configured.
         if self._model_config.api_base_url:
