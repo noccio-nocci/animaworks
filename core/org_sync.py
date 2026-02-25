@@ -181,7 +181,21 @@ def sync_org_structure(
                 disk_supervisor,
             )
 
-    # ── Phase 4: persist if anything changed ─────────────────────
+    # ── Phase 4: prune config entries with no directory on disk ──
+
+    for cname in list(config.animas.keys()):
+        if cname in discovered:
+            continue
+        candidate = animas_dir / cname
+        if not candidate.is_dir():
+            del config.animas[cname]
+            changed = True
+            logger.info(
+                "Org sync: pruned config entry '%s' (no directory on disk)",
+                cname,
+            )
+
+    # ── Phase 5: persist if anything changed ─────────────────────
 
     if changed:
         save_config(config, config_path)
@@ -269,13 +283,15 @@ def _is_trivial_orphan(entry: Path) -> bool:
 
 
 def _auto_cleanup_orphan(entry: Path) -> bool:
-    """Remove a trivial orphan directory tree.  Returns True on success."""
+    """Remove a trivial orphan directory tree and its config entry.
+
+    Returns True on success.
+    """
     import shutil
 
     try:
         shutil.rmtree(entry)
         logger.info("Orphan detection: auto-removed trivial orphan '%s'", entry.name)
-        return True
     except OSError:
         logger.warning(
             "Orphan detection: failed to auto-remove '%s'",
@@ -283,6 +299,25 @@ def _auto_cleanup_orphan(entry: Path) -> bool:
             exc_info=True,
         )
         return False
+
+    # Also remove from config.json if present
+    try:
+        from core.config.models import unregister_anima_from_config
+
+        data_dir = entry.parent.parent  # animas_dir -> data_dir
+        if unregister_anima_from_config(data_dir, entry.name):
+            logger.info(
+                "Orphan detection: unregistered '%s' from config.json",
+                entry.name,
+            )
+    except Exception:
+        logger.debug(
+            "Orphan detection: config cleanup skipped for '%s'",
+            entry.name,
+            exc_info=True,
+        )
+
+    return True
 
 
 def detect_orphan_animas(

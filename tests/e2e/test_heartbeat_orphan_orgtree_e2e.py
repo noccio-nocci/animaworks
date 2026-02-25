@@ -151,3 +151,117 @@ class TestOrphanDetectionE2E:
         assert orphans[0]["name"] == "rie"
         assert orphans[0]["action"] == "auto_removed"
         assert not orphan_dir.exists()
+
+    def test_auto_removed_orphan_cleans_config(self, data_dir, make_anima):
+        """Auto-removal of orphan should also remove its config.json entry."""
+        make_anima("sakura")
+
+        from core.config.models import (
+            AnimaModelConfig,
+            invalidate_cache,
+            load_config,
+            save_config,
+        )
+
+        config = load_config(data_dir / "config.json")
+        config.animas["ghost"] = AnimaModelConfig()
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        orphan_dir = data_dir / "animas" / "ghost"
+        orphan_dir.mkdir()
+        (orphan_dir / "vectordb").mkdir()
+
+        from core.org_sync import detect_orphan_animas
+
+        orphans = detect_orphan_animas(
+            data_dir / "animas", data_dir / "shared", age_threshold_s=0
+        )
+
+        assert len(orphans) == 1
+        assert orphans[0]["action"] == "auto_removed"
+        assert not orphan_dir.exists()
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "ghost" not in updated.animas
+        assert "sakura" in updated.animas
+
+
+class TestSyncOrgPruneE2E:
+    """E2E: sync_org_structure prunes stale config entries."""
+
+    def test_prune_stale_config_entry(self, data_dir, make_anima):
+        """Config entries for deleted animas are pruned by sync."""
+        make_anima("sakura")
+
+        from core.config.models import (
+            AnimaModelConfig,
+            invalidate_cache,
+            load_config,
+            save_config,
+        )
+
+        config = load_config(data_dir / "config.json")
+        config.animas["deleted"] = AnimaModelConfig(supervisor="sakura")
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        from core.org_sync import sync_org_structure
+
+        sync_org_structure(data_dir / "animas", data_dir / "config.json")
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "deleted" not in updated.animas
+        assert "sakura" in updated.animas
+
+    def test_existing_dir_without_identity_not_pruned(self, data_dir, make_anima):
+        """Dirs that exist on disk (even without identity.md) keep their config entry."""
+        make_anima("sakura")
+
+        from core.config.models import (
+            AnimaModelConfig,
+            invalidate_cache,
+            load_config,
+            save_config,
+        )
+
+        orphan = data_dir / "animas" / "orphan"
+        orphan.mkdir()
+
+        config = load_config(data_dir / "config.json")
+        config.animas["orphan"] = AnimaModelConfig()
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        from core.org_sync import sync_org_structure
+
+        sync_org_structure(data_dir / "animas", data_dir / "config.json")
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "orphan" in updated.animas
+
+    def test_full_lifecycle_create_orphan_detect_sync(self, data_dir, make_anima):
+        """Full lifecycle: create anima, delete dir, detect orphan, sync prune."""
+        make_anima("sakura")
+        make_anima("temp")
+
+        from core.config.models import invalidate_cache, load_config
+
+        invalidate_cache()
+        config_before = load_config(data_dir / "config.json")
+        assert "temp" in config_before.animas
+
+        import shutil
+        shutil.rmtree(data_dir / "animas" / "temp")
+
+        from core.org_sync import sync_org_structure
+
+        sync_org_structure(data_dir / "animas", data_dir / "config.json")
+
+        invalidate_cache()
+        config_after = load_config(data_dir / "config.json")
+        assert "temp" not in config_after.animas
+        assert "sakura" in config_after.animas
