@@ -740,6 +740,111 @@ class AgentCore:
                 "retry_delay_s": 5.0,
             }
 
+    # ── Context-window-aware tier downgrade ─────────────────
+
+    _BYTES_PER_TOKEN_ESTIMATE = 4
+    _TOOL_OVERHEAD_TOKENS = 5000
+
+    def _fit_prompt_to_context_window(
+        self,
+        system_prompt: str,
+        prompt: str,
+        context_window: int,
+        *,
+        priming_section: str,
+        mode: str,
+        trigger: str,
+    ) -> str:
+        """Ensure system prompt fits context window, downgrading tier if needed.
+
+        Estimates total token consumption and rebuilds the system prompt
+        with progressively lower tiers until it fits within 80% of the
+        context window (leaving room for output and tool schemas).
+
+        Returns the (possibly rebuilt) system prompt.
+        """
+        from core.prompt.builder import (
+            TIER_FULL, TIER_STANDARD, TIER_LIGHT, TIER_MINIMAL,
+            resolve_prompt_tier,
+        )
+
+        sys_bytes = len(system_prompt.encode("utf-8"))
+        prompt_bytes = len(prompt.encode("utf-8"))
+        estimated_tokens = (
+            (sys_bytes + prompt_bytes) // self._BYTES_PER_TOKEN_ESTIMATE
+            + self._TOOL_OVERHEAD_TOKENS
+        )
+        max_input_tokens = int(context_window * 0.80)
+
+        if estimated_tokens <= max_input_tokens:
+            return system_prompt
+
+        current_tier = resolve_prompt_tier(context_window)
+        logger.warning(
+            "Estimated prompt %d tokens exceeds context limit %d "
+            "(tier=%s, context_window=%d); attempting tier downgrade",
+            estimated_tokens, max_input_tokens, current_tier, context_window,
+        )
+
+        tier_order = [TIER_FULL, TIER_STANDARD, TIER_LIGHT, TIER_MINIMAL]
+        current_idx = tier_order.index(current_tier)
+
+        tier_force_cw = {
+            TIER_STANDARD: 64_000,
+            TIER_LIGHT: 16_000,
+            TIER_MINIMAL: 8_000,
+        }
+
+        best_prompt = system_prompt
+        for target_tier in tier_order[current_idx + 1:]:
+            force_cw = tier_force_cw.get(target_tier)
+            if force_cw is None:
+                continue
+            _priming = "" if target_tier == TIER_MINIMAL else priming_section
+            build_result = build_system_prompt(
+                self.memory,
+                tool_registry=self._tool_registry,
+                personal_tools=self._personal_tools,
+                priming_section=_priming,
+                execution_mode=mode,
+                message=prompt,
+                retriever=self._get_retriever(),
+                trigger=trigger,
+                context_window=force_cw,
+            )
+            best_prompt = build_result.system_prompt
+            new_sys_bytes = len(best_prompt.encode("utf-8"))
+            new_estimated = (
+                (new_sys_bytes + prompt_bytes) // self._BYTES_PER_TOKEN_ESTIMATE
+                + self._TOOL_OVERHEAD_TOKENS
+            )
+            if new_estimated <= max_input_tokens:
+                logger.warning(
+                    "Prompt tier downgraded: %s -> %s "
+                    "(estimated %d -> %d tokens, limit %d)",
+                    current_tier, target_tier,
+                    estimated_tokens, new_estimated, max_input_tokens,
+                )
+                return best_prompt
+
+        max_sys_bytes = max(
+            (max_input_tokens - self._TOOL_OVERHEAD_TOKENS)
+            * self._BYTES_PER_TOKEN_ESTIMATE
+            - prompt_bytes,
+            2000,
+        )
+        if len(best_prompt.encode("utf-8")) > max_sys_bytes:
+            logger.error(
+                "Hard-truncating system prompt from %d to %d bytes "
+                "to fit context window %d",
+                len(best_prompt.encode("utf-8")), max_sys_bytes, context_window,
+            )
+            best_prompt = best_prompt.encode("utf-8")[:max_sys_bytes].decode(
+                "utf-8", errors="ignore",
+            )
+
+        return best_prompt
+
     # ── Pre-flight prompt size check ─────────────────────────
 
     async def _preflight_size_check(
@@ -906,6 +1011,12 @@ class AgentCore:
         system_prompt = build_result.system_prompt
         injected_procedures = build_result.injected_procedures
         logger.debug("System prompt assembled, length=%d tier=%s", len(system_prompt), _prompt_tier)
+
+        # ── Context-window-aware tier downgrade ────────────
+        system_prompt = self._fit_prompt_to_context_window(
+            system_prompt, prompt, _ctx_window,
+            priming_section=priming_section, mode=mode, trigger=trigger,
+        )
 
         if injected_procedures:
             from core.memory.conversation import ConversationMemory as _CM
@@ -1243,6 +1354,13 @@ class AgentCore:
             context_window=_ctx_window_s,
         )
         system_prompt = build_result.system_prompt
+
+        # ── Context-window-aware tier downgrade ────────────
+        system_prompt = self._fit_prompt_to_context_window(
+            system_prompt, prompt, _ctx_window_s,
+            priming_section=priming_section, mode=mode, trigger=trigger,
+        )
+
         if build_result.injected_procedures:
             from core.memory.conversation import ConversationMemory as _CM
             _cm = _CM(self.anima_dir, self.model_config)
