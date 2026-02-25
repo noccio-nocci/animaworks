@@ -1,18 +1,24 @@
 # AnimaWorks - Digital Anima Framework
 # Copyright (C) 2026 AnimaWorks Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for orphan anima directory detection and auto-cleanup.
+"""Unit tests for orphan prevention, detection, and cleanup.
 
-Verifies detect_orphan_animas auto-removes trivial orphans and logs
-non-trivial ones, as well as create_blank rollback behavior in anima_factory.
+Covers:
+- detect_orphan_animas auto-removal and logging
+- _auto_cleanup_orphan config.json cleanup
+- create_blank / create_from_template rollback
+- ChromaVectorStore mkdir guard
+- sync_org_structure config pruning
 """
 from __future__ import annotations
 
 import json
+import logging
 import time
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-from pathlib import Path
 
 
 class TestDetectOrphanAnimas:
@@ -231,6 +237,53 @@ class TestDetectOrphanAnimas:
         assert orphans == []
 
 
+class TestAutoCleanupOrphanConfig:
+    """Tests for _auto_cleanup_orphan config.json cleanup."""
+
+    def test_auto_cleanup_removes_config_entry(self, data_dir, make_anima):
+        """Auto-cleanup should unregister the orphan from config.json."""
+        make_anima("sakura")
+
+        from core.config.models import load_config, save_config, AnimaModelConfig, invalidate_cache
+
+        config = load_config(data_dir / "config.json")
+        config.animas["rie"] = AnimaModelConfig()
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        orphan_dir = data_dir / "animas" / "rie"
+        orphan_dir.mkdir()
+        (orphan_dir / "vectordb").mkdir()
+
+        from core.org_sync import detect_orphan_animas
+
+        orphans = detect_orphan_animas(
+            data_dir / "animas", data_dir / "shared", age_threshold_s=0
+        )
+        assert len(orphans) == 1
+        assert orphans[0]["action"] == "auto_removed"
+        assert not orphan_dir.exists()
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "rie" not in updated.animas
+
+    def test_auto_cleanup_handles_missing_config_entry(self, data_dir, make_anima):
+        """Auto-cleanup should not fail if config has no entry for the orphan."""
+        make_anima("sakura")
+
+        orphan_dir = data_dir / "animas" / "rie"
+        orphan_dir.mkdir()
+
+        from core.org_sync import detect_orphan_animas
+
+        orphans = detect_orphan_animas(
+            data_dir / "animas", data_dir / "shared", age_threshold_s=0
+        )
+        assert len(orphans) == 1
+        assert orphans[0]["action"] == "auto_removed"
+
+
 class TestFindOrphanSupervisor:
     """Tests for _find_orphan_supervisor resolution logic."""
 
@@ -300,3 +353,69 @@ class TestCreateBlankRollback:
         assert (anima_dir / "episodes").is_dir()
         assert (anima_dir / "knowledge").is_dir()
         assert (anima_dir / "state").is_dir()
+
+
+class TestCreateFromTemplateRollback:
+    """Tests for create_from_template rollback on failure."""
+
+    def test_rollback_on_failure(self, data_dir, monkeypatch):
+        """create_from_template should remove the directory on post-copy failure."""
+        from core import anima_factory
+
+        animas_dir = data_dir / "animas"
+
+        def _failing_subdirs(pd):
+            raise RuntimeError("simulated failure")
+
+        monkeypatch.setattr(anima_factory, "_ensure_runtime_subdirs", _failing_subdirs)
+
+        template_dir = anima_factory.ANIMA_TEMPLATES_DIR
+        templates = [
+            d.name for d in template_dir.iterdir()
+            if d.is_dir() and not d.name.startswith("_")
+        ] if template_dir.exists() else []
+
+        if not templates:
+            pytest.skip("No non-blank templates available")
+
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            anima_factory.create_from_template(
+                animas_dir, templates[0], anima_name="test-fail",
+            )
+
+        assert not (animas_dir / "test-fail").exists()
+
+
+class TestChromaVectorStoreMkdirGuard:
+    """Tests for ChromaVectorStore mkdir guard against orphan creation."""
+
+    def test_parent_exists_creates_vectordb(self, tmp_path):
+        """When parent dir exists, vectordb/ is created normally."""
+        import sys
+
+        anima_dir = tmp_path / "animas" / "test-anima"
+        anima_dir.mkdir(parents=True)
+        persist_dir = anima_dir / "vectordb"
+
+        mock_chromadb = MagicMock()
+        with patch.dict(sys.modules, {"chromadb": mock_chromadb}):
+            from core.memory.rag.store import ChromaVectorStore
+            ChromaVectorStore(persist_dir=persist_dir)
+
+        assert persist_dir.exists()
+
+    def test_parent_missing_creates_with_warning(self, tmp_path, caplog):
+        """When parent dir is missing, dir is still created but with a warning."""
+        import sys
+
+        persist_dir = tmp_path / "animas" / "ghost" / "vectordb"
+        assert not persist_dir.parent.exists()
+
+        mock_chromadb = MagicMock()
+        with patch.dict(sys.modules, {"chromadb": mock_chromadb}):
+            with caplog.at_level(logging.WARNING):
+                from core.memory.rag.store import ChromaVectorStore
+                ChromaVectorStore(persist_dir=persist_dir)
+
+        assert persist_dir.exists()
+        assert "Parent directory does not exist" in caplog.text
