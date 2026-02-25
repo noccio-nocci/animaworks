@@ -209,14 +209,19 @@ class TestCmdConfigSet:
         assert config.system.log_level == "DEBUG"
 
     def test_set_new_anima(self, data_dir, capsys):
+        """animas.X.model triggers deprecation warning; scaffold is created (model SSoT in status.json)."""
         args = argparse.Namespace(key="animas.newanima.model", value="gpt-4o")
         cmd_config_set(args)
+
+        captured = capsys.readouterr()
+        assert "非推奨" in captured.err or "deprecated" in captured.err.lower()
+        assert "set-model" in captured.err
 
         invalidate_cache()
         from core.config.models import load_config
         config = load_config(data_dir / "config.json")
         assert "newanima" in config.animas
-        assert config.animas["newanima"].model == "gpt-4o"
+        # Model config SSoT: model lives in status.json, not config.animas
 
     def test_set_new_credential(self, data_dir, capsys):
         args = argparse.Namespace(key="credentials.openrouter.api_key", value="sk-test")

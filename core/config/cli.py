@@ -152,6 +152,29 @@ def cmd_config_set(args: argparse.Namespace) -> None:
 
     parts = key.split(".")
 
+    _MODEL_FIELDS = {
+        "model",
+        "fallback_model",
+        "max_tokens",
+        "max_turns",
+        "credential",
+        "context_threshold",
+        "max_chains",
+        "conversation_history_threshold",
+        "execution_mode",
+        "thinking",
+        "llm_timeout",
+    }
+    if len(parts) >= 3 and parts[0] == "animas" and parts[2] in _MODEL_FIELDS:
+        anima_name = parts[1]
+        field = parts[2]
+        print(
+            f"Warning: 'animas.{anima_name}.{field}' は非推奨です。\n"
+            f"  代わりに 'animaworks anima set-model {anima_name} <model>' を使用するか、\n"
+            f"  status.json を直接編集してください。",
+            file=sys.stderr,
+        )
+
     # Auto-create scaffold for new anima entries (e.g. "animas.newperson.model")
     if len(parts) >= 3 and parts[0] == "animas":
         anima_name = parts[1]
