@@ -10,7 +10,7 @@
 [group5_header]: # 5. 組織とコミュニケーション
 [group6_header]: # 6. メタ設定
 [you_marker]:   ← あなた
-[common_label]: (共通)
+[common_label]: (共通スキル)
 [recent_tool_results_header]: ## Recent Tool Results
 [args_label]: 引数
 [required_label]: (必須)
