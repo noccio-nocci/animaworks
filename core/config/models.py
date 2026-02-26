@@ -295,6 +295,15 @@ class VoiceConfig(BaseModel):
     style_bert_vits2: StyleBertVits2Config = StyleBertVits2Config()
 
 
+# ── UI Config ────────────────────────────────────────────────────────────────
+
+
+class UIConfig(BaseModel):
+    """UI appearance and theme settings."""
+
+    theme: str = "default"
+
+
 # ── Main Config ─────────────────────────────────────────────────────────────
 
 
@@ -319,6 +328,7 @@ class AnimaWorksConfig(BaseModel):
     activity_log: ActivityLogConfig = ActivityLogConfig()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
     voice: VoiceConfig = VoiceConfig()
+    ui: UIConfig = UIConfig()
 
 
 # ---------------------------------------------------------------------------
