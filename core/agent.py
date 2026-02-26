@@ -1504,6 +1504,7 @@ class AgentCore:
 
         # Primary session with checkpoint + retry support
         full_text_parts: list[str] = []
+        thinking_text_parts: list[str] = []
         all_tool_call_records: list[dict] = []
         result_message: Any = None
         _stream_force_chain = False
@@ -1560,6 +1561,8 @@ class AgentCore:
                     else:
                         if chunk["type"] == "text_delta":
                             text_parts_this_attempt.append(chunk.get("text", ""))
+                        elif chunk["type"] == "thinking_delta":
+                            thinking_text_parts.append(chunk.get("text", ""))
                         yield chunk
 
             except Exception as e:
@@ -1744,6 +1747,7 @@ class AgentCore:
         )
 
         full_text = "\n".join(full_text_parts)
+        thinking_text = "".join(thinking_text_parts)
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
             "run_cycle_streaming END trigger=%s duration_ms=%d response_len=%d chained=%s retries=%d",
@@ -1756,6 +1760,7 @@ class AgentCore:
                 trigger=trigger,
                 action="responded",
                 summary=full_text,
+                thinking_text=thinking_text[:10000],
                 duration_ms=duration_ms,
                 context_usage_ratio=tracker.usage_ratio,
                 session_chained=session_chained,
