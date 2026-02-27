@@ -137,8 +137,8 @@ async function _ensureAnimaTabAvatar(name) {
 
   _animaTabAvatarLoading[name] = (async () => {
     let found = null;
-    // Chat tab icon should prioritize face icon (chibi).
-    const candidates = ["avatar_chibi.png", "avatar_bustup.png"];
+    // Chat tab icon should use bustup image.
+    const candidates = ["avatar_bustup.png"];
     for (const filename of candidates) {
       const url = `/api/animas/${encodeURIComponent(name)}/assets/${encodeURIComponent(filename)}`;
       try {
@@ -154,6 +154,7 @@ async function _ensureAnimaTabAvatar(name) {
     _animaTabAvatarUrls[name] = found;
     delete _animaTabAvatarLoading[name];
     _renderAnimaTabs();
+    if (name === _selectedAnima) _renderAddConversationIcon();
   })();
   return _animaTabAvatarLoading[name];
 }
@@ -271,7 +272,7 @@ export function render(container) {
         <div class="chat-anima-tabs-header">
           <div class="anima-tabs" id="chatAnimaTabs"></div>
           <div class="chat-add-conversation" id="chatAddConversationArea">
-            <button type="button" class="chat-add-conversation-btn" id="chatAddConversationBtn">+ 会話追加</button>
+            <span id="chatAddConversationIcon" class="chat-add-conversation-icon" aria-hidden="true">+</span>
             <select id="chatAddConversationSelect" class="anima-dropdown chat-add-conversation-select" aria-label="${t("chat.anima_select")}">
               <option value="" selected>${t("chat.anima_select")}</option>
             </select>
@@ -424,36 +425,12 @@ function _bindEvents() {
   _boundListeners.push({ el: document, event: "keydown", handler: _onBustupEscape });
 
   // Add conversation picker
-  _addListener("chatAddConversationBtn", "click", (e) => {
-    e.stopPropagation();
-    const area = _$("chatAddConversationArea");
-    if (!area) return;
-    area.classList.toggle("open");
-    if (area.classList.contains("open")) {
-      const select = _$("chatAddConversationSelect");
-      if (select) {
-        select.value = "";
-        select.focus();
-      }
-    }
-  });
   _addListener("chatAddConversationSelect", "change", (e) => {
     const name = e.target.value;
     if (name) _openOrSelectAnima(name);
     e.target.value = "";
-    const area = _$("chatAddConversationArea");
-    if (area) area.classList.remove("open");
+    _renderAddConversationIcon();
   });
-  const closeAddConversationPicker = (e) => {
-    const area = _$("chatAddConversationArea");
-    if (!area || !area.classList.contains("open")) return;
-    if (e.target instanceof Element && area.contains(e.target)) return;
-    area.classList.remove("open");
-    const select = _$("chatAddConversationSelect");
-    if (select) select.value = "";
-  };
-  document.addEventListener("pointerdown", closeAddConversationPicker);
-  _boundListeners.push({ el: document, event: "pointerdown", handler: closeAddConversationPicker });
 
   // New thread button
   _addListener("chatNewThreadBtn", "click", () => _createNewThread());
@@ -589,6 +566,7 @@ async function _loadAnimas() {
     _animas = animas || [];
     _restoreChatUiState(uiState);
     _renderAddConversationSelect();
+    _renderAddConversationIcon();
     _renderAnimaTabs();
     if (_animas.length > 0 && !_selectedAnima && !_isChatStreaming) {
       const firstTab = _animaTabs[0]?.name;
@@ -668,6 +646,28 @@ function _renderAddConversationSelect() {
   select.innerHTML = html;
 }
 
+function _renderAddConversationIcon() {
+  const icon = _$("chatAddConversationIcon");
+  if (!icon) return;
+  if (_isBusinessTheme() || !_selectedAnima) {
+    icon.textContent = "+";
+    icon.classList.remove("has-image");
+    icon.removeAttribute("style");
+    return;
+  }
+  const url = _animaTabAvatarUrls[_selectedAnima];
+  if (url) {
+    icon.textContent = "";
+    icon.classList.add("has-image");
+    icon.style.backgroundImage = `url("${url}")`;
+    return;
+  }
+  const initial = escapeHtml((_selectedAnima || "").charAt(0).toUpperCase() || "+");
+  icon.textContent = initial;
+  icon.classList.remove("has-image");
+  icon.style.backgroundImage = "";
+}
+
 async function _selectAnima(name) {
   const prevAnima = _selectedAnima;
   const currentInput = _$("chatPageInput");
@@ -677,6 +677,7 @@ async function _selectAnima(name) {
   }
 
   _selectedAnima = name;
+  _bustupUrl = null;
   _pendingQueue = [];
   _hidePendingIndicator();
   _selectedThreadId = _activeThreadByAnima[name] || "default";
@@ -696,6 +697,8 @@ async function _selectAnima(name) {
   _refreshAnimaUnread(name);
 
   _renderAddConversationSelect();
+  _ensureAnimaTabAvatar(name).then(() => _renderAddConversationIcon()).catch(() => {});
+  _renderAddConversationIcon();
   _renderAnimaTabs();
 
   const input = _$("chatPageInput");
@@ -794,6 +797,7 @@ function _closeAnimaTab(name) {
     }
   } else {
     _renderAddConversationSelect();
+    _renderAddConversationIcon();
     _renderAnimaTabs();
   }
   _scheduleSaveChatUiState();
@@ -825,7 +829,12 @@ function _renderAnimaTabs() {
   container.querySelectorAll(".anima-tab").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const anima = e.currentTarget?.dataset?.anima;
-      if (anima) _openOrSelectAnima(anima);
+      if (!anima) return;
+      if (anima === _selectedAnima) {
+        _showBustupOverlay();
+        return;
+      }
+      _openOrSelectAnima(anima);
     });
   });
   container.querySelectorAll(".anima-tab-close").forEach((btn) => {
@@ -1105,7 +1114,7 @@ async function _updateAvatar() {
 
   _bustupUrl = null;
   const name = _selectedAnima;
-  const candidates = ["avatar_bustup.png", "avatar_chibi.png"];
+  const candidates = ["avatar_bustup.png"];
   for (const filename of candidates) {
     const url = `/api/animas/${encodeURIComponent(name)}/assets/${encodeURIComponent(filename)}`;
     try {
@@ -1124,8 +1133,18 @@ async function _updateAvatar() {
 
 // ── Bustup Overlay ──────────────────────────
 
-function _showBustupOverlay() {
-  if (!_bustupUrl || !_selectedAnima) return;
+async function _showBustupOverlay() {
+  if (!_selectedAnima) return;
+  if (!_bustupUrl) {
+    const url = `/api/animas/${encodeURIComponent(_selectedAnima)}/assets/avatar_bustup.png`;
+    try {
+      const resp = await fetch(url, { method: "HEAD" });
+      if (resp.ok) _bustupUrl = url;
+    } catch {
+      // noop
+    }
+  }
+  if (!_bustupUrl) return;
   _removeBustupOverlay();
 
   const overlay = document.createElement("div");

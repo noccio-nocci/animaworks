@@ -29,6 +29,52 @@
 }
 
 /* --- Anima Tabs --- */
+.chat-anima-tabs-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border-color, #eee);
+}
+
+.chat-anima-tabs-header .anima-tabs {
+  flex: 1;
+  padding: 0;
+  border-bottom: none;
+  min-height: 36px;
+}
+
+.chat-add-conversation {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.chat-add-conversation-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--aw-color-bg-primary);
+  background-color: var(--aw-color-accent);
+  background-size: cover;
+  background-position: center;
+  border: 1px solid color-mix(in srgb, var(--aw-color-accent) 55%, var(--aw-color-border-dark) 45%);
+}
+
+.chat-add-conversation-select {
+  position: static;
+  min-width: 180px;
+  width: min(220px, 28vw);
+  max-width: 220px;
+  box-shadow: none;
+}
+
 .anima-tabs {
   display: flex;
   align-items: center;

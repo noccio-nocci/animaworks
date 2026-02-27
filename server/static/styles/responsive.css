@@ -430,7 +430,7 @@
 .chat-page-layout {
   display: flex;
   gap: 1rem;
-  height: calc(100svh - 140px);
+  height: 100%;
   min-height: 400px;
 }
 
@@ -471,6 +471,26 @@
 /* ── Chat Page Mobile (< 768px) ──────────── */
 
 @media (max-width: 768px) {
+  .chat-anima-tabs-header {
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .chat-add-conversation {
+    width: 100%;
+    display: flex;
+  }
+
+  .chat-add-conversation-icon {
+    flex-shrink: 0;
+  }
+
+  .chat-add-conversation-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
   .chat-mobile-tabs {
     display: flex;
     border-bottom: 2px solid var(--aw-color-border-light);
@@ -498,7 +518,7 @@
   }
 
   .chat-page-layout {
-    height: calc(100svh - 140px);
+    height: 100%;
     gap: 0;
   }
 
