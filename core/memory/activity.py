@@ -806,6 +806,8 @@ class ActivityLogger:
 
             if is_trigger:
                 if cur is not None:
+                    # Next trigger for the same Anima closes the previous group.
+                    cur["is_open"] = False
                     _AL._finalize_group(cur)
                     groups.append(cur)
                 current_by_anima[anima] = _AL._open_group(entry, evt_dict)
