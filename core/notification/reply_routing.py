@@ -34,7 +34,7 @@ _MAX_AGE_DAYS = 7
 _MAX_REPLY_LENGTH = 4000
 
 # Slack mrkdwn patterns
-_RE_USER_MENTION = re.compile(r"<@[A-Z0-9]+>")
+_RE_USER_MENTION = re.compile(r"<@[A-Za-z0-9]+>")
 _RE_LINK = re.compile(r"<(https?://[^|>]+)\|([^>]+)>")
 _RE_LINK_BARE = re.compile(r"<(https?://[^>]+)>")
 _RE_CHANNEL = re.compile(r"<#[A-Z0-9]+\|([^>]+)>")
@@ -42,21 +42,6 @@ _RE_CHANNEL = re.compile(r"<#[A-Z0-9]+\|([^>]+)>")
 
 def _map_path() -> Path:
     return get_data_dir() / "run" / "notification_map.json"
-
-
-def _read_map(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        logger.warning("Corrupted notification_map.json; resetting")
-        return {}
-
-
-def _write_map(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ── Public API ──────────────────────────────────────────
@@ -72,27 +57,26 @@ def save_notification_mapping(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        fd = path.open("a+")
-        try:
+        with path.open("a+") as fd:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            fd.seek(0)
-            raw = fd.read()
-            data: dict[str, Any] = json.loads(raw) if raw.strip() else {}
+            try:
+                fd.seek(0)
+                raw = fd.read()
+                data: dict[str, Any] = json.loads(raw) if raw.strip() else {}
 
-            data[ts] = {
-                "anima": anima_name,
-                "channel": channel,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            _prune_old_entries_inplace(data)
+                data[ts] = {
+                    "anima": anima_name,
+                    "channel": channel,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                _prune_old_entries_inplace(data)
 
-            fd.seek(0)
-            fd.truncate()
-            fd.write(json.dumps(data, ensure_ascii=False, indent=2))
-            fd.flush()
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            fd.close()
+                fd.seek(0)
+                fd.truncate()
+                fd.write(json.dumps(data, ensure_ascii=False, indent=2))
+                fd.flush()
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
         logger.exception("Failed to save notification mapping for ts=%s", ts)
 
@@ -103,7 +87,17 @@ def lookup_notification_mapping(thread_ts: str) -> dict[str, str] | None:
     Returns ``{"anima": "...", "channel": "..."}`` or ``None``.
     """
     path = _map_path()
-    data = _read_map(path)
+    if not path.exists():
+        return None
+    try:
+        with path.open("r") as fd:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            try:
+                data = json.load(fd)
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    except (json.JSONDecodeError, OSError):
+        return None
     entry = data.get(thread_ts)
     if entry is None:
         return None
@@ -116,22 +110,21 @@ def prune_old_entries(max_age_days: int = _MAX_AGE_DAYS) -> None:
     if not path.exists():
         return
     try:
-        fd = path.open("a+")
-        try:
+        with path.open("a+") as fd:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            fd.seek(0)
-            raw = fd.read()
-            data: dict[str, Any] = json.loads(raw) if raw.strip() else {}
-            before = len(data)
-            _prune_old_entries_inplace(data, max_age_days)
-            if len(data) < before:
+            try:
                 fd.seek(0)
-                fd.truncate()
-                fd.write(json.dumps(data, ensure_ascii=False, indent=2))
-                fd.flush()
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            fd.close()
+                raw = fd.read()
+                data: dict[str, Any] = json.loads(raw) if raw.strip() else {}
+                before = len(data)
+                _prune_old_entries_inplace(data, max_age_days)
+                if len(data) < before:
+                    fd.seek(0)
+                    fd.truncate()
+                    fd.write(json.dumps(data, ensure_ascii=False, indent=2))
+                    fd.flush()
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
         logger.exception("Failed to prune notification mapping")
 
