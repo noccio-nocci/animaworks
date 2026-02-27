@@ -601,6 +601,13 @@ html, body {
   color: #2563eb;
   text-decoration: underline;
 }
+.chat-bubble img {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  object-fit: contain;
+  cursor: pointer;
+}
 
 .chat-bubble.assistant ul {
   margin: 4px 0;

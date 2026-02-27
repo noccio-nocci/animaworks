@@ -79,6 +79,11 @@ _markedRenderer.link = function (token) {
   const html = _origLinkRenderer(token);
   return html.replace(/^<a /, '<a target="_blank" rel="noopener noreferrer" ');
 };
+_markedRenderer.image = function (token) {
+  const src = token.href || "";
+  const alt = escapeHtml(token.text || "Image");
+  return `<img src="${src}" alt="${alt}" class="chat-attached-image" loading="lazy" onerror="this.onerror=null;this.classList.add('chat-attached-image-error');this.alt='Image unavailable';" />`;
+};
 
 const _markedOptions = { breaks: true, renderer: _markedRenderer };
 
