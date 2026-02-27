@@ -852,12 +852,13 @@ function _renderAnimaTabs() {
   }
   const html = _animaTabs.map((tab) => {
     const activeClass = tab.name === _selectedAnima ? " active" : "";
-    const star = tab.unreadStar ? '<span class="tab-star" aria-label="unread">★</span>' : "";
+    const streamingClass = _streamingContext?.anima === tab.name ? " is-streaming" : "";
+    const completedClass = tab.unreadStar ? " has-unread-complete" : "";
     const avatar = _buildAnimaTabAvatar(tab.name);
     const closeBtn = _animaTabs.length > 1
       ? ` <button type="button" class="anima-tab-close" data-anima="${escapeHtml(tab.name)}" title="タブを閉じる" aria-label="閉じる">&times;</button>`
       : "";
-    return `<span class="anima-tab-wrap"><button type="button" class="anima-tab${activeClass}" data-anima="${escapeHtml(tab.name)}">${avatar}<span class="anima-tab-name">${escapeHtml(tab.name)}</span>${star}</button>${closeBtn}</span>`;
+    return `<span class="anima-tab-wrap"><button type="button" class="anima-tab${activeClass}${streamingClass}${completedClass}" data-anima="${escapeHtml(tab.name)}">${avatar}<span class="anima-tab-name">${escapeHtml(tab.name)}</span></button>${closeBtn}</span>`;
   }).join("");
   container.innerHTML = html;
 
@@ -916,6 +917,7 @@ async function _resumeActiveStream(animaName) {
     _streamingContext = { anima: animaName, thread: tid };
     _chatAbortController = new AbortController();
     _updateSendButton();
+    _renderAnimaTabs();
 
     const currentUser = localStorage.getItem("animaworks_user") || "human";
     const resumeBody = JSON.stringify({
@@ -980,6 +982,7 @@ async function _resumeActiveStream(animaName) {
     _streamingContext = null;
     _chatAbortController = null;
     _updateSendButton();
+    _renderAnimaTabs();
   }
 }
 
@@ -1717,6 +1720,7 @@ async function _sendChat(message, overrideImages = null) {
   _streamingContext = { anima: name, thread: tid };
   _chatAbortController = new AbortController();
   _updateSendButton();
+  _renderAnimaTabs();
   if (input) input.placeholder = t("chat.message_to", { name });
 
   if (!overrideImages) {
@@ -1855,6 +1859,7 @@ async function _sendChat(message, overrideImages = null) {
       input.focus();
     }
     _updateSendButton();
+    _renderAnimaTabs();
 
     // Auto-send next queued message
     if (_pendingQueue.length > 0) {
