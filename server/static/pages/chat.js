@@ -854,6 +854,19 @@ async function _resumeActiveStream(animaName) {
         streamingMsg.activeTool = null;
         _renderStreamingBubble(streamingMsg);
       },
+      onThinkingStart: () => {
+        streamingMsg.thinkingText = "";
+        streamingMsg.thinking = true;
+        _renderStreamingBubble(streamingMsg);
+      },
+      onThinkingDelta: (text) => {
+        streamingMsg.thinkingText = (streamingMsg.thinkingText || "") + text;
+        _renderStreamingBubble(streamingMsg);
+      },
+      onThinkingEnd: () => {
+        streamingMsg.thinking = false;
+        _renderStreamingBubble(streamingMsg);
+      },
       onError: ({ message: errorMsg }) => {
         streamingMsg.text += `\n${t("chat.error_prefix")} ${errorMsg}`;
         streamingMsg.streaming = false;
@@ -1163,7 +1176,7 @@ function _renderChat(scrollToBottom = true) {
       if (m.role === "assistant") {
         const streamClass = m.streaming ? " streaming" : "";
         let thinkingHtml = "";
-        if (m.thinkingText && !m.text) {
+        if (m.thinking && m.thinkingText) {
           thinkingHtml = `<div class="thinking-inline-preview">${escapeHtml(m.thinkingText)}</div>`;
         }
         let content = "";
@@ -1206,7 +1219,7 @@ function _renderStreamingBubble(msg) {
   const bubble = messagesEl.querySelector(".chat-bubble.assistant.streaming");
   if (!bubble) return;
 
-  const thinkingHtml = (msg.thinkingText && !msg.text)
+  const thinkingHtml = (msg.thinking && msg.thinkingText)
     ? `<div class="thinking-inline-preview">${escapeHtml(msg.thinkingText)}</div>`
     : "";
   let mainHtml = "";

@@ -811,7 +811,7 @@ function renderConvBubble(msg) {
   }
   const streamClass = msg.streaming ? " streaming" : "";
   let thinkingHtml = "";
-  if (msg.thinkingText && !msg.text) {
+  if (msg.thinking && msg.thinkingText) {
     thinkingHtml = `<div class="thinking-inline-preview">${escapeHtml(msg.thinkingText)}</div>`;
   }
   let content = "";
@@ -1506,7 +1506,7 @@ function updateStreamingBubble(msg) {
   if (!bubble) return;
 
   let mainHtml = "";
-  const thinkingHtml = (msg.thinkingText && !msg.text)
+  const thinkingHtml = (msg.thinking && msg.thinkingText)
     ? `<div class="thinking-inline-preview">${escapeHtml(msg.thinkingText)}</div>`
     : "";
   if (msg.heartbeatRelay) {
@@ -2253,6 +2253,13 @@ async function startDashboard() {
         }
       }
     }
+  });
+
+  // Make the whole input container focus the textarea (except control buttons).
+  const convInputWrap = document.querySelector(".ws-conv-input-area .chat-input-wrap");
+  convInputWrap?.addEventListener("click", (e) => {
+    if (e.target instanceof Element && e.target.closest("button, input, select, textarea, a")) return;
+    dom.convInput?.focus();
   });
 
   // Pending queue cancel all

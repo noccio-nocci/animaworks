@@ -62,7 +62,7 @@ export function initVoiceUI(chatInputForm, animaName, callbacks) {
   container.append(micBtn, recIndicator, ttsIndicator, thinkingIndicator, modeToggle, volumeSlider);
 
   const sendBtn = chatInputForm.querySelector(
-    '[id$="SendBtn"], .chat-send-btn, button[type="submit"]'
+    '[id$="SendBtn"], .chat-send-btn, .ws-conv-send, button[type="submit"]'
   );
   if (sendBtn && sendBtn.parentNode) {
     sendBtn.parentNode.insertBefore(container, sendBtn);

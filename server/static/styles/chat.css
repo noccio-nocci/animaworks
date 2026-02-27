@@ -46,7 +46,7 @@
 }
 
 .anima-tab {
-  padding: 0.42rem 0.72rem;
+  padding: 0.34rem 0.68rem;
   font-size: 0.85rem;
   border: 1px solid var(--aw-color-border-dark);
   border-radius: 999px;
@@ -79,8 +79,8 @@
 }
 
 .anima-tab-avatar {
-  width: 20px;
-  height: 20px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   flex-shrink: 0;
 }
