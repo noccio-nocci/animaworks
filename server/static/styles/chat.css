@@ -853,6 +853,7 @@
   padding: 2px 6px;
   border: none;
   background: transparent;
+  color: var(--aw-color-text-primary);
   font-size: 0.95rem;
   font-family: inherit;
   outline: none;

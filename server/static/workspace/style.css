@@ -1330,7 +1330,7 @@ html, body {
   padding: 10px 14px;
   border: none;
   background: transparent;
-  color: #1a1a1a;
+  color: var(--aw-color-text-primary);
   font-family: inherit;
   font-size: 0.95rem;
   line-height: 1.5;
@@ -1341,11 +1341,11 @@ html, body {
 }
 
 .ws-conv-input::placeholder {
-  color: #aaa;
+  color: var(--aw-color-text-placeholder, #aaa);
 }
 
 .ws-conv-input:disabled {
-  color: #aaa;
+  color: var(--aw-color-text-muted);
 }
 
 .ws-conv-send {
