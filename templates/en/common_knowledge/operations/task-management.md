@@ -357,6 +357,58 @@ Leave gaps when sending in bursts.
 
 Use `[IMPORTANT]` for key learnings (SHOULD). These are prioritized during Heartbeat and memory consolidation.
 
+## Parallel Task Execution (plan_tasks)
+
+The `plan_tasks` tool lets you submit multiple tasks with dependencies as a batch for parallel execution.
+TaskExec resolves dependencies as a DAG (directed acyclic graph) and runs independent tasks concurrently.
+
+### Usage
+
+```
+plan_tasks(batch_id="build-20260301", tasks=[
+  {{"task_id": "compile", "title": "Compile", "description": "Build the source", "parallel": true}},
+  {{"task_id": "lint", "title": "Lint", "description": "Static analysis", "parallel": true}},
+  {{"task_id": "package", "title": "Package", "description": "Package build artifacts",
+   "depends_on": ["compile", "lint"]}}
+])
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `batch_id` | MUST | Unique batch identifier |
+| `tasks[].task_id` | MUST | Unique task ID within the batch |
+| `tasks[].title` | MUST | Task title |
+| `tasks[].description` | MUST | Work content |
+| `tasks[].parallel` | MAY | `true` for parallel execution (default: `false`) |
+| `tasks[].depends_on` | MAY | Array of predecessor task IDs |
+
+### How It Works
+
+1. `plan_tasks` validates (unique IDs, valid dependencies, cycle detection)
+2. Task files are written to `state/pending/` with `batch_id`
+3. TaskExec detects the batch and determines execution order via topological sort
+4. `parallel: true` tasks with no pending dependencies run concurrently within semaphore limit
+5. Predecessor results are automatically injected into dependent task context
+6. If a predecessor fails, dependent tasks are skipped
+
+### Concurrency Limit
+
+Max parallel tasks is controlled by `config.json` `background_task.max_parallel_llm_tasks` (default: 3, range 1–10).
+
+### Task Result Storage
+
+Completed task result summaries are saved to `state/task_results/{task_id}.json`.
+Dependent tasks automatically receive these results as context.
+
+### When to Use plan_tasks vs Direct Write
+
+| Scenario | Method |
+|----------|--------|
+| Single task | Write JSON directly to `state/pending/` |
+| Multiple independent tasks | `plan_tasks` with `parallel: true` |
+| Tasks with dependencies | `plan_tasks` with `depends_on` |
+| Delegation to subordinates | `delegate_task` (separate mechanism) |
+
 ## Task Delegation (delegate_task)
 
 Anima with subordinates (supervisors) can delegate tasks to subordinates using the `delegate_task` tool.

@@ -255,6 +255,7 @@ class BackgroundTaskConfig(BaseModel):
         "run_command": BackgroundToolConfig(threshold_s=60),
     }
     result_retention_hours: int = 24
+    max_parallel_llm_tasks: int = Field(default=3, ge=1, le=10)
 
 
 class ActivityLogConfig(BaseModel):

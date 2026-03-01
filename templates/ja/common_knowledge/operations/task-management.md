@@ -360,6 +360,58 @@ Slack API 接続テスト完了。#general への投稿テストも成功。
 
 重要な学びには `[IMPORTANT]` タグを付ける（SHOULD）。後のハートビートや記憶統合で優先的に抽出される。
 
+## 並列タスク実行（plan_tasks）
+
+`plan_tasks` ツールを使うと、複数のタスクを依存関係付きで一括投入し、並列実行できる。
+TaskExec がDAG（有向非巡回グラフ）として依存関係を解決し、独立タスクを同時実行する。
+
+### 使い方
+
+```
+plan_tasks(batch_id="build-20260301", tasks=[
+  {{"task_id": "compile", "title": "コンパイル", "description": "ソースをビルド", "parallel": true}},
+  {{"task_id": "lint", "title": "Lint", "description": "静的解析", "parallel": true}},
+  {{"task_id": "package", "title": "パッケージ", "description": "ビルド成果物をパッケージ化",
+   "depends_on": ["compile", "lint"]}}
+])
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `batch_id` | MUST | バッチの一意識別子 |
+| `tasks[].task_id` | MUST | バッチ内で一意のタスクID |
+| `tasks[].title` | MUST | タスクタイトル |
+| `tasks[].description` | MUST | 作業内容 |
+| `tasks[].parallel` | MAY | `true` で並列実行可能（デフォルト: `false`） |
+| `tasks[].depends_on` | MAY | 先行タスクIDの配列 |
+
+### 実行の仕組み
+
+1. `plan_tasks` がバリデーション（ID一意性、依存先存在、循環検出）を行う
+2. タスクファイルが `state/pending/` に `batch_id` 付きで書き出される
+3. TaskExec がバッチを検出し、トポロジカルソートで実行順を決定する
+4. 依存なしの `parallel: true` タスクはセマフォ上限内で同時実行される
+5. 先行タスクの結果は依存タスクのコンテキストに自動注入される
+6. 先行タスクが失敗した場合、依存タスクはスキップされる
+
+### 並列実行の上限
+
+同時実行数は `config.json` の `background_task.max_parallel_llm_tasks`（デフォルト: 3、1〜10）で制御される。
+
+### タスク結果の保存
+
+完了タスクの結果要約は `state/task_results/{task_id}.json` に保存される。
+依存タスクはこの結果をコンテキストとして自動的に受け取る。
+
+### plan_tasks と直接書き出しの使い分け
+
+| シナリオ | 方法 |
+|---------|------|
+| 単一タスク | `state/pending/` に直接JSON書き出し |
+| 複数独立タスク | `plan_tasks` で `parallel: true` |
+| 依存関係付きタスク群 | `plan_tasks` で `depends_on` 指定 |
+| 部下への委譲 | `delegate_task`（別メカニズム） |
+
 ## タスク委譲（delegate_task）
 
 部下を持つ Anima（スーパーバイザー）は `delegate_task` ツールでタスクを部下に委譲できる。
