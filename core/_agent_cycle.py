@@ -336,6 +336,13 @@ class CycleMixin:
             )
 
             tracker.reset()
+            # Clear SDK session ID so the chained session starts fresh
+            if mode == "s":
+                try:
+                    from core.execution.agent_sdk import clear_session_ids
+                    clear_session_ids(self.anima_dir)
+                except Exception:
+                    logger.debug("Failed to clear session IDs for chain", exc_info=True)
             # Force TIER_LIGHT on chained sessions to reduce system prompt floor
             _chain_cw = min(_ctx_window, 32_000)
             system_prompt_2 = inject_shortterm(
@@ -743,6 +750,14 @@ class CycleMixin:
             )
 
             tracker.reset()
+            # Clear SDK session ID so the chained session starts fresh
+            # (resume would reload the full conversation history, defeating compaction)
+            if mode == "s":
+                try:
+                    from core.execution.agent_sdk import clear_session_ids
+                    clear_session_ids(self.anima_dir)
+                except Exception:
+                    logger.debug("Failed to clear session IDs for chain", exc_info=True)
             # Force TIER_LIGHT on chained sessions to reduce system prompt floor
             _chain_cw = min(_ctx_window_s, 32_000)
             system_prompt_2 = inject_shortterm(
