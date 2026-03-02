@@ -35,6 +35,12 @@ function paneHtml() {
           </button>
           <div class="chat-thread-dropdown-menu" data-chat-id="chatThreadDropdownMenu"></div>
         </div>
+        <button class="chat-split-pane-btn" data-chat-id="chatSplitPaneBtn" aria-label="ペインを分割" title="ペインを分割">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+        </button>
+        <button class="chat-close-pane-btn" data-chat-id="chatClosePaneBtn" aria-label="ペインを閉じる" title="ペインを閉じる" style="display:none">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
         <button class="chat-unified-info-btn" data-chat-id="chatUnifiedInfoBtn" aria-label="情報パネル" title="情報パネル">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
         </button>
@@ -139,6 +145,8 @@ export function createPaneHost(rootContainer) {
     const ctx = createChatContext();
     ctx.state.container = paneEl;
     ctx.state.rootContainer = rootContainer;
+    ctx.state.paneId = id;
+    ctx.state.paneHost = { splitPane, removePane };
 
     ctx.controllers.anima = createAnimaController(ctx);
     ctx.controllers.thread = createThreadController(ctx);
@@ -174,6 +182,7 @@ export function createPaneHost(rootContainer) {
     }
 
     _saveLayout();
+    _updatePaneControls();
     return pane;
   }
 
@@ -198,6 +207,7 @@ export function createPaneHost(rootContainer) {
     _applyFocusVisual();
     _syncSidebar();
     _saveLayout();
+    _updatePaneControls();
   }
 
   function _handlePaneFocus(id) {
@@ -407,6 +417,17 @@ export function createPaneHost(rootContainer) {
         _applyFocusVisual();
       }
     } catch { /* corrupt data */ }
+  }
+
+  function _updatePaneControls() {
+    const multi = panes.length > 1;
+    const full = panes.length >= MAX_PANES;
+    for (const p of panes) {
+      const closeBtn = p.el.querySelector('[data-chat-id="chatClosePaneBtn"]');
+      const splitBtn = p.el.querySelector('[data-chat-id="chatSplitPaneBtn"]');
+      if (closeBtn) closeBtn.style.display = multi ? "" : "none";
+      if (splitBtn) splitBtn.style.display = full ? "none" : "";
+    }
   }
 
   function splitPane() {
