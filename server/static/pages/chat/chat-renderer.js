@@ -118,11 +118,18 @@ export function createChatRenderer(ctx) {
 
     let liveHtml = "";
     if (history.length > 0) {
-      if (hs.sessions.length > 0) {
-        liveHtml += `<div class="session-divider"><span class="session-divider-label">${t("chat.current_session")}</span></div>`;
+      const hasStreaming = history.some(m => m.streaming);
+      const lastSession = hs.sessions[hs.sessions.length - 1];
+      const lastSessionLastTs = lastSession?.messages?.slice(-1)[0]?.ts ?? "";
+      const lastLiveTs = history[history.length - 1]?.timestamp ?? "";
+      const liveIsNewer = hasStreaming || !lastSessionLastTs || lastLiveTs > lastSessionLastTs;
+      if (liveIsNewer) {
+        if (hs.sessions.length > 0) {
+          liveHtml += `<div class="session-divider"><span class="session-divider-label">${t("chat.current_session")}</span></div>`;
+        }
+        const opts = _renderOpts();
+        liveHtml += history.map(m => renderLiveBubble(m, opts)).join("");
       }
-      const opts = _renderOpts();
-      liveHtml += history.map(m => renderLiveBubble(m, opts)).join("");
     }
 
     messagesEl.innerHTML = topHtml + sessionsHtml + liveHtml;
@@ -243,7 +250,10 @@ export function createChatRenderer(ctx) {
       const { changed } = mgr.mergePolledHistory(name, tid, conv);
       if (!changed) return;
 
-      mgr.keepOnlyStreaming(name, tid);
+      // Do NOT call keepOnlyStreaming here. It would clear session.messages (user + completed
+      // assistant) before the API has caught up (activity_log write can be delayed). That causes
+      // the last exchange to disappear from the UI. Live messages are deduplicated in renderChat
+      // when they're already in the last session.
 
       const messagesEl = $("chatPageMessages");
       const shouldStick = messagesEl
