@@ -820,7 +820,7 @@ class AgentSDKExecutor(BaseExecutor):
                     async for event in _stream_messages(fresh_client):
                         yield event
             except BaseException as retry_exc:
-                if isinstance(retry_exc, asyncio.CancelledError):
+                if isinstance(retry_exc, (asyncio.CancelledError, GeneratorExit)):
                     raise
                 if not isinstance(retry_exc, Exception):
                     logger.critical(
@@ -906,7 +906,7 @@ class AgentSDKExecutor(BaseExecutor):
                         yield event
             logger.debug("ClaudeSDKClient disconnected")
         except BaseException as e:
-            if isinstance(e, asyncio.CancelledError):
+            if isinstance(e, (asyncio.CancelledError, GeneratorExit)):
                 raise
             if not isinstance(e, Exception):
                 logger.critical(
