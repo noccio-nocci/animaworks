@@ -183,13 +183,14 @@ html, body {
 .status-thinking {
   background: #f59e0b;
   animation: pulse-amber 1.2s ease-in-out infinite;
+  box-shadow: 0 0 6px 2px rgba(245, 158, 11, 0.5);
 }
 .status-error { background: #ef4444; }
 .status-offline { background: #9ca3af; }
 
 @keyframes pulse-amber {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 6px 2px rgba(245, 158, 11, 0.5); }
+  50% { opacity: 0.5; transform: scale(1.3); box-shadow: 0 0 10px 4px rgba(245, 158, 11, 0.7); }
 }
 
 /* ── Main Layout ────────────────────────── */
@@ -1422,6 +1423,12 @@ html, body {
   width: 34px;
   height: 34px;
   border-width: 1px;
+}
+
+.ws-conv-input-area .voice-toolbar {
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid #e5e5e5;
 }
 
 .ws-conv-send:hover {
@@ -3359,7 +3366,15 @@ html, body {
 }
 
 .dot-idle { background: var(--aw-color-success, #22c55e); }
-.dot-active { background: var(--aw-color-warning, #f59e0b); }
+.dot-active {
+  background: var(--aw-color-warning, #f59e0b);
+  animation: dot-active-pulse 1.2s ease-in-out infinite;
+  box-shadow: 0 0 6px 1px var(--aw-color-warning, #f59e0b);
+}
+@keyframes dot-active-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.4); }
+}
 .dot-sleeping { background: var(--aw-color-text-placeholder, #9ca3af); }
 .dot-error { background: var(--aw-color-error, #ef4444); }
 .dot-bootstrap { background: var(--aw-color-info, #6366f1); }

@@ -245,6 +245,44 @@
 
 .anima-tab.is-streaming {
   animation: anima-tab-thinking-pulse 1.6s ease-in-out infinite;
+  position: relative;
+}
+
+.anima-tab.is-streaming .anima-tab-avatar {
+  animation: streaming-avatar-ring 1.4s ease-in-out infinite;
+  animation-play-state: running !important;
+}
+
+.anima-tab.is-streaming::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--aw-color-accent);
+  border: 2px solid var(--aw-color-bg-secondary);
+  animation: streaming-badge-pulse 0.9s ease-in-out infinite;
+  animation-play-state: running !important;
+  z-index: 2;
+  pointer-events: none;
+}
+
+@keyframes streaming-avatar-ring {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--aw-color-accent), 0 0 6px 2px color-mix(in srgb, var(--aw-color-accent) 40%, transparent 60%);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--aw-color-accent), 0 0 12px 4px color-mix(in srgb, var(--aw-color-accent) 60%, transparent 40%);
+    transform: scale(1.06);
+  }
+}
+
+@keyframes streaming-badge-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
 }
 
 .anima-tab.has-unread-complete {
@@ -395,7 +433,7 @@
   color: var(--aw-color-danger, #ef4444);
 }
 
-/* --- Desktop rail layout when sidebar is hidden --- */
+/* --- Desktop: icon rail layout for anima tabs --- */
 @media (min-width: 769px) {
   .chat-page-layout.sidebar-hidden {
     gap: 0;
@@ -409,14 +447,14 @@
     border-left: 1px solid var(--aw-color-border-light);
   }
 
-  body.sidebar-collapsed .chat-page-main {
+  .chat-page-main {
     display: grid;
     grid-template-columns: 64px minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
     min-height: 0;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header {
+  .chat-anima-tabs-header {
     grid-column: 1;
     grid-row: 1 / 4;
     display: flex;
@@ -430,7 +468,7 @@
     overflow: hidden;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tabs {
+  .chat-anima-tabs-header .anima-tabs {
     flex: 1;
     width: 100%;
     display: flex;
@@ -444,13 +482,13 @@
     overflow-x: hidden;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tab-wrap {
+  .chat-anima-tabs-header .anima-tab-wrap {
     width: 100%;
     justify-content: center;
     position: relative;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tab {
+  .chat-anima-tabs-header .anima-tab {
     width: 42px;
     height: 42px;
     padding: 0;
@@ -459,11 +497,11 @@
     gap: 0;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tab-name {
+  .chat-anima-tabs-header .anima-tab-name {
     display: none;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tab-close {
+  .chat-anima-tabs-header .anima-tab-close {
     position: absolute;
     top: -4px;
     right: 2px;
@@ -481,31 +519,38 @@
     z-index: 2;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tab-wrap:hover .anima-tab-close {
+  .chat-anima-tabs-header .anima-tab-wrap:hover .anima-tab-close {
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
-  body.sidebar-collapsed .chat-anima-tabs-header .anima-tab-avatar {
+  .chat-anima-tabs-header .anima-tab-avatar {
     width: 36px;
     height: 36px;
   }
 
-  body.sidebar-collapsed .chat-split-pane-btn,
-  body.sidebar-collapsed .chat-close-pane-btn {
+  .chat-anima-tabs-header .anima-tab.is-streaming::after {
+    bottom: 0;
+    right: 0;
+    width: 12px;
+    height: 12px;
+  }
+
+  .chat-split-pane-btn,
+  .chat-close-pane-btn {
     width: 36px;
     height: 36px;
     border-radius: 999px;
   }
 
-  body.sidebar-collapsed .chat-add-conversation {
+  .chat-add-conversation {
     width: 100%;
     display: flex;
     justify-content: center;
   }
 
-  body.sidebar-collapsed .chat-add-conversation-btn {
+  .chat-add-conversation-btn {
     width: 40px;
     height: 40px;
     padding: 0;
@@ -514,14 +559,14 @@
     line-height: 0;
   }
 
-  body.sidebar-collapsed .chat-add-conversation-btn::before {
+  .chat-add-conversation-btn::before {
     content: "+";
     font-size: 1.25rem;
     line-height: 1;
     color: var(--aw-color-text-primary);
   }
 
-  body.sidebar-collapsed .chat-add-conversation-menu {
+  .chat-add-conversation-menu {
     left: calc(100% + 8px);
     right: auto;
     top: auto;
@@ -529,18 +574,18 @@
     width: min(360px, 56vw);
   }
 
-  body.sidebar-collapsed .thread-tabs {
+  .thread-tabs {
     grid-column: 2;
     grid-row: 1;
   }
 
-  body.sidebar-collapsed .chat-messages-area {
+  .chat-messages-area {
     grid-column: 2;
     grid-row: 2;
     min-height: 0;
   }
 
-  body.sidebar-collapsed [data-chat-id="chatPageForm"] {
+  [data-chat-id="chatPageForm"] {
     grid-column: 2;
     grid-row: 3;
   }
@@ -590,6 +635,20 @@
   animation: thread-tab-thinking-pulse 1.6s ease-in-out infinite;
   color: var(--aw-color-accent-hover);
   font-weight: 600;
+  position: relative;
+}
+
+.thread-tab.is-streaming::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--aw-color-accent);
+  animation: streaming-badge-pulse 0.9s ease-in-out infinite;
+  animation-play-state: running !important;
+  margin-right: 4px;
+  flex-shrink: 0;
 }
 
 .thread-tab.has-unread-complete {
@@ -1027,6 +1086,12 @@
   width: 28px;
   height: 28px;
   border-width: 1px;
+}
+
+.chat-input-form .voice-toolbar {
+  margin-top: 6px;
+  background: var(--aw-color-bg-tertiary, #f0f0f0);
+  border: 1px solid var(--aw-color-border, #e5e5e5);
 }
 
 .chat-send-btn {
@@ -2181,8 +2246,6 @@
 
 .chat-pane .chat-page-main {
   flex: 1;
-  display: flex;
-  flex-direction: column;
   min-width: 0;
 }
 

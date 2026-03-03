@@ -34,7 +34,7 @@ VOICE_MODE_SUFFIX = (
 
 # ── TTS output sanitization ──────────────────────────────────
 
-_RE_EMOTION_TAG = re.compile(r"<!--\s*emotion:\s*\{.*?\}\s*-->", re.DOTALL)
+_RE_HTML_COMMENT = re.compile(r"<!--[\s\S]*?-->")
 _RE_MD_CODE_BLOCK = re.compile(r"```[\s\S]*?```")
 _RE_MD_HEADING = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 _RE_MD_BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -45,13 +45,11 @@ _RE_MD_LIST_BULLET = re.compile(r"^[\s]*[-*+]\s+", re.MULTILINE)
 _RE_MD_LIST_NUMBERED = re.compile(r"^[\s]*\d+\.\s+", re.MULTILINE)
 _RE_MD_TABLE_PIPE = re.compile(r"\|")
 _RE_MD_HR = re.compile(r"^-{3,}$", re.MULTILINE)
-_RE_TRAILING_HTML_COMMENT = re.compile(r"\s*<!--[\s\S]*?-->\s*$", re.DOTALL)
 
 
 def sanitize_for_tts(text: str) -> str:
-    """Strip Markdown formatting and emotion metadata for TTS consumption."""
-    text = _RE_EMOTION_TAG.sub("", text)
-    text = _RE_TRAILING_HTML_COMMENT.sub("", text)
+    """Strip Markdown formatting and HTML comments for TTS consumption."""
+    text = _RE_HTML_COMMENT.sub("", text)
     text = _RE_MD_CODE_BLOCK.sub("", text)
     text = _RE_MD_HEADING.sub("", text)
     text = _RE_MD_BOLD.sub(r"\1", text)

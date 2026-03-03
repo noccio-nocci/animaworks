@@ -4,6 +4,12 @@
 
 const DEFAULT_TOOL_RESULT_TRUNCATE = 500;
 
+const _RE_VOICE_MODE_SUFFIX = /\n*\[voice-mode:[^\]]*\]/g;
+
+function _stripVoiceSuffix(text) {
+  return text ? text.replace(_RE_VOICE_MODE_SUFFIX, "") : text;
+}
+
 /**
  * Render a history message (from conversation API) to HTML.
  * @param {object} msg - Message object with role, content, tool_calls, images, ts, from_person
@@ -40,7 +46,8 @@ export function renderHistoryMessage(msg, opts) {
   const fromLabel = msg.from_person && msg.from_person !== "human"
     ? `<div style="font-size:0.72rem; opacity:0.7; margin-bottom:2px;">${escapeHtml(msg.from_person)}</div>`
     : "";
-  return `<div class="chat-bubble user">${fromLabel}<div class="chat-text">${escapeHtml(msg.content || "")}</div>${tsHtml}</div>`;
+  const userContent = _stripVoiceSuffix(msg.content || "");
+  return `<div class="chat-bubble user">${fromLabel}<div class="chat-text">${escapeHtml(userContent)}</div>${tsHtml}</div>`;
 }
 
 /**
@@ -214,7 +221,8 @@ export function renderLiveBubble(msg, opts) {
 
   if (msg.role === "user") {
     const imagesHtml = renderImages(msg.images, { animaName: opts.animaName });
-    const textHtml = msg.text ? `<div class="chat-text">${escapeHtml(msg.text)}</div>` : "";
+    const userText = _stripVoiceSuffix(msg.text || "");
+    const textHtml = userText ? `<div class="chat-text">${escapeHtml(userText)}</div>` : "";
     return `<div class="chat-bubble user">${imagesHtml}${textHtml}${tsHtml}</div>`;
   }
 
