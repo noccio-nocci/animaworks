@@ -542,6 +542,10 @@ class PrimingEngine:
                     from_type = (entry.meta or {}).get("from_type", "")
                     if from_type != "anima":
                         score += 15.0
+                    else:
+                        origin_chain = (entry.meta or {}).get("origin_chain") or []
+                        if "human" in origin_chain:
+                            score += 15.0
                 else:
                     score += 15.0
 
