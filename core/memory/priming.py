@@ -206,7 +206,7 @@ class PrimingEngine:
         # Execute 5 channels + outbound collection in parallel
         results = await asyncio.gather(
             self._channel_a_sender_profile(sender_name),
-            self._channel_b_recent_activity(sender_name, keywords),  # Unified channel
+            self._channel_b_recent_activity(sender_name, keywords, channel=channel),
             channel_c_coro,
             self._channel_d_skill_match(message, keywords, channel=channel),
             self._channel_e_pending_tasks(),
@@ -343,27 +343,48 @@ class PrimingEngine:
             logger.warning("Channel A: Failed to read profile for %s: %s", sender_name, e)
             return ""
 
-    async def _channel_b_recent_activity(self, sender_name: str, keywords: list[str]) -> str:
+    # Event types that are noise for heartbeat/cron priming — tool invocations
+    # and heartbeat lifecycle events crowd out actionable messages.
+    _HEARTBEAT_NOISE_TYPES = frozenset({
+        "tool_use", "tool_result",
+        "heartbeat_start", "heartbeat_end", "heartbeat_reflection",
+        "inbox_processing_start", "inbox_processing_end",
+    })
+
+    async def _channel_b_recent_activity(
+        self, sender_name: str, keywords: list[str], *, channel: str = "",
+    ) -> str:
         """Channel B: Recent activity from unified activity log.
 
         Replaces old Channel B (episodes) and Channel E (shared channels).
         Reads from activity_log/{date}.jsonl for a unified timeline,
         plus shared/channels/*.jsonl for cross-Anima visibility.
         Falls back to episodes/ if activity_log is empty (migration period).
+
+        When *channel* is ``"heartbeat"`` or starts with ``"cron:"``,
+        tool_use / tool_result / heartbeat lifecycle events are filtered
+        out so that the limited priming budget contains only actionable
+        communication events (messages, channel posts, errors, etc.).
         """
         from core.memory.activity import ActivityLogger
 
         activity = ActivityLogger(self.anima_dir)
-        entries = activity.recent(days=2, limit=100)  # Top-50 selected after scoring below
+        entries = activity.recent(days=2, limit=100)
+
+        is_background = channel in ("heartbeat",) or channel.startswith("cron:")
+
+        if is_background and entries:
+            entries = [
+                e for e in entries
+                if e.type not in self._HEARTBEAT_NOISE_TYPES
+            ]
 
         # Always read shared channels for cross-Anima visibility
         channel_entries = self._read_shared_channels(limit_per_channel=5)
         entries.extend(channel_entries)
 
         if entries:
-            # Prioritize: sender-related entries first, then by recency
             prioritized = self._prioritize_entries(entries, sender_name, keywords)
-            # Apply limit after scoring
             prioritized = prioritized[:50]
             return activity.format_for_priming(prioritized, budget_tokens=1300)
 
