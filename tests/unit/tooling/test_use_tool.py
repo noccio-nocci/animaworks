@@ -260,3 +260,119 @@ class TestUseToolSchemaDefinition:
         required = schema["parameters"].get("required", [])
         assert "tool_name" in required
         assert "action" in required
+
+
+# ── Personal tool dispatch ────────────────────────────────
+
+
+@pytest.fixture
+def personal_tool_file(tmp_path: Path) -> Path:
+    """Create a minimal personal tool module on disk."""
+    tool_file = tmp_path / "my_tool.py"
+    tool_file.write_text(
+        "def dispatch(schema_name, args):\n"
+        "    return '{\"ok\": true, \"schema\": \"' + schema_name + '\"}'\n"
+        "\n"
+        "def get_tool_schemas():\n"
+        "    return []\n",
+        encoding="utf-8",
+    )
+    return tool_file
+
+
+@pytest.fixture
+def handler_with_personal_tool(
+    anima_dir: Path,
+    memory: MagicMock,
+    personal_tool_file: Path,
+) -> ToolHandler:
+    """Handler with a personal tool registered."""
+    h = ToolHandler(
+        anima_dir=anima_dir,
+        memory=memory,
+        messenger=None,
+        tool_registry=[],
+        personal_tools={"my_tool": str(personal_tool_file)},
+    )
+    return h
+
+
+class TestUseToolPersonalTools:
+    """Personal tools are resolved via file-based dynamic import."""
+
+    def test_personal_tool_dispatches(
+        self, handler_with_personal_tool: ToolHandler,
+    ):
+        result = handler_with_personal_tool.handle(
+            "use_tool",
+            {"tool_name": "my_tool", "action": "run", "args": {}},
+        )
+        parsed = json.loads(result)
+        assert parsed.get("ok") is True
+        assert parsed.get("schema") == "my_tool_run"
+
+    def test_personal_tool_rejects_unpermitted(
+        self, handler: ToolHandler,
+    ):
+        """A personal tool not registered is rejected."""
+        result = handler.handle(
+            "use_tool",
+            {"tool_name": "my_tool", "action": "run", "args": {}},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "permitted" in parsed["message"].lower() or "permission" in parsed["message"].lower()
+
+    def test_personal_tool_passes_anima_dir(
+        self, handler_with_personal_tool: ToolHandler, anima_dir: Path,
+    ):
+        result = handler_with_personal_tool.handle(
+            "use_tool",
+            {"tool_name": "my_tool", "action": "info", "args": {"key": "val"}},
+        )
+        parsed = json.loads(result)
+        assert parsed.get("schema") == "my_tool_info"
+
+    def test_personal_tool_not_in_core_modules(
+        self, handler_with_personal_tool: ToolHandler,
+    ):
+        """Personal tool is loaded from file, not TOOL_MODULES."""
+        with patch("core.tools.TOOL_MODULES", {}):
+            result = handler_with_personal_tool.handle(
+                "use_tool",
+                {"tool_name": "my_tool", "action": "check", "args": {}},
+            )
+        parsed = json.loads(result)
+        assert parsed.get("ok") is True
+
+
+# ── MCP permission gate ───────────────────────────────────
+
+
+class TestUseToolMCPPermissionGate:
+    """use_tool via MCP should respect tool_registry permissions."""
+
+    def test_empty_registry_rejects_tool(self, handler: ToolHandler):
+        """Handler with empty registry rejects any use_tool call."""
+        result = handler.handle(
+            "use_tool",
+            {"tool_name": "web_search", "action": "search", "args": {}},
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "PermissionDenied" in parsed.get("error_type", "")
+
+    def test_registry_allows_matching_tool(
+        self, handler_with_web_search: ToolHandler,
+    ):
+        """Handler with web_search in registry allows it (dispatch may still fail)."""
+        with patch("core.tools.TOOL_MODULES", {"web_search": "core.tools.web_search"}), \
+             patch("importlib.import_module", return_value=MagicMock(
+                 dispatch=MagicMock(return_value='{"ok": true}'),
+             )):
+            result = handler_with_web_search.handle(
+                "use_tool",
+                {"tool_name": "web_search", "action": "search", "args": {}},
+            )
+        parsed = json.loads(result)
+        assert parsed.get("ok") is True

@@ -187,7 +187,8 @@ def _build_mcp_tools() -> tuple[list[Tool], frozenset[str]]:
     """Convert canonical AnimaWorks schemas to MCP Tool objects.
 
     Reads all relevant schema lists from ``core.tooling.schemas`` and
-    filters to the exposed tools.
+    filters to the exposed tools.  External tools are accessed via the
+    unified ``use_tool`` dispatcher rather than individual schemas.
 
     Returns:
         Tuple of (tool_list, exposed_name_set) where exposed_name_set
@@ -457,12 +458,12 @@ def _get_tool_handler() -> Any:
         personal_tools: dict[str, str] = {}
         try:
             from core.tools import (
+                TOOL_MODULES,
                 discover_common_tools,
                 discover_personal_tools,
             )
 
-            permitted = _load_permitted_categories(anima_dir)
-            tool_registry = sorted(permitted)
+            tool_registry = sorted(TOOL_MODULES.keys())
             common = discover_common_tools()
             personal = discover_personal_tools(anima_dir)
             personal_tools = {**common, **personal}
