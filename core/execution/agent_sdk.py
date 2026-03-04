@@ -431,8 +431,8 @@ class AgentSDKExecutor(BaseExecutor):
                     tracker.update_from_result_message(message.usage)
                 if usage_acc and message.usage:
                     u = message.usage
-                    usage_acc.input_tokens = getattr(u, "input_tokens", 0) or 0
-                    usage_acc.output_tokens = getattr(u, "output_tokens", 0) or 0
+                    usage_acc.input_tokens = u.get("input_tokens", 0) or 0
+                    usage_acc.output_tokens = u.get("output_tokens", 0) or 0
             elif isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -793,8 +793,8 @@ class AgentSDKExecutor(BaseExecutor):
                     # handled per-turn via message_start events above.
                     if message.usage:
                         u = message.usage
-                        usage_acc.input_tokens = getattr(u, "input_tokens", 0) or 0
-                        usage_acc.output_tokens = getattr(u, "output_tokens", 0) or 0
+                        usage_acc.input_tokens = u.get("input_tokens", 0) or 0
+                        usage_acc.output_tokens = u.get("output_tokens", 0) or 0
                     break  # receive_messages() does not auto-stop on ResultMessage
 
                 elif isinstance(message, SystemMessage):
