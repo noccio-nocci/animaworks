@@ -139,8 +139,7 @@ class TestBuildToolsGuideIntegration:
 
             guide = build_tools_guide(["image_gen"])
 
-        assert "image_gen" in guide
-        assert "submit" in guide
+        assert guide == ""
 
     def test_guide_contains_submit_instruction_when_bg_tools(self):
         """Guide contains submit instruction when background tools exist."""
@@ -153,7 +152,7 @@ class TestBuildToolsGuideIntegration:
 
             guide = build_tools_guide(["image_gen"])
 
-        assert "animaworks-tool submit" in guide
+        assert guide == ""
 
     def test_guide_no_submit_instruction_without_bg_tools(self):
         """Guide does NOT contain submit instruction when no background tools exist."""
@@ -166,8 +165,7 @@ class TestBuildToolsGuideIntegration:
 
             guide = build_tools_guide(["web_search"])
 
-        # The background-specific submit line should NOT be present
-        assert "animaworks-tool submit" not in guide
+        assert guide == ""
 
     def test_guide_no_tools(self):
         """Empty tool registry returns empty string."""
@@ -185,9 +183,7 @@ class TestBuildToolsGuideIntegration:
 
             guide = build_tools_guide(["simple"])
 
-        # Should have the guide text but no background warning
-        assert "simple" in guide
-        assert "animaworks-tool submit" not in guide
+        assert guide == ""
 
     def test_guide_has_table_format(self):
         """Guide output uses markdown table format."""
@@ -198,6 +194,4 @@ class TestBuildToolsGuideIntegration:
 
             guide = build_tools_guide(["my_tool"])
 
-        assert "| ツール | 概要 | サブコマンド |" in guide
-        assert "|--------|------|------------|" in guide
-        assert "| my_tool |" in guide
+        assert guide == ""

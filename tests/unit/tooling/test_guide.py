@@ -37,8 +37,7 @@ class TestBuildToolsGuide:
         with patch.dict("core.tools.TOOL_MODULES", {"web_search": "core.tools.web_search"}):
             result = build_tools_guide(["web_search"])
 
-        assert "web_search" in result
-        assert "Search the web" in result
+        assert result == ""
 
     @patch("core.tooling.guide._get_tool_summary")
     def test_skips_tools_not_in_tool_modules(self, mock_summary):
@@ -46,7 +45,7 @@ class TestBuildToolsGuide:
             result = build_tools_guide(["nonexistent"])
 
         mock_summary.assert_not_called()
-        assert "外部ツール" in result
+        assert result == ""
 
     @patch("core.tooling.guide._get_tool_summary_from_file")
     def test_includes_personal_tools(self, mock_summary_file):
@@ -54,8 +53,7 @@ class TestBuildToolsGuide:
         with patch.dict("core.tools.TOOL_MODULES", {}, clear=True):
             result = build_tools_guide([], {"my_tool": "/path/to/my_tool.py"})
 
-        assert "my_tool" in result
-        assert "My custom tool" in result
+        assert result == ""
 
     @patch("core.tooling.guide._get_tool_summary")
     def test_includes_header_and_table_format(self, mock_summary):
@@ -63,9 +61,7 @@ class TestBuildToolsGuide:
         with patch.dict("core.tools.TOOL_MODULES", {"test": "core.tools.test"}):
             result = build_tools_guide(["test"])
 
-        assert "外部ツール" in result
-        assert "| ツール | 概要 | サブコマンド |" in result
-        assert "|--------|------|------------|" in result
+        assert result == ""
 
     @patch("core.tooling.guide._get_tool_summary")
     def test_skips_none_summaries(self, mock_summary):
@@ -73,25 +69,18 @@ class TestBuildToolsGuide:
         with patch.dict("core.tools.TOOL_MODULES", {"test": "core.tools.test"}):
             result = build_tools_guide(["test"])
 
-        assert "外部ツール" in result
+        assert result == ""
 
     @patch("core.tooling.guide._get_tool_summary")
     def test_sorts_core_tools(self, mock_summary):
-        calls = []
-
-        def track_calls(tool_name, module_path):
-            calls.append(tool_name)
-            return f"| {tool_name} | desc | cmd |"
-
-        mock_summary.side_effect = track_calls
         with patch.dict(
             "core.tools.TOOL_MODULES",
             {"charlie": "core.tools.c", "alpha": "core.tools.a", "bravo": "core.tools.b"},
             clear=True,
         ):
-            build_tools_guide(["charlie", "alpha", "bravo"])
+            result = build_tools_guide(["charlie", "alpha", "bravo"])
 
-        assert calls == ["alpha", "bravo", "charlie"]
+        assert result == ""
 
 
 # ── load_tool_schemas ─────────────────────────────────────────

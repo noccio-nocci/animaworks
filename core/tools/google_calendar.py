@@ -60,7 +60,7 @@ class GoogleCalendarClient:
         self.client_secret = client_secret or os.environ.get("GOOGLE_CALENDAR_CLIENT_SECRET")
         self._service = None
 
-    def _get_credentials(self):
+    def _get_credentials(self) -> Any:
         """Obtain valid credentials via OAuth2."""
         try:
             from google.oauth2.credentials import Credentials
@@ -111,7 +111,7 @@ class GoogleCalendarClient:
 
         return creds
 
-    def _build_service(self):
+    def _build_service(self) -> Any:
         """Build the Calendar API service."""
         if self._service is None:
             from googleapiclient.discovery import build as build_api

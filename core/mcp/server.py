@@ -369,12 +369,12 @@ def _get_tool_handler() -> Any:
         personal_tools: dict[str, str] = {}
         try:
             from core.tools import (
-                TOOL_MODULES,
                 discover_common_tools,
                 discover_personal_tools,
             )
 
-            tool_registry = sorted(TOOL_MODULES.keys())
+            permitted = _load_permitted_categories(anima_dir)
+            tool_registry = sorted(permitted)
             common = discover_common_tools()
             personal = discover_personal_tools(anima_dir)
             personal_tools = {**common, **personal}

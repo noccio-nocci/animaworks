@@ -854,7 +854,15 @@ def build_system_prompt(
             if _non_s:
                 parts.append(_non_s)
 
-    # External tools guide removed: use_tool + skill-based documentation replaces it
+    # External tools hint (use_tool + skill-based documentation)
+    if not is_heartbeat and (tool_registry or personal_tools):
+        _ext_cats = sorted(set((tool_registry or []) + list((personal_tools or {}).keys())))
+        if _ext_cats:
+            parts.append(
+                f"## External Tools\n"
+                f"Available via `use_tool`: {', '.join(_ext_cats)}\n"
+                f"Use the `skill` tool to look up usage details for each tool before calling."
+            )
 
     # ── Group 5: 組織とコミュニケーション ─────────────────────
     parts.append(_ss.get("group5_header", "# 5. Organization and Communication"))

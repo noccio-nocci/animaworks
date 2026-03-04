@@ -569,10 +569,10 @@ class TestLoadPermittedCategories:
 class TestExternalToolsInMcpTools:
     """Tests for external tool schema loading in _build_mcp_tools()."""
 
-    def test_external_tools_loaded_when_permitted(
+    def test_use_tool_exposed_for_external_tools(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """External tool schemas appear in MCP tools when permissions allow."""
+        """MCP server exposes use_tool instead of per-category external schemas."""
         from core.mcp.server import _build_mcp_tools
 
         anima_dir = tmp_path / "test-anima"
@@ -581,23 +581,11 @@ class TestExternalToolsInMcpTools:
         perms.write_text("## 外部ツール\n- chatwork: 全権限\n", encoding="utf-8")
         monkeypatch.setenv("ANIMAWORKS_ANIMA_DIR", str(anima_dir))
 
-        fake_schemas = [
-            {
-                "name": "chatwork_send",
-                "description": "Send chatwork message",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        ]
-
-        with patch(
-            "core.tooling.schemas.load_external_schemas_by_category",
-            return_value=fake_schemas,
-        ):
-            tools, exposed = _build_mcp_tools()
+        tools, exposed = _build_mcp_tools()
 
         tool_names = {t.name for t in tools}
-        assert "chatwork_send" in tool_names
-        assert "chatwork_send" in exposed
+        assert "use_tool" in tool_names
+        assert "use_tool" in exposed
 
     def test_unpermitted_tools_excluded(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

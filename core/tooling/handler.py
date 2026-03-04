@@ -476,8 +476,8 @@ class ToolHandler(
         """Dispatch to an external tool module via unified use_tool interface.
 
         Resolves ``tool_name + "_" + action`` as the schema name and
-        delegates to the tool module's ``dispatch()`` function directly,
-        bypassing schema-based matching.
+        delegates to the tool module's ``dispatch()`` function directly.
+        Supports core tools (TOOL_MODULES), common tools, and personal tools.
         """
         import importlib
         from core.tools import TOOL_MODULES
@@ -487,24 +487,49 @@ class ToolHandler(
         tool_args = args.get("args") or {}
 
         if not tool_name or not action:
-            return _error_result("use_tool requires both 'tool_name' and 'action'")
-
-        if tool_name not in (self._external.registry or []):
             return _error_result(
-                f"Tool '{tool_name}' is not permitted. "
-                f"Check permissions.md for allowed external tools."
+                "InvalidArguments",
+                "use_tool requires both 'tool_name' and 'action'",
             )
 
-        if tool_name not in TOOL_MODULES:
-            return _error_result(f"Unknown tool module: {tool_name}")
+        personal_tools = self._external._personal_tools or {}
+        is_core = tool_name in (self._external.registry or [])
+        is_personal = tool_name in personal_tools
+
+        if not is_core and not is_personal:
+            return _error_result(
+                "PermissionDenied",
+                f"Tool '{tool_name}' is not permitted. "
+                f"Check permissions.md for allowed external tools.",
+            )
 
         schema_name = f"{tool_name}_{action}"
         dispatch_args = {**tool_args, "anima_dir": str(self._anima_dir)}
 
         try:
-            mod = importlib.import_module(TOOL_MODULES[tool_name])
+            if is_personal and tool_name not in TOOL_MODULES:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    f"animaworks_tool_{tool_name}", personal_tools[tool_name],
+                )
+                if spec is None or spec.loader is None:
+                    return _error_result(
+                        "LoadError", f"Cannot load personal tool: {tool_name}",
+                    )
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            else:
+                if tool_name not in TOOL_MODULES:
+                    return _error_result(
+                        "InvalidArguments", f"Unknown tool module: {tool_name}",
+                    )
+                mod = importlib.import_module(TOOL_MODULES[tool_name])
+
             result = ExternalToolDispatcher._call_module(mod, schema_name, dispatch_args)
             return result
         except Exception as e:
             logger.warning("use_tool dispatch failed: %s %s – %s", tool_name, action, e)
-            return _error_result(f"use_tool execution failed: {tool_name}/{action}: {e}")
+            return _error_result(
+                "ToolExecutionError",
+                f"use_tool execution failed: {tool_name}/{action}: {e}",
+            )

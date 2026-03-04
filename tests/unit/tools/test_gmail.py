@@ -287,16 +287,9 @@ class TestGmailClient:
 
 
 class TestGetToolSchemas:
-    def test_returns_schemas(self):
+    def test_returns_empty_list(self):
+        """External tool modules' get_tool_schemas() returns empty list."""
         gmail = _get_gmail()
         schemas = gmail.get_tool_schemas()
         assert isinstance(schemas, list)
-        assert len(schemas) == 3
-        names = {s["name"] for s in schemas}
-        assert names == {"gmail_unread", "gmail_read_body", "gmail_draft"}
-
-    def test_gmail_draft_requires_to_subject_body(self):
-        gmail = _get_gmail()
-        schemas = gmail.get_tool_schemas()
-        draft = [s for s in schemas if s["name"] == "gmail_draft"][0]
-        assert set(draft["input_schema"]["required"]) == {"to", "subject", "body"}
+        assert schemas == []
