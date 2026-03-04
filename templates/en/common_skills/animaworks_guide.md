@@ -7,10 +7,12 @@ description: >-
   model information (models list/info/show), heartbeat/cron, logs/cost,
   task management (task add/update/list), config management (config get/set/list),
   RAG index management (index), asset operations (optimize-assets/remake-assets),
-  and animaworks-tool external tool execution.
+  animaworks-tool external tool execution,
+  and background task monitoring (check_background_task/list_background_tasks).
   "command", "usage", "CLI", "animaworks", "start", "stop", "restart", "send",
   "create Anima", "change role", "change model", "status", "info",
-  "model list", "model info", "logs", "cost", "task", "config"
+  "model list", "model info", "logs", "cost", "task", "config",
+  "background task", "task status"
 ---
 
 # AnimaWorks CLI Complete Reference
@@ -285,6 +287,14 @@ animaworks-tool submit image_gen pipeline "1girl, ..." --anima-dir $ANIMAWORKS_A
 ```
 
 For submit details → `common_knowledge/operations/background-tasks.md`
+
+### Background Task Monitoring (Anima Internal Tools)
+
+To check progress of tasks submitted via `submit`, use these internal tools:
+- `list_background_tasks` — List running and completed tasks
+- `check_background_task(task_id)` — Get status and result for a specific task
+
+These are not CLI commands but MCP tools used by Anima during conversation.
 
 ---
 

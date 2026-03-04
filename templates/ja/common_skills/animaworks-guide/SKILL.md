@@ -7,10 +7,12 @@ description: >-
   モデル情報(models list/info/show)、ハートビート・cron、ログ・コスト(logs/cost)、
   タスク管理(task add/update/list)、設定管理(config get/set/list)、
   RAGインデックス管理(index)、アセット操作(optimize-assets/remake-assets)、
-  animaworks-toolの外部ツール実行を網羅。
+  animaworks-toolの外部ツール実行、
+  バックグラウンドタスク確認(check_background_task/list_background_tasks)を網羅。
   「コマンド」「使い方」「CLI」「animaworks」「起動」「停止」「再起動」「送信方法」
   「Anima作成」「ロール変更」「モデル変更」「ステータス確認」「インデックス」
   「モデル一覧」「モデル情報」「ログ」「コスト」「タスク」「設定」
+  「バックグラウンドタスク確認」「タスク状態」
 ---
 
 # AnimaWorks CLI 完全リファレンス
@@ -285,6 +287,14 @@ animaworks-tool submit image_gen pipeline "1girl, ..." --anima-dir $ANIMAWORKS_A
 ```
 
 submit の詳細 → `common_knowledge/operations/background-tasks.md`
+
+### バックグラウンドタスクの確認（Anima内部ツール）
+
+submit で投入したタスクの進捗確認には、以下の内部ツールを使用する:
+- `list_background_tasks` — 実行中・完了済みタスクの一覧
+- `check_background_task(task_id)` — 特定タスクのステータス・結果取得
+
+これらはCLIコマンドではなく、Animaが会話中に使用するMCPツール。
 
 ---
 
