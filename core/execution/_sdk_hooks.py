@@ -135,6 +135,7 @@ def _intercept_task_to_pending(
         "file_paths": [],
         "submitted_by": "self_task_intercept",
         "submitted_at": datetime.now(_tz.utc).isoformat(),
+        "reply_to": anima_dir.name,
     }
 
     pending_dir = anima_dir / "state" / "pending"
@@ -476,8 +477,8 @@ def _build_pre_tool_hook(
             except Exception:
                 logger.debug("Failed to persist min_trust_seen", exc_info=True)
 
-        # Task tool intercept
-        if tool_name == "Task":
+        # Task / Agent tool intercept (SDK uses "Agent" as the subagent tool name)
+        if tool_name in ("Agent", "Task"):
             if has_subordinates:
                 # Supervisor path: delegate to subordinate, fallback to pending
                 try:
@@ -526,12 +527,30 @@ def _build_pre_tool_hook(
                     )
                 )
             else:
-                # Non-supervisor: let SDK run the Task tool natively (subagent)
-                _log_tool_use(
-                    anima_dir, "Task", tool_input, tool_use_id=tool_use_id,
-                    blocked=False,
+                # Non-supervisor: intercept → state/pending/ for background execution
+                task_id = _intercept_task_to_pending(
+                    anima_dir, tool_input, tool_use_id,
                 )
-                return SyncHookJSONOutput()
+                intercepted_task_ids.add(task_id)
+                if on_task_intercepted is not None:
+                    try:
+                        on_task_intercepted()
+                    except Exception:
+                        logger.debug("on_task_intercepted callback failed", exc_info=True)
+                return SyncHookJSONOutput(
+                    hookSpecificOutput=PreToolUseHookSpecificOutput(
+                        hookEventName="PreToolUse",
+                        permissionDecision="deny",
+                        permissionDecisionReason=(
+                            f"INTERCEPT_OK: Task accepted (task_id: {task_id}). "
+                            f"Written to state/pending/ for background execution. "
+                            f"The executor has your identity, injection, behavior rules, "
+                            f"memory guide, and org context. "
+                            f"Do NOT call Task or TaskOutput for this task_id again. "
+                            f"Proceed with your current conversation."
+                        ),
+                    )
+                )
 
         # plan_tasks intercept → DAG batch to pending
         if tool_name in ("plan_tasks", "mcp__aw__plan_tasks"):
@@ -563,8 +582,8 @@ def _build_pre_tool_hook(
                 )
             )
 
-        # TaskOutput for intercepted Task is not backed by SDK task IDs.
-        if tool_name == "TaskOutput":
+        # TaskOutput/AgentOutput for intercepted tasks — not backed by SDK task IDs.
+        if tool_name in ("TaskOutput", "AgentOutput"):
             task_id = str(tool_input.get("task_id", "")).strip()
             if task_id and task_id in intercepted_task_ids:
                 _log_tool_use(
