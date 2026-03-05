@@ -21,7 +21,7 @@ def _extract_summary(chunk: dict[str, Any]) -> str:
     """Replicate the summary extraction logic from _agent_cycle.py tool_end handler."""
     record = chunk.get("record")
     return (
-        (record.result_summary if record else "")
+        (getattr(record, "result_summary", "") if record else "")
         or chunk.get("tool_name", "unknown")
     )
 
@@ -102,6 +102,20 @@ class TestToolEndSummaryWithoutRecord:
         }
         assert _extract_summary(chunk) == "Bash"
 
+    def test_record_without_result_summary_attr(self) -> None:
+        """If record is not a ToolCallRecord, getattr gracefully falls back."""
+
+        class FakeRecord:
+            pass
+
+        chunk: dict[str, Any] = {
+            "type": "tool_end",
+            "tool_name": "Write",
+            "tool_id": "call_ghi",
+            "record": FakeRecord(),
+        }
+        assert _extract_summary(chunk) == "Write"
+
 
 # ── completed_tools list construction ─────────────────────────────
 
@@ -112,7 +126,7 @@ class TestCompletedToolsConstruction:
     def _build_completed_tool(self, chunk: dict[str, Any]) -> dict[str, str]:
         record = chunk.get("record")
         summary = (
-            (record.result_summary if record else "")
+            (getattr(record, "result_summary", "") if record else "")
             or chunk.get("tool_name", "unknown")
         )
         return {

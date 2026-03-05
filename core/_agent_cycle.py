@@ -682,7 +682,7 @@ class CycleMixin:
                     elif chunk["type"] == "tool_end" and checkpoint_enabled:
                         record = chunk.get("record")
                         summary = (
-                            (record.result_summary if record else "")
+                            (getattr(record, "result_summary", "") if record else "")
                             or chunk.get("tool_name", "unknown")
                         )
                         completed_tools.append({
