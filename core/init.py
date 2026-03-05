@@ -84,6 +84,7 @@ def _ensure_tool_prompt_db(data_dir: Path) -> None:
     _migrate_memory_prompts_v1(tool_store, prompts_dir)
     _migrate_praise_loop_prevention_v1(tool_store, prompts_dir)
     _migrate_behavior_rules_must_v1(tool_store, prompts_dir)
+    _migrate_resync_sections_v1(tool_store, prompts_dir)
 
     logger.info("Tool prompt DB initialised: %s", tool_db_path)
 
@@ -252,6 +253,74 @@ def _migrate_behavior_rules_must_v1(
         )
         conn.commit()
         logger.info("Applied migration: behavior_rules_must_v1")
+    finally:
+        conn.close()
+
+
+def _migrate_resync_sections_v1(
+    tool_store: ToolPromptStore,
+    prompts_dir: Path,
+) -> None:
+    """One-shot migration: resync all system_sections from runtime prompts.
+
+    Fixes drift between SQLite DB and runtime prompt files that accumulated
+    because ``seed_defaults()`` uses INSERT OR IGNORE (preserving user edits)
+    while runtime prompts evolved through template updates.
+
+    Idempotent — records migration key ``resync_sections_v1``.
+    """
+    from core.tooling.prompt_db import SECTION_CONDITIONS
+
+    conn = tool_store._connect()
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS migrations "
+            "(key TEXT PRIMARY KEY, applied_at TEXT)"
+        )
+        row = conn.execute(
+            "SELECT 1 FROM migrations WHERE key = ?",
+            ("resync_sections_v1",),
+        ).fetchone()
+        if row:
+            return  # already applied
+
+        _SECTION_FILES: dict[str, str] = {
+            "behavior_rules": "behavior_rules.md",
+            "environment": "environment.md",
+            "messaging_s": "messaging_s.md",
+            "messaging": "messaging.md",
+            "communication_rules_s": "communication_rules_s.md",
+            "communication_rules": "communication_rules.md",
+            "a_reflection": "a_reflection.md",
+            "hiring_context": "hiring_context.md",
+        }
+
+        updated = []
+        for key, filename in _SECTION_FILES.items():
+            filepath = prompts_dir / filename
+            if not filepath.exists():
+                continue
+            try:
+                content = filepath.read_text(encoding="utf-8").strip()
+                if content:
+                    condition = SECTION_CONDITIONS.get(key)
+                    tool_store.set_section(key, content, condition)
+                    updated.append(key)
+            except Exception:
+                logger.warning("Failed to read section: %s", filepath)
+
+        from core.time_utils import now_jst
+
+        conn.execute(
+            "INSERT INTO migrations (key, applied_at) VALUES (?, ?)",
+            ("resync_sections_v1", now_jst().isoformat()),
+        )
+        conn.commit()
+        logger.info(
+            "Applied migration: resync_sections_v1 (%d sections updated: %s)",
+            len(updated),
+            ", ".join(updated),
+        )
     finally:
         conn.close()
 
