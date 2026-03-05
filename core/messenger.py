@@ -446,7 +446,11 @@ class Messenger:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 msg = Message(**data)
-                if known_animas is not None and msg.from_person not in known_animas:
+                if (
+                    known_animas is not None
+                    and msg.source == "anima"
+                    and msg.from_person not in known_animas
+                ):
                     logger.warning(
                         "Ignoring inbox message with unknown from_person=%r in %s",
                         msg.from_person, f,
@@ -478,7 +482,11 @@ class Messenger:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 msg = Message(**data)
-                if known_animas is not None and msg.from_person not in known_animas:
+                if (
+                    known_animas is not None
+                    and msg.source == "anima"
+                    and msg.from_person not in known_animas
+                ):
                     logger.warning(
                         "Ignoring inbox message with unknown from_person=%r in %s",
                         msg.from_person, f,

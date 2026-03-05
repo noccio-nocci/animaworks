@@ -518,7 +518,10 @@ class LifecycleManager:
         # ── Intent-based trigger filtering ──
         # Only trigger immediate heartbeat for actionable messages or human messages.
         # Non-actionable messages (ack, thanks, FYI) wait for the scheduled heartbeat.
-        has_human = any(m.source == "human" for m in inbox_messages)
+        # External platform replies (slack, chatwork) to call_human are treated as
+        # human messages since the originator is a human responding via that platform.
+        _human_sources = {"human", "slack", "chatwork"}
+        has_human = any(m.source in _human_sources for m in inbox_messages)
         has_actionable = any(
             m.intent in self._actionable_intents for m in inbox_messages
         )
