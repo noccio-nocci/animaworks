@@ -63,7 +63,9 @@ def _require_requests():
 
             requests = _req
         except ImportError:
-            raise ImportError("chatwork tool requires 'requests'. Install with: pip install animaworks[communication]") from None
+            raise ImportError(
+                "chatwork tool requires 'requests'. Install with: pip install animaworks[communication]"
+            ) from None
     return requests
 
 

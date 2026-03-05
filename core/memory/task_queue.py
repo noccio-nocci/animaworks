@@ -72,7 +72,9 @@ def _parse_deadline(value: str) -> str:
         datetime.fromisoformat(value)
         return value
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid deadline format: {value!r}. Use relative format ('30m', '2h', '1d') or ISO8601.") from None
+        raise ValueError(
+            f"Invalid deadline format: {value!r}. Use relative format ('30m', '2h', '1d') or ISO8601."
+        ) from None
 
 
 def _elapsed_seconds(updated_at: str, now: datetime) -> float | None:

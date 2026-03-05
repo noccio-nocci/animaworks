@@ -53,7 +53,9 @@ def _require_slack_sdk():
             WebClient = _WC
             SlackApiError = _SAE
         except ImportError:
-            raise ImportError("slack tool requires 'slack-sdk'. Install with: pip install animaworks[communication]") from None
+            raise ImportError(
+                "slack tool requires 'slack-sdk'. Install with: pip install animaworks[communication]"
+            ) from None
     return WebClient
 
 
