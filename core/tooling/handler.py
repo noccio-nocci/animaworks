@@ -25,7 +25,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from core.background import BackgroundTaskManager
 from core.memory import MemoryManager
@@ -77,6 +77,13 @@ from core.i18n import t
 logger = logging.getLogger("animaworks.tool_handler")
 
 
+@runtime_checkable
+class ProcessSupervisorLike(Protocol):
+    """Minimal interface of ``ProcessSupervisor`` used by ``ToolHandler``."""
+
+    def get_process_status(self, anima_name: str) -> dict[str, Any]: ...
+
+
 class ToolHandler(
     MemoryToolsMixin,
     CommsToolsMixin,
@@ -99,11 +106,11 @@ class ToolHandler(
         tool_registry: list[str] | None = None,
         personal_tools: dict[str, str] | None = None,
         on_message_sent: OnMessageSentFn | None = None,
-        on_schedule_changed: Callable[[str], Any] | None = None,
+        on_schedule_changed: Callable[[str], None] | None = None,
         human_notifier: HumanNotifier | None = None,
         background_manager: BackgroundTaskManager | None = None,
         context_window: int = 32_000,
-        process_supervisor: Any | None = None,
+        process_supervisor: ProcessSupervisorLike | None = None,
         superuser: bool = False,
     ) -> None:
         self._anima_dir = anima_dir
