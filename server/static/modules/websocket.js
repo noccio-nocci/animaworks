@@ -256,7 +256,7 @@ function handleWsMessage(raw) {
       } else if (animaName && evtType === "tool_detail") {
         addActivity("tool", animaName, `${toolName}: ${data.detail || ""}`);
       } else if (animaName && (evtType === "tool_end" || evtType === "tool_use")) {
-        const suffix = data.is_error ? ` (${t("common.error") || "error"})` : "";
+        const suffix = data.is_error ? ` (${t("common.error")})` : "";
         addActivity("tool", animaName, `${t("chat.tool_done", { tool: toolName })}${suffix}`);
       } else if (animaName && evtType) {
         addActivity("tool", animaName, `${data.summary || evtType}`);
