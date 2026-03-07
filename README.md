@@ -330,8 +330,8 @@ When you give autonomous agents real tools, you have to take security seriously.
 | **5-layer command security** | Shell injection detection → hardcoded blocklist → per-agent denied commands → per-agent allowlist → path traversal check |
 | **File sandboxing** | Each agent is confined to its own directory. Critical files (`permissions.md`, `identity.md`) are immutable to the agent |
 | **Process isolation** | One OS process per agent, communicating via Unix Domain Sockets — not TCP |
-| **3-layer rate limiting** | Per-session dedup → 30/hour + 100/day persistent limits → self-awareness via prompt injection of recent sends |
-| **Cascade prevention** | Max 6 turns between any agent pair within 10 minutes. Inbox cooldowns and deferred processing |
+| **3-layer rate limiting** | Per-session dedup → role-based outbound budgets (manager 60/hr · 300/day down to general 15/hr · 50/day, per-agent override via status.json) → self-awareness via prompt injection of recent sends |
+| **Cascade prevention** | Two-layer control: depth limiter (max 6 turns per pair in 10 min) + cascade detection (max 3 round-trips per pair in 30 min). 5-minute cooldown with deferred processing |
 | **Auth & sessions** | Argon2id hashing, 48-byte random tokens, max 10 sessions, 0600 file permissions |
 | **Webhook verification** | HMAC-SHA256 for Slack (with replay protection) and Chatwork signature verification |
 | **SSRF mitigation** | Media proxy blocks private IPs, enforces HTTPS, validates content types, checks DNS resolution |
@@ -465,14 +465,16 @@ animaworks/
 
 ## Documentation
 
+**[Full documentation index](docs/README.md)** — reading guides, architecture deep dives, research papers, and design specs.
+
 | Document | Description |
 |----------|-------------|
-| [Design Philosophy](docs/vision.md) | Core design principles and vision |
-| [Security Architecture](docs/security.md) | Defense-in-depth security model |
-| [Memory System](docs/memory.md) | Memory architecture specification |
-| [Brain Mapping](docs/brain-mapping.md) | Architecture mapped to neuroscience |
-| [Feature Index](docs/features.md) | Comprehensive feature list |
-| [Technical Spec](docs/spec.md) | Technical specification |
+| [Vision](docs/vision.md) | Core philosophy: imperfect individuals collaborating beats a single omniscient model |
+| [Features](docs/features.md) | Everything AnimaWorks can do |
+| [Memory System](docs/memory.md) | Episodic, semantic, and procedural memory; priming; active forgetting |
+| [Security](docs/security.md) | Defense-in-depth model, provenance tracking, adversarial threat analysis |
+| [Brain Mapping](docs/brain-mapping.md) | Every module mapped to a region of the human brain |
+| [Technical Spec](docs/spec.md) | Execution modes, prompt construction, configuration resolution |
 
 ## License
 

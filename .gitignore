@@ -54,7 +54,8 @@ docs/*
 !docs/paper/
 docs/paper/evaluation_results.md
 !docs/release/
-!docs/index.md
+!docs/README.md
+!docs/README.ja.md
 !docs/api-reference.md
 !docs/api-reference.ja.md
 !docs/brain-mapping.md
