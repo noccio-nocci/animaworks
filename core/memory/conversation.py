@@ -25,7 +25,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from core.i18n import t
 from core.memory._io import atomic_write_text
@@ -778,27 +778,18 @@ class ConversationMemory:
         return "\n\n".join(lines)
 
     async def _call_llm(self, system: str, user_content: str, max_tokens: int = 1000) -> str:
-        """Common LLM helper using litellm for provider-agnostic calls."""
-        import litellm
+        """Common LLM helper with automatic backend selection.
 
-        from core.memory._llm_utils import get_consolidation_llm_kwargs
+        Raises RuntimeError when all LLM backends fail so callers
+        (e.g. ``_compress``) can keep raw turns instead of saving an
+        empty summary.
+        """
+        from core.memory._llm_utils import one_shot_completion
 
-        llm_kw = get_consolidation_llm_kwargs()
-        model = llm_kw.pop("model")
-        kwargs: dict[str, Any] = llm_kw
-        response = cast(
-            Any,
-            await litellm.acompletion(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_content},
-                ],
-                max_tokens=max_tokens,
-                **kwargs,
-            ),
-        )
-        return response.choices[0].message.content or ""
+        result = await one_shot_completion(user_content, system_prompt=system, max_tokens=max_tokens)
+        if result is None:
+            raise RuntimeError("All LLM backends failed for conversation LLM call")
+        return result
 
     def _apply_provider_kwargs(self, model: str, kwargs: dict[str, Any]) -> None:
         """Populate *kwargs* with provider-specific credentials."""
