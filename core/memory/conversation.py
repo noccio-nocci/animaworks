@@ -778,10 +778,18 @@ class ConversationMemory:
         return "\n\n".join(lines)
 
     async def _call_llm(self, system: str, user_content: str, max_tokens: int = 1000) -> str:
-        """Common LLM helper with automatic backend selection."""
+        """Common LLM helper with automatic backend selection.
+
+        Raises RuntimeError when all LLM backends fail so callers
+        (e.g. ``_compress``) can keep raw turns instead of saving an
+        empty summary.
+        """
         from core.memory._llm_utils import one_shot_completion
 
-        return await one_shot_completion(user_content, system_prompt=system, max_tokens=max_tokens) or ""
+        result = await one_shot_completion(user_content, system_prompt=system, max_tokens=max_tokens)
+        if result is None:
+            raise RuntimeError("All LLM backends failed for conversation LLM call")
+        return result
 
     def _apply_provider_kwargs(self, model: str, kwargs: dict[str, Any]) -> None:
         """Populate *kwargs* with provider-specific credentials."""
