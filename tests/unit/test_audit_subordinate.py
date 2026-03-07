@@ -409,3 +409,31 @@ class TestAuditSubordinateParams:
             result = handler.handle("audit_subordinate", {"name": "hinata", "hours": 0})
 
         assert "1h" in result
+
+    def test_legacy_days_param_compat(self, tmp_path):
+        """Legacy 'days' param is converted to hours (days * 24)."""
+        handler = _make_handler(tmp_path, "sakura")
+        _setup_subordinate(tmp_path, "hinata", supervisor="sakura")
+
+        p1, p2, p3 = _patches(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+        })
+        with p1, p2, p3:
+            result = handler.handle("audit_subordinate", {"name": "hinata", "days": 3})
+
+        assert "72h" in result
+
+    def test_hours_overrides_days(self, tmp_path):
+        """When both hours and days are given, hours takes precedence."""
+        handler = _make_handler(tmp_path, "sakura")
+        _setup_subordinate(tmp_path, "hinata", supervisor="sakura")
+
+        p1, p2, p3 = _patches(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+        })
+        with p1, p2, p3:
+            result = handler.handle("audit_subordinate", {"name": "hinata", "hours": 12, "days": 3})
+
+        assert "12h" in result

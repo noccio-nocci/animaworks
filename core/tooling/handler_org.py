@@ -841,7 +841,11 @@ class OrgToolsMixin:
         from core.config.models import load_config
 
         config = load_config()
-        return [name for name, cfg in config.animas.items() if cfg.supervisor == self._anima_name]
+        return [
+            name
+            for name, cfg in config.animas.items()
+            if cfg.supervisor == self._anima_name
+        ]
 
     def _handle_audit_subordinate(self, args: dict[str, Any]) -> str:
         """Audit subordinate behavior from activity logs."""
@@ -850,7 +854,13 @@ class OrgToolsMixin:
 
         target_name = args.get("name")
         mode = args.get("mode", "summary")
-        hours = min(max(args.get("hours", 24), 1), 168)
+        # Backward compat: accept legacy "days" param, convert to hours
+        raw_hours = args.get("hours")
+        if raw_hours is None and "days" in args:
+            raw_hours = args["days"] * 24
+        if raw_hours is None:
+            raw_hours = 24
+        hours = min(max(raw_hours, 1), 168)
         direct_only = args.get("direct_only", False)
 
         if target_name:
