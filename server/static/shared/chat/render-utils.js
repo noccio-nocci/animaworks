@@ -80,11 +80,11 @@ export class TextAnimator {
       const charsToAdd = Math.max(1, Math.floor(elapsed / Math.max(interval, 1)));
       const prev = this._displayLen;
       this._displayLen = Math.min(this._displayLen + charsToAdd, this._buffer.length);
-      this._lastStepTime = now;
       if (this._displayLen !== prev && this._onUpdate) {
         this._onUpdate(this.displayText, this._buffer);
       }
     }
+    this._lastStepTime = now;
     if (this._running || this._displayLen < this._buffer.length) {
       this._scheduleTick();
     }
