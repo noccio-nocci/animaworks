@@ -145,9 +145,9 @@ B-mode でも add_task, update_task, list_tasks, plan_tasks は利用可能。
 | `ping_subordinate` | 配下の生存確認 | ○ |
 | `read_subordinate_state` | 配下の現在タスク読み取り | ○ |
 | `task_tracker` | 委譲タスクの進捗追跡 | ○ |
-| `audit_subordinate` | 配下の直近活動を包括監査 | ○ |
+| `audit_subordinate` | 配下の活動タイムラインまたは統計サマリーを生成。`name` 省略で全配下一括監査 | ○ |
 
-全スーパーバイザーツールが S-mode MCP 経由でも利用可能。CLI からも `animaworks anima audit {名前}` で監査を実行できる。
+全スーパーバイザーツールが S-mode MCP 経由でも利用可能。CLI からも `animaworks anima audit {名前} [--all] [--days N] [--mode report|summary]` で監査を実行できる。
 
 ### 管理ツール（条件付き）
 

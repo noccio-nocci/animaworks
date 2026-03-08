@@ -68,7 +68,7 @@ alice宛: キャッシュ戦略について判断をお願いしたいです。
 | `read_subordinate_state` | 全配下（再帰） | 配下の `state/current_task.md` と `state/pending.md` を読み取り | `name`（必須） |
 | `delegate_task` | 直属部下のみ | タスク委譲（部下キュー追加 + DM送信 + 自分側追跡エントリ作成） | `name`, `instruction`, `deadline`（必須）, `summary`（任意） |
 | `task_tracker` | 自分の委譲タスク | `delegate_task` で委譲したタスクの進捗を部下側キューから追跡 | `status`（任意: "all"/"active"/"completed", デフォルト "active"） |
-| `audit_subordinate` | 全配下（再帰） | 活動サマリー・エラー頻度・ツール使用統計・コミュニケーションパターンを含む包括的な監査レポートを生成 | `name`（必須）, `days`（任意: 1〜30、デフォルト 1） |
+| `audit_subordinate` | 全配下（再帰） | 活動タイムラインまたは統計サマリーを生成。`name` 省略で全配下を一括監査（統合タイムライン） | `name`（任意）, `mode`（任意: `"report"`/`"summary"`, デフォルト `"report"`）, `hours`（任意: 1〜168, デフォルト 24）, `direct_only`（任意: boolean） |
 | `disable_subordinate` | 直属部下 | 部下を休止（status.json enabled=false、約30秒でプロセス停止） | `name`（必須）, `reason`（任意） |
 | `enable_subordinate` | 直属部下 | 休止した部下を再開 | `name`（必須） |
 | `set_subordinate_model` | 直属部下 | 部下のモデルを変更（status.json 更新。反映には `restart_subordinate` が必要） | `name`, `model`（必須）, `reason`（任意） |
@@ -93,8 +93,20 @@ alice宛: キャッシュ戦略について判断をお願いしたいです。
 org_dashboard()                        # 配下全体の状態をツリー表示
 read_subordinate_state(name="dave")    # dave の現在タスクと保留タスクを確認
 ping_subordinate()                     # 全員の生存確認
-audit_subordinate(name="dave", days=7)  # dave の直近7日間の活動・エラー・ツール使用・通信パターンを監査
+audit_subordinate(name="dave")         # dave の直近24時間の活動タイムライン
+audit_subordinate(name="dave", mode="summary", hours=168)  # dave の直近7日間の統計サマリー
+audit_subordinate()                    # 全配下の統合タイムライン（直近24時間）
+audit_subordinate(direct_only=true)    # 直属部下のみの統合タイムライン
 ```
+
+#### audit_subordinate のモード
+
+| モード | 出力内容 | 用途 |
+|--------|---------|------|
+| `report`（デフォルト） | 時系列タイムライン。イベントごとにアイコン・時刻・内容を表示。ツール使用はボトムに集約サマリー | 「今日何をしていたか」の把握 |
+| `summary` | イベント数・タスク状況・通信相手・エラー詳細の統計表示 | 定量的な活動評価 |
+
+`name` を省略して複数Animaが対象になる場合、`report` モードでは全Animaのイベントを時系列にマージした **統合タイムライン** が生成される。
 
 ### 組織の拡張（新規 Anima 作成）
 

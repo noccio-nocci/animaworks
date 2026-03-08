@@ -192,6 +192,49 @@ Example: base 30min, Activity Level 200% → effective 15min
 - Below 100%: max_turns also scales down proportionally (floor of 3 turns)
 - At/above 100%: max_turns stays unchanged (only interval shortens)
 
+### Activity Schedule (Time-Based Auto-Switching / Night Mode)
+
+A mechanism that automatically switches Activity Level based on time of day.
+Use this when you want to reduce costs during nighttime or weekends, or keep Animas active only during business hours.
+
+#### How It Works
+
+- Configure time-based entries in the `activity_schedule` field of `config.json`
+- Every minute, the current time is checked against schedule entries
+- When a matching entry's level differs from the current Activity Level, it switches automatically
+- All Anima heartbeats are immediately rescheduled when Activity Level changes
+
+#### Configuration Format
+
+Each entry has three fields: `start` (start time), `end` (end time), `level` (Activity Level %):
+
+```json
+{
+  "activity_schedule": [
+    {"start": "09:00", "end": "22:00", "level": 100},
+    {"start": "22:00", "end": "06:00", "level": 30}
+  ]
+}
+```
+
+- Times are in `HH:MM` format (24-hour clock)
+- **Midnight wrap supported**: specifying `"22:00"` to `"06:00"` (start > end) covers the late-night period
+- `level` ranges from 10 to 400
+- Maximum 24 entries
+- Empty array `[]` disables scheduled mode (reverts to fixed Activity Level)
+
+#### How to Configure
+
+- **Settings UI**: Night mode checkbox + time range and level settings
+- **API**: Send the above JSON via `PUT /api/settings/activity-schedule`
+- **Direct config edit**: Edit `activity_schedule` in `config.json`, then restart the server
+
+#### Important Notes
+
+- Manually changing Activity Level also updates the matching schedule entry for the current time period
+- The schedule is applied immediately on server startup (sets the level matching the current time)
+- If no schedule entry matches the current time, the last-set Activity Level is maintained
+
 ## What is Cron
 
 Cron is "tasks that run at defined times". Heartbeat is "periodic check"; Cron is "scheduled work".

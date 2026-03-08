@@ -145,9 +145,9 @@ Organizational tools automatically enabled for Anima with subordinates. See `org
 | `ping_subordinate` | Check subordinate liveness | ○ |
 | `read_subordinate_state` | Read subordinate current task | ○ |
 | `task_tracker` | Track delegated task progress | ○ |
-| `audit_subordinate` | Comprehensive audit of subordinate's recent activity | ○ |
+| `audit_subordinate` | Generate activity timeline or statistics summary for subordinates. Omit `name` for batch audit | ○ |
 
-All supervisor tools are available via MCP in S-mode. Audit is also available via CLI: `animaworks anima audit {name}`.
+All supervisor tools are available via MCP in S-mode. Audit is also available via CLI: `animaworks anima audit {name} [--all] [--days N] [--mode report|summary]`.
 
 ### Admin Tools (Conditional)
 
