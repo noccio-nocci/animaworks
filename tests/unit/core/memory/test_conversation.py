@@ -201,7 +201,17 @@ class TestWriteTranscript:
         conv.write_transcript("human", "Hello world", from_person="admin")
         today = today_local().isoformat()
         path = anima_dir / "transcripts" / f"{today}.jsonl"
-        assert path.exists()
+        if not path.exists():
+            import core.time_utils as _tu
+            transcript_dir = anima_dir / "transcripts"
+            existing = list(transcript_dir.iterdir()) if transcript_dir.exists() else []
+            raise AssertionError(
+                f"Expected {path} but not found. "
+                f"_app_tz={_tu._app_tz!r}, "
+                f"fallback={_tu._FALLBACK_TZ!r}, "
+                f"today_local()={today_local()!r}, "
+                f"existing_files={existing}"
+            )
         entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         assert len(entries) == 1
         assert entries[0]["role"] == "human"

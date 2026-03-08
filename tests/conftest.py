@@ -67,12 +67,15 @@ def _reset_app_timezone():
     """Reset the application timezone to the fallback after each test.
 
     Prevents state leakage when tests call ``configure_timezone()``.
+    Force-resets ``_app_tz`` to ``None`` so ``get_app_timezone()`` always
+    falls back to the hardcoded ``Asia/Tokyo`` default, regardless of
+    what a previous test or import side-effect may have configured.
     """
     import core.time_utils as _tu
 
-    original = _tu._app_tz
+    _tu._app_tz = None  # ensure clean state at test start
     yield
-    _tu._app_tz = original
+    _tu._app_tz = None  # force-reset to prevent leakage
 
 
 @pytest.fixture(autouse=True)
