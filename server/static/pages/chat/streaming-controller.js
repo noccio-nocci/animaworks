@@ -539,10 +539,11 @@ export function createStreamingController(ctx) {
       callbacks: {
         onStreamCreated: msg => {
           streamingMsg = msg;
+          const resumeBase = msg.text || "";
           _resumeAnimator = new TextAnimator({
             onUpdate: (displayText) => {
               if (!streamingMsg) return;
-              streamingMsg._displayText = displayText;
+              streamingMsg._displayText = resumeBase + displayText;
               _scheduleRenderR(streamingMsg, "text");
             },
           });

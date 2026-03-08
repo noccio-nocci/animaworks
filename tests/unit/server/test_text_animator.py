@@ -140,6 +140,11 @@ class TestWorkspaceTextAnimatorIntegration:
     def test_resume_also_uses_animator(self, ws_streaming_src: str):
         assert "_resumeAnimator" in ws_streaming_src
 
+    def test_resume_composites_base_text(self, ws_streaming_src: str):
+        """Resume streams must composite recovered text + new animator output."""
+        assert "resumeBase" in ws_streaming_src
+        assert "resumeBase + displayText" in ws_streaming_src
+
 
 # ── Chat Page Integration ──────────────────────────────────
 
@@ -195,3 +200,8 @@ class TestChatPageTextAnimatorIntegration:
 
     def test_resume_also_uses_animator(self, chat_streaming_src: str):
         assert "_resumeAnimator" in chat_streaming_src
+
+    def test_resume_composites_base_text(self, chat_streaming_src: str):
+        """Resume streams must composite recovered text + new animator output."""
+        assert "resumeBase" in chat_streaming_src
+        assert "resumeBase + displayText" in chat_streaming_src
