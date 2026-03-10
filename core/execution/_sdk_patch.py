@@ -101,7 +101,6 @@ def apply_sdk_transport_patch() -> None:
     SubprocessCLITransport.close = _patched_close  # type: ignore[assignment]
     _patched = True
     logger.info(
-        "Applied SubprocessCLITransport.close() patch "
-        "(graceful %ds shutdown before SIGTERM)",
+        "Applied SubprocessCLITransport.close() patch (graceful %ds shutdown before SIGTERM)",
         _GRACEFUL_EXIT_TIMEOUT_SEC,
     )
