@@ -403,7 +403,7 @@ export function renderCollapsibleSession(sessions, type, opts) {
     for (const msg of allMessages) {
       const content = msg.content || "";
       if (content) {
-        bodyHtml += `<div class="bg-session-message">${renderMarkdown(content)}</div>`;
+        bodyHtml += `<div class="bg-session-message">${renderMarkdown(escapeHtml(content))}</div>`;
       }
     }
   } else {
