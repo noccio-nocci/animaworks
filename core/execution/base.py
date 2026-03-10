@@ -152,7 +152,7 @@ class StreamingThinkFilter:
             thinking_raw = parts[0]
             stripped_t = thinking_raw.lstrip()
             if stripped_t.startswith("<think>"):
-                thinking_raw = stripped_t[len("<think>"):]
+                thinking_raw = stripped_t[len("<think>") :]
             return (thinking_raw, response)
         if len(self._buffer) > _MAX_THINK_BUFFER:
             text = self._buffer
