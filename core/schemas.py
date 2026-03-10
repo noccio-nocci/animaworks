@@ -124,7 +124,7 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=now_local)
 
     # External messaging integration
-    source: str = "anima"  # "anima" | "human" | "slack" | "chatwork"
+    source: str = "anima"  # "anima" | "human" | "slack" | "chatwork" | "googlechat"
     source_message_id: str = ""  # message ID on external platform
     external_user_id: str = ""  # user ID on external platform
     external_channel_id: str = ""  # channel/room ID on external platform
