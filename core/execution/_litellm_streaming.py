@@ -313,7 +313,7 @@ class StreamingMixin:
                     _chunk_count += 1
                     # DEBUG: raw chunk inspection (first 5 chunks)
                     if _chunk_count <= 5:
-                        logger.info(
+                        logger.debug(
                             "A stream raw chunk #%d: type=%s choices=%s",
                             _chunk_count,
                             type(chunk).__name__,
@@ -467,7 +467,7 @@ class StreamingMixin:
                 iter_text = "".join(iter_text_parts)
                 # DEBUG: log thinking vs content for diagnosis
                 if _reasoning_seen or _reasoning_parts:
-                    logger.info(
+                    logger.debug(
                         "A stream thinking debug: reasoning_chars=%d, content_chars=%d, "
                         "chunks=%d, content_preview=%.100r",
                         sum(len(p) for p in _reasoning_parts),
@@ -476,7 +476,7 @@ class StreamingMixin:
                         iter_text[:100],
                     )
                 elif iter_text and len(iter_text) < 30:
-                    logger.info(
+                    logger.debug(
                         "A stream short response: chars=%d, chunks=%d, content=%.100r, think_filter_state=%s",
                         len(iter_text),
                         _chunk_count,
