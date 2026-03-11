@@ -25,7 +25,13 @@ from core.execution._streaming import (
     parse_accumulated_tool_calls,
     stream_error_boundary,
 )
-from core.execution.base import StreamingThinkFilter, TokenUsage, ToolCallRecord, strip_thinking_tags
+from core.execution.base import (
+    RepetitionDetector,
+    StreamingThinkFilter,
+    TokenUsage,
+    ToolCallRecord,
+    strip_thinking_tags,
+)
 from core.execution.reminder import (
     SystemReminderQueue,
     msg_context_threshold,
@@ -74,6 +80,7 @@ class StreamingMixin:
         llm_kwargs = self._build_llm_kwargs()
         max_iterations = max_turns_override or self._model_config.max_turns
         _usage_acc = TokenUsage()
+        _repetition_detector = RepetitionDetector()
 
         # Inject synthetic thinking_blocks into prior assistant messages
         # that have tool_calls but no thinking_blocks.  Without this,
@@ -206,6 +213,17 @@ class StreamingMixin:
                         if response_text:
                             iter_text_parts.append(response_text)
                             yield {"type": "text_delta", "text": response_text}
+                            if _repetition_detector.feed(response_text):
+                                logger.warning(
+                                    "A stream: degenerate repetition detected at iteration=%d, "
+                                    "tokens=%d — truncating response",
+                                    iteration,
+                                    len(_repetition_detector._tokens),
+                                )
+                                _truncation_msg = "\n\n[Response truncated: repetition detected]"
+                                iter_text_parts.append(_truncation_msg)
+                                yield {"type": "text_delta", "text": _truncation_msg}
+                                break
 
                     # Reasoning content → thinking_delta events
                     reasoning = getattr(delta, "reasoning_content", None)
@@ -454,6 +472,7 @@ class StreamingMixin:
         llm_kwargs = self._build_llm_kwargs()
         max_iterations = max_turns_override or self._model_config.max_turns
         _usage_acc_ol = TokenUsage()
+        _repetition_detector = RepetitionDetector()
 
         async with stream_error_boundary(
             all_response_text,
@@ -551,6 +570,24 @@ class StreamingMixin:
                     yield {"type": "thinking_start"}
                     yield {"type": "thinking_delta", "text": thinking}
                     yield {"type": "thinking_end"}
+                if iter_text and _repetition_detector.check_full_text(iter_text):
+                    logger.warning(
+                        "A ollama stream: degenerate repetition detected at iteration=%d — truncating",
+                        iteration,
+                    )
+                    _truncation_msg = "\n\n[Response truncated: repetition detected]"
+                    iter_text += _truncation_msg
+                    all_response_text.append(iter_text)
+                    yield {"type": "text_delta", "text": iter_text}
+                    full_text = "\n".join(all_response_text)
+                    yield {
+                        "type": "done",
+                        "full_text": full_text,
+                        "result_message": None,
+                        "tool_call_records": [asdict(r) for r in all_tool_records],
+                        "usage": _usage_acc_ol.to_dict(),
+                    }
+                    return
                 if iter_text:
                     all_response_text.append(iter_text)
                     yield {"type": "text_delta", "text": iter_text}
