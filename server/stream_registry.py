@@ -131,7 +131,7 @@ class ResponseStream:
                 self.response_id,
                 seq,
                 event,
-                len(payload.get("text", "")),
+                len(payload.get("text", payload.get("detail", ""))),
                 len(self.full_text),
             )
 
