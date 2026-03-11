@@ -73,7 +73,7 @@ AnimaWorks internal features available in all modes (some may be omitted dependi
 | Memory | `read_memory_file` | Read a memory file |
 | Memory | `write_memory_file` | Write to a memory file |
 | Memory | `archive_memory_file` | Move unused memory files to archive/ |
-| Communication | `send_message` | Send DM (intent required: report / delegation / question) |
+| Communication | `send_message` | Send DM (intent required: report / question). Use delegate_task for task delegation |
 | Communication | `post_channel` | Post to Board channel (channel, text) |
 | Communication | `read_channel` | Read Board channel |
 | Communication | `manage_channel` | Create channel, add/remove members, get channel info |

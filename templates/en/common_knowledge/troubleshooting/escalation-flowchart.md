@@ -82,7 +82,7 @@ Include the following elements in your report message (MUST):
 4. **Request**: What you need from the supervisor (decision, permission grant, mediation, etc.)
 
 **send_message constraints (implementation compliance)**:
-- `intent` is REQUIRED: one of `report`, `delegation`, or `question`. Do not omit
+- `intent` is REQUIRED: one of `report` or `question`. Use delegate_task for task delegation. Do not omit
 - Acknowledgments, thanks, and FYI are not allowed via DM. Use Board (post_channel)
 - DM recipient limit per run is set by role/status.json (e.g. general/ops: 2, engineer: 5, manager: 10). One message per recipient. For more recipients than the limit, use Board
 - DM and Board share the **same outbound budget** (hourly and 24-hour limits apply). See `communication/sending-limits.md` for details
@@ -234,7 +234,7 @@ If the above is correct, I'll proceed.""",
 **Do NOT**:
 - Proceed with your own interpretation without confirming
 - Reply only "Instructions unclear" (without specific questions)
-- Omit `intent` in send_message (one of `report` / `delegation` / `question` is required; omission causes errors)
+- Omit `intent` in send_message (one of `report` / `question` is required; use delegate_task for task delegation; omission causes errors)
 
 ### Scenario 2: Conflicting Instructions from Multiple Supervisors
 

@@ -23,7 +23,7 @@ Weaker models may hallucinate (nonexistent processes, fictitious errors). When e
 
 **Report (intent: report)**: `[Report] One-line conclusion` → Situation (facts only) → Evidence (command executed, output, time) → Impact → Current response → Next action. Include command output and timestamps so supervisor can independently verify.
 
-**Delegation (intent: delegation — recommended)**: `[Instruction] One-line summary` → Background → Steps (with explicit file paths and commands) → References → Expected output → Completion criteria → Out of scope. Make instructions self-contained to prevent hallucination.
+**Delegation**: Use `delegate_task` for subordinates. Instruction format: `[Instruction] One-line summary` → Background → Steps (with explicit file paths and commands) → References → Expected output → Completion criteria → Out of scope. Make instructions self-contained to prevent hallucination.
 
 ### DM Constraints
 

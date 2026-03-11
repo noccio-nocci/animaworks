@@ -8,12 +8,12 @@ Vague instructions cause rework and confusion. Follow this guide to give instruc
 | Tool | Use Case | Notes |
 |------|----------|-------|
 | `delegate_task` | Task delegation to direct subordinates | Adds to task queue + sends DM. Progress trackable via `task_tracker`. Direct subordinates only |
-| `send_message` | One-on-one requests, reports, questions | `intent` required: one of `report` / `delegation` / `question`. User aliases are delivered to external channels (Slack, Chatwork, etc.) |
+| `send_message` | One-on-one requests, reports, questions | `intent` required: one of `report` / `question`. Use delegate_task for task delegation to subordinates. User aliases are delivered to external channels (Slack, Chatwork, etc.) |
 | `post_channel` | Organization-wide sharing (announcements, resolution reports) | Acknowledgments, thanks, FYI use Board. `@name` for mentions (triggers DM notification to mentioned party). See `board-guide.md` for details |
 | `manage_channel` | Channel ACL management | Create channels, add/remove members, view info. Use for restricted channel operations. See `board-guide.md` for details |
 
 **send_message constraints**:
-- `intent` is required. Only `report` / `delegation` / `question` are allowed. Use Board (`post_channel`) for acknowledgments, thanks, and FYI
+- `intent` is required. Only `report` / `question` are allowed. Use delegate_task for task delegation to subordinates. Use Board (`post_channel`) for acknowledgments, thanks, and FYI
 - Maximum N recipients per run, 1 message per recipient. N is role-based default (general=2, ops=2, writer=3, researcher=3, engineer=5, manager=10). Overridable via `max_recipients_per_run` in `status.json`. Use Board for N+ recipients
 - Optional: `thread_id` (thread ID), `reply_to` (reply-to message ID) to maintain conversation threads
 
@@ -44,7 +44,7 @@ When giving instructions, include these five elements (MUST). Minimize confirmat
 send_message(
     to="alice",
     content="Please aggregate the sales data.",
-    intent="delegation"
+    intent="question"
 )
 ```
 Problems: Which data, which period, output format, and deadline are unclear.
@@ -61,7 +61,7 @@ Deliverable: Department and product category summary table (Markdown format)
 Output location: /shared/reports/sales_summary_202601.md
 Deadline: 2/18 (Tue) 17:00
 Report: Please reply with a result summary when done.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
@@ -72,7 +72,7 @@ Report: Please reply with a result summary when done.""",
 send_message(
     to="bob",
     content="Look into the API error.",
-    intent="delegation"
+    intent="question"
 )
 ```
 Problems: Which API, which error, depth of investigation, and report format are unclear.
@@ -92,7 +92,7 @@ Investigate:
 Deadline: Today
 Report: Summarize findings and recommended actions in your reply.
 Report immediately if you discover something critical.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
@@ -103,11 +103,11 @@ Report immediately if you discover something critical.""",
 send_message(
     to="carol",
     content="Please take a look at the code.",
-    intent="delegation"
+    intent="question"
 )
 ```
 
-**Good:**
+**Good:** (If carol is a direct subordinate, use `delegate_task` instead. For peers, use send_message with intent="question"):
 ```
 send_message(
     to="carol",
@@ -121,7 +121,7 @@ Check:
 
 Deadline: Tomorrow morning (2/16)
 Report: Reply with "LGTM" if no issues; if changes needed, reply with specific locations and reasons.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
@@ -151,7 +151,7 @@ Please reply when done.""",
 
 ### Pattern 1b: One-Off Task (Request to Peer / Non-Subordinate)
 
-For requests to someone who is not a direct subordinate, use `send_message` with `intent="delegation"`.
+For requests to someone who is not a direct subordinate, use `send_message` with `intent="question"` (intent `delegation` is deprecated; delegate_task is for subordinates only).
 
 ```
 send_message(
@@ -167,13 +167,13 @@ Changes:
 
 Deadline: 2/16 15:00
 Please reply when done.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
 ### Pattern 2: Recurring Task (Delegation of Regular Work)
 
-Pattern for instructing recurring tasks that should be added to Heartbeat or cron. Recurring tasks are not suitable for `delegate_task`; use `send_message` with `intent="delegation"`.
+Pattern for instructing recurring tasks that should be added to Heartbeat or cron. Recurring tasks are not suitable for `delegate_task`; use `send_message` with `intent="question"` (intent `delegation` is deprecated).
 
 ```
 send_message(
@@ -193,13 +193,13 @@ Reporting rules:
 - Weekly summary every Friday
 
 Please add this to your Heartbeat checklist.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
 ### Pattern 3: Phased Task (with Milestones)
 
-Pattern for delegating a large task broken into phases.
+Pattern for delegating a large task broken into phases. Use `delegate_task` for direct subordinates; for peers use `send_message` with `intent="question"`.
 
 ```
 send_message(
@@ -223,7 +223,7 @@ Phase 3 (by 2/21): Documentation
 
 Please reply at the end of each phase.
 Consult me if unsure about direction between phases.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
@@ -257,7 +257,7 @@ Let me know if you're stuck; we can extend the deadline if needed.""",
 
 ### Feedback After Deliverable
 
-Revision requests count as delegation; use `intent="delegation"`.
+Revision requests: use `intent="question"` (intent `delegation` is deprecated). For direct subordinates, consider `delegate_task` if it is a formal task.
 
 ```
 send_message(
@@ -269,7 +269,7 @@ Requested changes:
 2. Include i18n for notification templates in the design
 
 Please send a revised version by 2/18.""",
-    intent="delegation"
+    intent="question"
 )
 ```
 
@@ -315,7 +315,7 @@ Please advise.""",
 
 ## Instruction Templates
 
-When using these templates with `send_message`, specify `intent` appropriately (request=delegation, report=report, question=question).
+When using these templates with `send_message`, specify `intent` appropriately (request=question, report=report, question=question). Use delegate_task for task delegation to direct subordinates.
 
 ### Generic Task Request Template
 

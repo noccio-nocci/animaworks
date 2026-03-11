@@ -22,7 +22,7 @@ If it doesn't help, see `troubleshooting/escalation-flowchart.md` and escalate a
 2. Server is stopped
 3. Recipient is between Heartbeat intervals (message remains unread until next run)
 4. Send operation failed with an error
-5. `intent` is unspecified or invalid (only report / delegation / question allowed)
+5. `intent` is unspecified or invalid (only report / question allowed; use delegate_task for task delegation)
 6. Session DM limit exceeded (one send per recipient per session; max recipients per session varies by role, e.g. general: 2)
 
 ### Steps
@@ -58,12 +58,12 @@ If it doesn't help, see `troubleshooting/escalation-flowchart.md` and escalate a
 send_message(to="Aoi", content="...", intent="report")   # OK
 send_message(to="aoi", content="...", intent="report")  # May fail if name differs
 
-# DM requires intent (report / delegation / question only)
+# DM requires intent (report / question only). Use delegate_task for task delegation
 # Max recipients per session varies by role (general: 2). One send per recipient
 send_message(
     to="aoi",
     content="Understood. Starting work.",
-    intent="report",           # Required: report / delegation / question
+    intent="report",           # Required: report / question
     reply_to="msg-abc123",     # Optional: original message ID
     thread_id="thread-xyz789"  # Optional: thread ID
 )

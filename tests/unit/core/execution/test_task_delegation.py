@@ -32,10 +32,8 @@ sys.modules.setdefault("claude_agent_sdk", _mock_sdk)
 sys.modules.setdefault("claude_agent_sdk.types", _mock_types)
 
 from core.execution._sdk_hooks import (  # noqa: E402
-    _count_active_tasks,
     _intercept_task_to_delegation,
     _read_status_json,
-    _role_matches,
     _select_subordinate,
 )
 
@@ -64,63 +62,6 @@ class TestReadStatusJson:
         anima_dir.mkdir()
         (anima_dir / "status.json").write_text("not json", encoding="utf-8")
         assert _read_status_json(anima_dir) == {}
-
-
-# ── _count_active_tasks ───────────────────────────────────────
-
-
-class TestCountActiveTasks:
-
-    def test_counts_pending_and_in_progress(self, tmp_path: Path) -> None:
-        anima_dir = tmp_path / "anima"
-        state_dir = anima_dir / "state"
-        state_dir.mkdir(parents=True)
-
-        entries = [
-            {"task_id": "t1", "status": "pending"},
-            {"task_id": "t2", "status": "in_progress"},
-            {"task_id": "t3", "status": "done"},
-        ]
-        (state_dir / "task_queue.jsonl").write_text(
-            "\n".join(json.dumps(e) for e in entries) + "\n",
-            encoding="utf-8",
-        )
-        assert _count_active_tasks(anima_dir) == 2
-
-    def test_handles_status_updates(self, tmp_path: Path) -> None:
-        anima_dir = tmp_path / "anima"
-        state_dir = anima_dir / "state"
-        state_dir.mkdir(parents=True)
-
-        lines = [
-            json.dumps({"task_id": "t1", "status": "pending"}),
-            json.dumps({"task_id": "t1", "status": "done", "_event": "update"}),
-        ]
-        (state_dir / "task_queue.jsonl").write_text(
-            "\n".join(lines) + "\n", encoding="utf-8",
-        )
-        assert _count_active_tasks(anima_dir) == 0
-
-    def test_returns_zero_on_missing_file(self, tmp_path: Path) -> None:
-        assert _count_active_tasks(tmp_path / "anima") == 0
-
-
-# ── _role_matches ─────────────────────────────────────────────
-
-
-class TestRoleMatches:
-
-    def test_matches_role(self) -> None:
-        assert _role_matches({"role": "engineer"}, "Need an engineer to fix this")
-
-    def test_matches_specialty(self) -> None:
-        assert _role_matches({"specialty": "frontend"}, "Build frontend component")
-
-    def test_no_match(self) -> None:
-        assert not _role_matches({"role": "writer"}, "Deploy the server")
-
-    def test_empty_status(self) -> None:
-        assert not _role_matches({}, "any description")
 
 
 # ── _select_subordinate ──────────────────────────────────────
@@ -162,21 +103,14 @@ class TestSelectSubordinate:
 
     @patch("core.config.models.load_config")
     @patch("core.paths.get_animas_dir")
-    def test_workload_selection(self, mock_animas_dir, mock_load, tmp_path: Path) -> None:
-        """Selects subordinate with fewer active tasks."""
+    def test_no_explicit_name_returns_none(self, mock_animas_dir, mock_load, tmp_path: Path) -> None:
+        """Returns None when no subordinate is explicitly named (self-pending)."""
         animas_dir = tmp_path / "animas"
 
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "status.json").write_text(
             json.dumps({"enabled": True}), encoding="utf-8",
-        )
-        alice_state = alice_dir / "state"
-        alice_state.mkdir()
-        (alice_state / "task_queue.jsonl").write_text(
-            json.dumps({"task_id": "t1", "status": "pending"}) + "\n"
-            + json.dumps({"task_id": "t2", "status": "in_progress"}) + "\n",
-            encoding="utf-8",
         )
 
         bob_dir = animas_dir / "bob"
@@ -196,12 +130,12 @@ class TestSelectSubordinate:
         boss_dir.mkdir(parents=True)
 
         result = _select_subordinate(boss_dir, "do something generic")
-        assert result == "bob"
+        assert result is None
 
     @patch("core.config.models.load_config")
     @patch("core.paths.get_animas_dir")
     def test_all_disabled_returns_none(self, mock_animas_dir, mock_load, tmp_path: Path) -> None:
-        """Returns None when all subordinates are disabled."""
+        """Returns None when named subordinate is disabled."""
         animas_dir = tmp_path / "animas"
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
@@ -218,13 +152,13 @@ class TestSelectSubordinate:
         boss_dir = animas_dir / "boss"
         boss_dir.mkdir(parents=True)
 
-        result = _select_subordinate(boss_dir, "any task")
+        result = _select_subordinate(boss_dir, "ask alice to do this")
         assert result is None
 
     @patch("core.config.models.load_config")
     @patch("core.paths.get_animas_dir")
-    def test_role_bonus(self, mock_animas_dir, mock_load, tmp_path: Path) -> None:
-        """Role-matching subordinate is preferred over lower-workload one."""
+    def test_role_match_without_name_returns_none(self, mock_animas_dir, mock_load, tmp_path: Path) -> None:
+        """Role-matching alone does NOT trigger delegation (explicit name required)."""
         animas_dir = tmp_path / "animas"
 
         alice_dir = animas_dir / "alice"
@@ -232,31 +166,18 @@ class TestSelectSubordinate:
         (alice_dir / "status.json").write_text(
             json.dumps({"enabled": True, "role": "engineer"}), encoding="utf-8",
         )
-        alice_state = alice_dir / "state"
-        alice_state.mkdir()
-        (alice_state / "task_queue.jsonl").write_text(
-            json.dumps({"task_id": "t1", "status": "pending"}) + "\n",
-            encoding="utf-8",
-        )
-
-        bob_dir = animas_dir / "bob"
-        bob_dir.mkdir(parents=True)
-        (bob_dir / "status.json").write_text(
-            json.dumps({"enabled": True, "role": "writer"}), encoding="utf-8",
-        )
 
         mock_animas_dir.return_value = animas_dir
         mock_load.return_value = self._make_config({
             "boss": {"supervisor": None},
             "alice": {"supervisor": "boss"},
-            "bob": {"supervisor": "boss"},
         })
 
         boss_dir = animas_dir / "boss"
         boss_dir.mkdir(parents=True)
 
         result = _select_subordinate(boss_dir, "need an engineer to fix the bug")
-        assert result == "alice"
+        assert result is None
 
     @patch("core.config.models.load_config")
     @patch("core.paths.get_animas_dir")

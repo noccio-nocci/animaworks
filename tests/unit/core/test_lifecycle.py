@@ -375,10 +375,9 @@ class TestMessageTriggeredHeartbeat:
         dp.name = "alice"
         dp.run_heartbeat = AsyncMock(return_value=MagicMock())
         dp.run_heartbeat.return_value.model_dump.return_value = {}
-        # Provide an actionable message so intent filter passes
         msg = Message(
             from_person="bob", to_person="alice",
-            content="please do X", intent="delegation", source="anima",
+            content="please do X", intent="report", source="anima",
         )
         dp.messenger.receive.return_value = [msg]
         lm.animas["alice"] = dp

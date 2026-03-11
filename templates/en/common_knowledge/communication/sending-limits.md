@@ -38,7 +38,7 @@ Limits applied within a single session (heartbeat, chat, task execution, etc.).
 
 | Limit | Description |
 |-------|-------------|
-| DM intent restriction | Only `report`, `delegation`, and `question` intents are allowed for `send_message`. Use Board for acknowledgments, thanks, and FYI |
+| DM intent restriction | Only `report` and `question` intents are allowed for `send_message`. Use delegate_task for task delegation. Use Board for acknowledgments, thanks, and FYI |
 | No duplicate sends to same recipient | One DM reply per recipient per session |
 | DM recipient cap | Max N recipients per session (set by role/status.json); use Board for N+ |
 | Board: 1 post per session | One post per channel per session |

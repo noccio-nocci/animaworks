@@ -6,7 +6,7 @@
 
 **mcp__aw__send_message** tool:
 - `to`: recipient name / `content`: message body
-- `intent`: `delegation` (instructions) | `report` (status/results) | `question` (questions) | omit (casual/FYI)
+- `intent`: `report` (status/results) | `question` (questions) | omit (casual/FYI). For task instructions to subordinates, use `delegate_task` instead (intent `delegation` is deprecated in send_message)
 - `reply_to` / `thread_id`: for thread replies
 
 **Intent effect**: With intent → recipient processes immediately. Without → processed in scheduled check (every 30min, no messages lost).

@@ -5,8 +5,11 @@ Covers the intent filter logic in both:
 - core/supervisor/inbox_rate_limiter.py  (message_triggered_heartbeat)
 
 Non-actionable messages (empty intent, ack, FYI) are deferred to the scheduled
-heartbeat.  Actionable messages (delegation, report, question) and human-source
+heartbeat.  Actionable messages (report, question) and human-source
 messages trigger an immediate heartbeat.
+
+Note: intent='delegation' was deprecated and removed from actionable_intents.
+Tasks should be delegated via the delegate_task tool instead.
 """
 # AnimaWorks - Digital Anima Framework
 # Copyright (C) 2026 AnimaWorks Authors
@@ -31,7 +34,7 @@ from core.supervisor.scheduler_manager import SchedulerManager
 def _default_config() -> AnimaWorksConfig:
     """Return an AnimaWorksConfig with default HeartbeatConfig.
 
-    actionable_intents defaults to ["delegation", "report", "question"].
+    actionable_intents defaults to ["report", "question"].
     """
     return AnimaWorksConfig()
 
@@ -61,7 +64,8 @@ def _setup_lifecycle(messages: list[Message]) -> LifecycleManager:
     run_heartbeat is an AsyncMock.  'alice' is pre-added to
     _pending_triggers to mimic the real trigger path.
     """
-    lm = LifecycleManager()
+    with patch("core.lifecycle.load_config", return_value=_default_config()):
+        lm = LifecycleManager()
     dp = MagicMock()
     dp.name = "alice"
     dp.run_heartbeat = AsyncMock(return_value=MagicMock())
@@ -110,15 +114,15 @@ class TestLifecycleIntentFilter:
     process_inbox_message() instead of run_heartbeat().
     """
 
-    async def test_lifecycle_delegation_triggers_inbox(self):
-        """Message with intent='delegation' should trigger inbox processing."""
+    async def test_lifecycle_delegation_does_not_trigger_inbox(self):
+        """Message with intent='delegation' should NOT trigger inbox (deprecated)."""
         messages = [_make_message(intent="delegation")]
         lm = _setup_lifecycle(messages)
 
         with patch("core.lifecycle.load_config", return_value=_default_config()):
             await lm._message_triggered_heartbeat("alice")
 
-        lm.animas["alice"].process_inbox_message.assert_called_once()
+        lm.animas["alice"].process_inbox_message.assert_not_called()
         assert "alice" not in lm._pending_triggers
 
     async def test_lifecycle_report_triggers_inbox(self):
@@ -234,8 +238,8 @@ class TestLifecycleIntentFilter:
 class TestLimiterIntentFilter:
     """Intent filtering in InboxRateLimiter.message_triggered_inbox."""
 
-    async def test_limiter_delegation_triggers_inbox(self):
-        """Message with intent='delegation' should trigger inbox processing."""
+    async def test_limiter_delegation_does_not_trigger_inbox(self):
+        """Message with intent='delegation' should NOT trigger inbox (deprecated)."""
         messages = [_make_message(intent="delegation")]
         limiter = _make_limiter(messages)
 
@@ -245,7 +249,7 @@ class TestLimiterIntentFilter:
         ):
             await limiter.message_triggered_inbox()
 
-        limiter._anima.process_inbox_message.assert_called_once()
+        limiter._anima.process_inbox_message.assert_not_called()
         assert limiter._pending_trigger is False
 
     async def test_limiter_empty_intent_skips_inbox(self):

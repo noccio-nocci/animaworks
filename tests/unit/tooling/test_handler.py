@@ -229,11 +229,12 @@ class TestHandleRouting:
         assert "Message sent to alice" in result
         assert "alice" in handler_with_messenger.replied_to
 
-    def test_send_message_with_intent(
+    def test_send_message_delegation_intent_deprecated(
         self,
         handler_with_messenger: ToolHandler,
         anima_dir: Path,
     ):
+        """intent='delegation' is deprecated and returns an error."""
         alice_dir = anima_dir.parent / "alice"
         alice_dir.mkdir(exist_ok=True)
         with patch("core.paths.get_animas_dir", return_value=anima_dir.parent):
@@ -241,15 +242,8 @@ class TestHandleRouting:
                 "send_message",
                 {"to": "alice", "content": "hello", "intent": "delegation"},
             )
-        assert "Message sent to alice" in result
-        handler_with_messenger._messenger.send.assert_called_once_with(
-            to="alice",
-            content="hello",
-            thread_id="",
-            reply_to="",
-            intent="delegation",
-            origin_chain=["anima"],
-        )
+        assert "delegate_task" in result
+        handler_with_messenger._messenger.send.assert_not_called()
 
     def test_send_message_intent_empty_returns_error(
         self,
