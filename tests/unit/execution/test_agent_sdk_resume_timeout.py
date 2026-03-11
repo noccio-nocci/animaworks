@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.schemas import ModelConfig
+from datetime import UTC
 
 
 # ── Fixtures ──────────────────────────────────────────────────
@@ -71,7 +72,7 @@ class TestSessionResumeTimeout:
         path.parent.mkdir(parents=True, exist_ok=True)
         from datetime import datetime, timedelta, timezone
 
-        old_ts = (datetime.now(timezone.utc) - timedelta(minutes=SESSION_RESUME_TIMEOUT_MIN + 5)).isoformat()
+        old_ts = (datetime.now(UTC) - timedelta(minutes=SESSION_RESUME_TIMEOUT_MIN + 5)).isoformat()
         path.write_text(
             json.dumps({"session_id": "sess-old", "timestamp": old_ts}),
             encoding="utf-8",
@@ -89,7 +90,7 @@ class TestSessionResumeTimeout:
         path.parent.mkdir(parents=True, exist_ok=True)
         from datetime import datetime, timedelta, timezone
 
-        old_ts = datetime.now(timezone.utc) - timedelta(minutes=SESSION_RESUME_TIMEOUT_MIN + 1)
+        old_ts = datetime.now(UTC) - timedelta(minutes=SESSION_RESUME_TIMEOUT_MIN + 1)
         # Write naive (no tz info) — simulates pre-fix files
         path.write_text(
             json.dumps(
@@ -124,7 +125,7 @@ class TestSessionResumeTimeout:
         path.parent.mkdir(parents=True, exist_ok=True)
         from datetime import datetime, timedelta, timezone
 
-        old_ts = (datetime.now(timezone.utc) - timedelta(minutes=SESSION_RESUME_TIMEOUT_MIN + 1)).isoformat()
+        old_ts = (datetime.now(UTC) - timedelta(minutes=SESSION_RESUME_TIMEOUT_MIN + 1)).isoformat()
         path.write_text(
             json.dumps({"session_id": "hb-old", "timestamp": old_ts}),
             encoding="utf-8",

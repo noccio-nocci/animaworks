@@ -13,6 +13,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from server.routes.system import _parse_cron_jobs
+from datetime import UTC
 
 
 def _make_test_app(
@@ -27,10 +28,7 @@ def _make_test_app(
     app = FastAPI()
     app.state.animas_dir = animas_dir or Path("/tmp/fake/animas")
     app.state.shared_dir = shared_dir or Path("/tmp/fake/shared")
-    app.state.anima_names = (
-        anima_names if anima_names is not None
-        else list((animas or {}).keys())
-    )
+    app.state.anima_names = anima_names if anima_names is not None else list((animas or {}).keys())
 
     # Mock supervisor
     supervisor = MagicMock()
@@ -269,9 +267,7 @@ class TestReloadAnimas:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir()
         (alice_dir / "identity.md").write_text("# Alice", encoding="utf-8")
-        (alice_dir / "status.json").write_text(
-            json.dumps({"enabled": False}), encoding="utf-8"
-        )
+        (alice_dir / "status.json").write_text(json.dumps({"enabled": False}), encoding="utf-8")
 
         app = _make_test_app(
             animas={},
@@ -339,10 +335,25 @@ class TestRecentActivity:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir()
 
-        now = datetime.now(timezone.utc)
-        _write_activity(animas_dir, "alice", [
-            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "巡回", "content": "", "from": "", "to": "", "channel": "", "tool": "", "via": "", "meta": {}},
-        ])
+        now = datetime.now(UTC)
+        _write_activity(
+            animas_dir,
+            "alice",
+            [
+                {
+                    "ts": now.isoformat(),
+                    "type": "heartbeat_start",
+                    "summary": "巡回",
+                    "content": "",
+                    "from": "",
+                    "to": "",
+                    "channel": "",
+                    "tool": "",
+                    "via": "",
+                    "meta": {},
+                },
+            ],
+        )
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -370,10 +381,25 @@ class TestActivityEndpoint:
 
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
-        _write_activity(animas_dir, "alice", [
-            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "All clear", "content": "", "from": "", "to": "", "channel": "", "tool": "", "via": "", "meta": {}},
-        ])
+        now = datetime.now(UTC)
+        _write_activity(
+            animas_dir,
+            "alice",
+            [
+                {
+                    "ts": now.isoformat(),
+                    "type": "heartbeat_start",
+                    "summary": "All clear",
+                    "content": "",
+                    "from": "",
+                    "to": "",
+                    "channel": "",
+                    "tool": "",
+                    "via": "",
+                    "meta": {},
+                },
+            ],
+        )
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -397,12 +423,16 @@ class TestActivityEndpoint:
 
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
-        _write_activity(animas_dir, "alice", [
-            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "HB", "content": ""},
-            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Cron", "content": ""},
-            {"ts": now.isoformat(), "type": "message_received", "summary": "Msg", "content": "Hello"},
-        ])
+        now = datetime.now(UTC)
+        _write_activity(
+            animas_dir,
+            "alice",
+            [
+                {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "HB", "content": ""},
+                {"ts": now.isoformat(), "type": "cron_executed", "summary": "Cron", "content": ""},
+                {"ts": now.isoformat(), "type": "message_received", "summary": "Msg", "content": "Hello"},
+            ],
+        )
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -423,13 +453,21 @@ class TestActivityEndpoint:
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
         (animas_dir / "bob").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
-        _write_activity(animas_dir, "alice", [
-            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "Alice HB", "content": ""},
-        ])
-        _write_activity(animas_dir, "bob", [
-            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "Bob HB", "content": ""},
-        ])
+        now = datetime.now(UTC)
+        _write_activity(
+            animas_dir,
+            "alice",
+            [
+                {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "Alice HB", "content": ""},
+            ],
+        )
+        _write_activity(
+            animas_dir,
+            "bob",
+            [
+                {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "Bob HB", "content": ""},
+            ],
+        )
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -449,7 +487,7 @@ class TestActivityEndpoint:
 
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entries = []
         for i in range(10):
             ts = (now - timedelta(minutes=10 - i)).isoformat()
@@ -498,11 +536,20 @@ class TestActivityEndpoint:
 
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
-        _write_activity(animas_dir, "alice", [
-            {"ts": (now - timedelta(hours=2)).isoformat(), "type": "heartbeat_start", "summary": "Earlier heartbeat", "content": ""},
-            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Later cron", "content": ""},
-        ])
+        now = datetime.now(UTC)
+        _write_activity(
+            animas_dir,
+            "alice",
+            [
+                {
+                    "ts": (now - timedelta(hours=2)).isoformat(),
+                    "type": "heartbeat_start",
+                    "summary": "Earlier heartbeat",
+                    "content": "",
+                },
+                {"ts": now.isoformat(), "type": "cron_executed", "summary": "Later cron", "content": ""},
+            ],
+        )
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -526,7 +573,7 @@ class TestActivityEndpoint:
 
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entries = []
         for i in range(250):
             ts = (now - timedelta(seconds=250 - i)).isoformat()
@@ -553,13 +600,26 @@ class TestActivityEndpoint:
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
         (animas_dir / "bob").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
-        _write_activity(animas_dir, "alice", [
-            {"ts": (now - timedelta(minutes=2)).isoformat(), "type": "heartbeat_start", "summary": "Alice HB", "content": ""},
-        ])
-        _write_activity(animas_dir, "bob", [
-            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Bob Cron", "content": ""},
-        ])
+        now = datetime.now(UTC)
+        _write_activity(
+            animas_dir,
+            "alice",
+            [
+                {
+                    "ts": (now - timedelta(minutes=2)).isoformat(),
+                    "type": "heartbeat_start",
+                    "summary": "Alice HB",
+                    "content": "",
+                },
+            ],
+        )
+        _write_activity(
+            animas_dir,
+            "bob",
+            [
+                {"ts": now.isoformat(), "type": "cron_executed", "summary": "Bob Cron", "content": ""},
+            ],
+        )
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -581,14 +641,17 @@ class TestActivityEndpoint:
 
         animas_dir = tmp_path / "animas"
         (animas_dir / "alice").mkdir(parents=True)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
-        good_entry = json.dumps({
-            "ts": now.isoformat(),
-            "type": "heartbeat_start",
-            "summary": "Good entry",
-            "content": "",
-        }, ensure_ascii=False)
+        good_entry = json.dumps(
+            {
+                "ts": now.isoformat(),
+                "type": "heartbeat_start",
+                "summary": "Good entry",
+                "content": "",
+            },
+            ensure_ascii=False,
+        )
         log_dir = animas_dir / "alice" / "activity_log"
         log_dir.mkdir(parents=True, exist_ok=True)
         date_str = now.isoformat()[:10]
@@ -617,7 +680,9 @@ class TestSystemConnections:
         app = _make_test_app(anima_names=["alice", "bob"])
         # Simulate 3 active websocket connections
         app.state.ws_manager.active_connections = [
-            MagicMock(), MagicMock(), MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
         ]
 
         transport = ASGITransport(app=app)
@@ -685,10 +750,7 @@ class TestSystemScheduler:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "cron.md").write_text(
-            "# Cron: alice\n\n"
-            "## Morning Report (毎朝9時)\n"
-            "type: llm\n"
-            "朝の報告をまとめる\n",
+            "# Cron: alice\n\n## Morning Report (毎朝9時)\ntype: llm\n朝の報告をまとめる\n",
             encoding="utf-8",
         )
 
@@ -723,7 +785,8 @@ class TestSystemScheduler:
             )
 
         app = _make_test_app(
-            animas_dir=animas_dir, anima_names=["alice", "bob"],
+            animas_dir=animas_dir,
+            anima_names=["alice", "bob"],
         )
         app.state.supervisor.is_scheduler_running.return_value = True
         mock_scheduler = MagicMock()
@@ -745,12 +808,7 @@ class TestSystemScheduler:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "cron.md").write_text(
-            "# Cron: alice\n\n"
-            "<!--\n"
-            "## Disabled Task (noon)\n"
-            "type: llm\n"
-            "Should be ignored\n"
-            "-->\n",
+            "# Cron: alice\n\n<!--\n## Disabled Task (noon)\ntype: llm\nShould be ignored\n-->\n",
             encoding="utf-8",
         )
 
@@ -815,10 +873,7 @@ class TestParseCronJobs:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "cron.md").write_text(
-            "# Cron: alice\n\n"
-            "## Daily Summary (毎日18時)\n"
-            "type: llm\n"
-            "まとめを作成する\n",
+            "# Cron: alice\n\n## Daily Summary (毎日18時)\ntype: llm\nまとめを作成する\n",
             encoding="utf-8",
         )
         jobs = _parse_cron_jobs(animas_dir, ["alice"])
@@ -854,12 +909,7 @@ class TestParseCronJobs:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "cron.md").write_text(
-            "# Cron: alice\n\n"
-            "<!--\n"
-            "## Disabled (noon)\n"
-            "type: llm\n"
-            "This should be ignored\n"
-            "-->\n",
+            "# Cron: alice\n\n<!--\n## Disabled (noon)\ntype: llm\nThis should be ignored\n-->\n",
             encoding="utf-8",
         )
         jobs = _parse_cron_jobs(animas_dir, ["alice"])
@@ -910,10 +960,7 @@ class TestParseCronJobs:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "cron.md").write_text(
-            "# Cron: alice\n\n"
-            "## Task（全角括弧）\n"
-            "type: llm\n"
-            "Work\n",
+            "# Cron: alice\n\n## Task（全角括弧）\ntype: llm\nWork\n",
             encoding="utf-8",
         )
         jobs = _parse_cron_jobs(animas_dir, ["alice"])
@@ -926,10 +973,7 @@ class TestParseCronJobs:
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
         (alice_dir / "cron.md").write_text(
-            "# Cron: alice\n\n"
-            "## Simple Task\n"
-            "type: llm\n"
-            "Work\n",
+            "# Cron: alice\n\n## Simple Task\ntype: llm\nWork\n",
             encoding="utf-8",
         )
         jobs = _parse_cron_jobs(animas_dir, ["alice"])
