@@ -280,15 +280,36 @@ class HeartbeatMixin:
 
         return parts
 
+    _CURRENT_TASK_CLEANUP_THRESHOLD = 3000
+
     async def _build_heartbeat_prompt(self) -> list[str]:
         """Build heartbeat prompt parts.
 
         Heartbeat-specific header + shared background context.
+        When current_task.md exceeds the cleanup threshold, a compression
+        instruction is prepended so the anima trims it first.
         """
         hb_config = self.memory.read_heartbeat_config()
         checklist = hb_config or load_prompt("heartbeat_default_checklist")
         task_delegation_rules = load_prompt("task_delegation_rules")
         parts = [load_prompt("heartbeat", checklist=checklist, task_delegation_rules=task_delegation_rules)]
+
+        state = self.memory.read_current_state()
+        state_len = len(state)
+        if state_len > self._CURRENT_TASK_CLEANUP_THRESHOLD:
+            parts.append(
+                t(
+                    "heartbeat.current_task_cleanup_required",
+                    current_chars=state_len,
+                    max_chars=self._CURRENT_TASK_CLEANUP_THRESHOLD,
+                )
+            )
+            logger.info(
+                "[%s] current_task.md exceeds threshold (%d > %d), injecting cleanup instruction",
+                self.name,
+                state_len,
+                self._CURRENT_TASK_CLEANUP_THRESHOLD,
+            )
 
         parts.extend(self._build_background_context_parts())
 

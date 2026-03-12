@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from core.i18n import t
 
 _RE_INVALID_TOOL_ID = re.compile(r"[^a-zA-Z0-9_-]")
+_RE_AUTO_DETECTED_RESOLVED = re.compile(r"^- ✅\s.*(?:自動検出|auto-detected):", re.MULTILINE)
+_AUTO_DETECTED_MAX_KEEP = 10
 
 
 def _sanitize_tool_id(tool_id: str) -> str:
@@ -40,6 +42,40 @@ def _sanitize_tool_id(tool_id: str) -> str:
     colons, etc.  Replace any invalid character with ``_``.
     """
     return _RE_INVALID_TOOL_ID.sub("_", tool_id) if tool_id else tool_id
+
+
+def _prune_auto_detected_resolved(text: str, max_keep: int = _AUTO_DETECTED_MAX_KEEP) -> tuple[str, list[str]]:
+    """Prune old auto-detected resolved lines from current_task.md content.
+
+    Only targets lines matching ``- ✅ ... （自動検出: ...）`` or
+    ``- ✅ ... (auto-detected: ...)``.  Lines written by the LLM in
+    other formats (``[x]``, ``☑``, date prefix, etc.) are left untouched.
+    Incomplete auto-detected tasks (``- [ ] ... 自動検出``) are also kept.
+
+    Returns:
+        (pruned_text, removed_lines) — the cleaned text and a list of
+        lines that were removed (oldest first), suitable for archival
+        into episodes.
+    """
+    lines = text.split("\n")
+    auto_resolved_indices: list[int] = []
+    for i, line in enumerate(lines):
+        if _RE_AUTO_DETECTED_RESOLVED.match(line):
+            auto_resolved_indices.append(i)
+
+    if len(auto_resolved_indices) <= max_keep:
+        return text, []
+
+    to_remove = set(auto_resolved_indices[: len(auto_resolved_indices) - max_keep])
+    removed: list[str] = []
+    kept: list[str] = []
+    for i, line in enumerate(lines):
+        if i in to_remove:
+            removed.append(line)
+        else:
+            kept.append(line)
+
+    return "\n".join(kept), removed
 
 
 from core.memory._io import atomic_write_text
@@ -1139,7 +1175,12 @@ class ConversationMemory:
         memory_mgr: MemoryManager,
         parsed: ParsedSessionSummary,
     ) -> None:
-        """Auto-update state/current_task.md based on conversation conclusions."""
+        """Auto-update state/current_task.md based on conversation conclusions.
+
+        After appending new items, prunes old auto-detected resolved
+        lines to prevent unbounded growth.  Pruned lines are archived
+        into today's episode file for traceability.
+        """
         current = memory_mgr.read_current_state()
         updated = False
 
@@ -1155,6 +1196,18 @@ class ConversationMemory:
             if task not in current:
                 current += "\n" + t("conversation.new_task_marker", task=task, ts=now_local().strftime("%m/%d %H:%M"))
                 updated = True
+
+        # Prune old auto-detected resolved lines
+        if updated:
+            current, pruned = _prune_auto_detected_resolved(current)
+            if pruned:
+                header = t("conversation.pruned_auto_detected_header")
+                episode_entry = header + "\n" + "\n".join(pruned)
+                memory_mgr.append_episode(episode_entry)
+                logger.info(
+                    "Pruned %d auto-detected resolved lines from current_task.md",
+                    len(pruned),
+                )
 
         if updated:
             memory_mgr.update_state(current)

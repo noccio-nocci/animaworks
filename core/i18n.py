@@ -544,6 +544,31 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "- [ ] {task} (auto-detected: {ts})",
     },
     "conversation.resolution_summary": {"ja": "解決済み: {item}", "en": "Resolved: {item}"},
+    "conversation.pruned_auto_detected_header": {
+        "ja": "## 自動検出タスク（current_task.mdから退避）",
+        "en": "## Auto-detected tasks (pruned from current_task.md)",
+    },
+    # ── _anima_heartbeat.py ──
+    "heartbeat.current_task_cleanup_required": {
+        "ja": (
+            "⚠ **current_task.md 圧縮が必要です**"
+            "（現在 {current_chars} 文字 / 上限 {max_chars} 文字）\n\n"
+            "**このHBの最初のアクション**として以下を実行してください:\n"
+            "1. 解決済み・完了済みのタスクをすべて削除する\n"
+            "2. 進行中・保留・待ち状態のタスクのみ残す\n"
+            "3. {max_chars} 文字以内に圧縮して書き込む\n"
+            "4. その後、通常のHBチェックリストを実行する"
+        ),
+        "en": (
+            "⚠ **current_task.md cleanup required**"
+            " (current: {current_chars} chars / limit: {max_chars} chars)\n\n"
+            "**As the first action of this heartbeat**, do the following:\n"
+            "1. Delete all resolved/completed tasks\n"
+            "2. Keep only in-progress, pending, and waiting tasks\n"
+            "3. Compress to under {max_chars} chars and save\n"
+            "4. Then proceed with the normal heartbeat checklist"
+        ),
+    },
     "conversation.truncated_suffix": {
         "ja": "\n[...truncated, original {length} chars]",
         "en": "\n[...truncated, original {length} chars]",
