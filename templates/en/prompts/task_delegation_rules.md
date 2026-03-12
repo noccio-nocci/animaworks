@@ -114,7 +114,7 @@ plan_tasks(batch_id="deploy-20260301", tasks=[
 
 ### When to Use
 
-- Single task → write directly to `state/pending/`
+- Single task → use `plan_tasks` (tasks array with one item)
 - Multiple independent tasks → use `plan_tasks` with `parallel: true`
 - Tasks with dependencies → use `plan_tasks` with `depends_on`
 

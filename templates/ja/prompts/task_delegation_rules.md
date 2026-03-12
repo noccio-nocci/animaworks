@@ -114,7 +114,7 @@ plan_tasks(batch_id="deploy-20260301", tasks=[
 
 ### 使い分け
 
-- 単一タスク → 従来の `state/pending/` への直接書き出し
+- 単一タスク → `plan_tasks`（tasks配列1件で投入）
 - 複数の独立タスク → `plan_tasks` で `parallel: true` を指定
 - 依存関係のあるタスク群 → `plan_tasks` で `depends_on` を指定
 
