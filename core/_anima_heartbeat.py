@@ -408,18 +408,20 @@ class HeartbeatMixin:
                 _elapsed = time.monotonic() - _start
                 if not _soft_warned and _elapsed > _soft_timeout:
                     _soft_warned = True
-                    self.agent._executor.reminder_queue.push_sync(
-                        t("reminder.hb_time_limit")
-                    )
+                    self.agent._executor.reminder_queue.push_sync(t("reminder.hb_time_limit"))
                     logger.info(
                         "[%s] Heartbeat soft timeout reached (%.0fs > %ds)",
-                        self.name, _elapsed, _soft_timeout,
+                        self.name,
+                        _elapsed,
+                        _soft_timeout,
                     )
                 if _elapsed > _hard_timeout:
                     _hard_exceeded = True
                     logger.warning(
                         "[%s] Heartbeat hard timeout reached (%.0fs > %ds) — breaking",
-                        self.name, _elapsed, _hard_timeout,
+                        self.name,
+                        _elapsed,
+                        _hard_timeout,
                     )
                     break
 

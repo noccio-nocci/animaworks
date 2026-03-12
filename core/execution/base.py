@@ -457,6 +457,7 @@ class BaseExecutor(ABC):
         """Load heartbeat soft_timeout_seconds from config (cached at init)."""
         try:
             from core.config.models import load_config
+
             return load_config().heartbeat.soft_timeout_seconds
         except Exception:
             return 300

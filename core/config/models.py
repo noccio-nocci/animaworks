@@ -355,15 +355,21 @@ class HeartbeatConfig(BaseModel):
         default=30, ge=1, le=1440
     )  # heartbeat interval (config-driven, not parsed from heartbeat.md)
     soft_timeout_seconds: int = Field(
-        default=300, ge=30, le=3600,
+        default=300,
+        ge=30,
+        le=3600,
         description="Seconds before injecting a wrap-up system-reminder into the HB session",
     )
     hard_timeout_seconds: int = Field(
-        default=600, ge=60, le=7200,
+        default=600,
+        ge=60,
+        le=7200,
         description="Seconds before forcefully terminating the HB session",
     )
     max_turns: int | None = Field(
-        default=None, ge=3, le=200,
+        default=None,
+        ge=3,
+        le=200,
         description="HB-specific max_turns override (None = use per-anima model_config.max_turns)",
     )
 
