@@ -26,7 +26,7 @@ In AnimaWorks, tasks are processed across three independent paths:
 | **Heartbeat** | Scheduled check | Situation assessment and planning (Observe → Plan → Reflect) | Observation and judgment only. Writes execution to `pending/` |
 | **TaskExec** | Task appears in `pending/` | Execute LLM tasks | Full execution (including tool use) |
 
-Heartbeat does **not** execute. When it finds a task that needs execution, it either delegates via `delegate_task` (if subordinates are available) or writes it out as a JSON file to `state/pending/` for the TaskExec path.
+Heartbeat does **not** execute. When it finds a task that needs execution, it either delegates via `delegate_task` (if subordinates are available) or submits it via `plan_tasks` for the TaskExec path.
 
 In S-mode (Claude Agent SDK) Chat path, the **Task tool** (and Agent tool) provides automatic routing:
 - With subordinates → immediately delegated to the subordinate with minimum workload and best role match (same flow as delegate_task)
@@ -413,14 +413,16 @@ Completed task result summaries are saved to `state/task_results/{task_id}.md` (
 Dependent tasks automatically receive these results as context. If a predecessor fails, dependent tasks are skipped and `FAILED: {reason}` is recorded.
 When each task completes, a completion notification is sent via DM to the Anima that executed plan_tasks.
 
-### When to Use plan_tasks vs Direct Write
+### When to Use plan_tasks
 
 | Scenario | Method |
 |----------|--------|
-| Single task | Write JSON directly to `state/pending/` |
+| Single task | `plan_tasks` (submit with a single-item tasks array) |
 | Multiple independent tasks | `plan_tasks` with `parallel: true` |
 | Tasks with dependencies | `plan_tasks` with `depends_on` |
 | Delegation to subordinates | `delegate_task` (separate mechanism) |
+
+**Important**: Do not manually write JSON files to `state/pending/`. Always submit via the `plan_tasks` tool. `plan_tasks` registers in both Layer 1 (execution queue) and Layer 2 (task registry) simultaneously, preventing task tracking gaps.
 
 ## Task Delegation (delegate_task / Task tool)
 

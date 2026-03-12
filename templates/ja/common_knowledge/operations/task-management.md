@@ -27,7 +27,7 @@ AnimaWorks ではタスクが3つの独立パスで処理される:
 | **Heartbeat** | 定期巡回 | 状況確認・計画立案（Observe → Plan → Reflect） | 確認・判断のみ。実行は `pending/` に書き出す |
 | **TaskExec** | `pending/` にタスク出現 | LLMタスクの実行 | フル実行（ツール使用含む） |
 
-Heartbeat は **実行しない**。実行が必要なタスクを発見したら、部下がいれば `delegate_task` で委任するか、`state/pending/` に JSON ファイルとして書き出して TaskExec パスに委譲する。
+Heartbeat は **実行しない**。実行が必要なタスクを発見したら、部下がいれば `delegate_task` で委任するか、`plan_tasks` でタスク投入して TaskExec パスに委譲する。
 
 なお、Sモード（Claude Agent SDK）の Chat パスでは **Task tool**（および Agent tool）を使うと自動ルーティングが行われる:
 - 部下がいる場合 → workload 最小かつ role マッチする部下に即時委譲される（delegate_task と同様のフロー）
@@ -416,14 +416,16 @@ plan_tasks(batch_id="build-20260301", tasks=[
 依存タスクはこの結果をコンテキストとして自動的に受け取る。先行タスクが失敗した場合、依存タスクはスキップされ `FAILED: {理由}` が記録される。
 各タスク完了時、plan_tasks を実行した Anima に完了通知が DM で送られる。
 
-### plan_tasks と直接書き出しの使い分け
+### plan_tasks の使い分け
 
 | シナリオ | 方法 |
 |---------|------|
-| 単一タスク | `state/pending/` に直接JSON書き出し |
+| 単一タスク | `plan_tasks`（tasks配列1件で投入） |
 | 複数独立タスク | `plan_tasks` で `parallel: true` |
 | 依存関係付きタスク群 | `plan_tasks` で `depends_on` 指定 |
 | 部下への委譲 | `delegate_task`（別メカニズム） |
+
+**注意**: `state/pending/` にJSONを手動で書き出してはならない。必ず `plan_tasks` ツール経由で投入すること。`plan_tasks` は Layer 1（実行キュー）と Layer 2（タスクレジストリ）の両方に同時登録するため、タスクの追跡漏れを防げる。
 
 ## タスク委譲（delegate_task / Task tool）
 

@@ -14,7 +14,7 @@
 
 - MUST: ハートビート内では状況確認・計画立案・振り返りのみを行う
 - MUST NOT: ハートビート内で長時間の実行タスク（コーディング、大量のツール呼び出し等）を行わない
-- MUST: 実行が必要なタスクを発見したら、部下がいれば `delegate_task` で委任するか、`state/pending/` に LLM タスクとして書き出す
+- MUST: 実行が必要なタスクを発見したら、部下がいれば `delegate_task` で委任するか、`plan_tasks` でタスク投入する
 
 書き出されたタスクは **TaskExec パス** が自動的に取得・実行する。
 ハートビート完了後、3秒以内に TaskExec が起動してタスクを処理する。
@@ -24,28 +24,25 @@
 ハートビートと人間との会話は **別ロック** で管理されるため、同時に動作できる。
 ハートビート実行中でも、人間からのメッセージには即座に応答可能。
 
-### pending/ への LLM タスク書き出し
+### plan_tasks によるタスク投入
 
-ハートビートで実行すべきタスクを発見した場合、`state/pending/` に JSON ファイルを配置する:
+ハートビートで実行すべきタスクを発見した場合、`plan_tasks` ツールでタスクを投入する:
 
-```json
-{
-  "task_type": "llm",
-  "task_id": "unique-id",
-  "description": "APIテストを実施し結果をまとめる",
-  "context": "aoi から依頼されたSlack API接続テスト",
-  "acceptance_criteria": "全エンドポイントのテスト結果をレポートにまとめる",
-  "reply_to": {"name": "aoi", "content": "テスト完了の報告"},
-  "submitted_by": "heartbeat"
-}
+```
+plan_tasks(batch_id="hb-20260301-api-test", tasks=[
+  {"task_id": "api-test", "title": "APIテスト実施",
+   "description": "Slack API接続テストを実施し、全エンドポイントの結果をレポートにまとめる。完了後 aoi に報告する。"}
+])
 ```
 
-TaskExec がこのファイルを検出し、LLM セッションでタスクを実行する。
-完了後、`reply_to` に指定された相手に自動的に結果が通知される。
+`plan_tasks` は Layer 1（実行キュー `state/pending/`）と Layer 2（タスクレジストリ `task_queue.jsonl`）の両方に同時登録する。
+TaskExec がタスクを検出し、LLM セッションで実行する。
 
-複数タスクを依存関係付きで一括投入したい場合は `plan_tasks` ツールを使用する。
-独立したタスクは並列実行され、依存タスクは先行タスク完了後に自動実行される。
-詳細は task_delegation_rules を参照。
+**注意**: `state/pending/` にJSONを手動で書き出してはならない。必ず `plan_tasks` ツール経由で投入すること。
+
+単一タスクでも `plan_tasks`（tasks配列1件）を使う。
+複数の独立タスクは `parallel: true` で並列実行、依存関係がある場合は `depends_on` を指定する。
+詳細は task-management を参照。
 
 ### ハートビートのトリガー種別
 
