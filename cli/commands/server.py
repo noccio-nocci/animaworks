@@ -504,18 +504,92 @@ def _clear_pycache() -> int:
     return count
 
 
+def _spawn_restart_helper(args: argparse.Namespace, old_pid: int | None) -> int:
+    """Spawn a fully detached restart helper that survives caller death.
+
+    The helper is a new Python process in its own session.  It waits for
+    the old server to exit (if *old_pid* is given), then starts a fresh
+    daemon.  Because it runs in a separate session & process group, it
+    is immune to SIGTERM cascading through the caller's process tree —
+    which is critical when an Anima triggers ``animaworks restart`` from
+    inside the server.
+
+    Returns the helper PID.
+    """
+    host = getattr(args, "host", "0.0.0.0")
+    port = getattr(args, "port", 8000)
+    project_root = str(Path(__file__).resolve().parent.parent.parent)
+
+    helper_code = f"""
+import os, sys, time, signal, subprocess, socket
+os.chdir({project_root!r})
+old_pid = {old_pid!r}
+host = {host!r}
+port = {port!r}
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+if old_pid is not None:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and _alive(old_pid):
+        time.sleep(0.3)
+    if _alive(old_pid):
+        try:
+            os.killpg(os.getpgid(old_pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            try:
+                os.kill(old_pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+        time.sleep(1)
+
+time.sleep(0.5)
+cmd = [sys.executable, "-m", "cli", "start", "--host", host, "--port", str(port)]
+subprocess.Popen(cmd, cwd={project_root!r})
+"""
+
+    log_path = _get_daemon_log_path()
+    log_file = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", helper_code],
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        cwd=project_root,
+    )
+    log_file.close()
+    return proc.pid
+
+
 def cmd_restart(args: argparse.Namespace) -> None:
-    """Restart the AnimaWorks server (stop then start)."""
+    """Restart the AnimaWorks server (stop then start).
+
+    Spawns a detached restart-helper process **before** stopping the
+    current server.  The helper runs in its own session so it survives
+    even when the caller is killed during server shutdown (e.g. when an
+    Anima triggers restart from inside the server).
+    """
+    old_pid = _read_pid()
+    if old_pid is not None and not _is_process_alive(old_pid):
+        old_pid = None
+
+    helper_pid = _spawn_restart_helper(args, old_pid)
+    print(f"Restart helper spawned (pid={helper_pid}). Stopping server...")
+
     force = getattr(args, "force", False)
-    if not _stop_server(force=force):
-        print("Error: Cannot restart — failed to stop the running server.")
-        sys.exit(1)
+    _stop_server(force=force)
+
     removed = _clear_pycache()
     if removed:
         print(f"Cleared {removed} __pycache__ directories.")
-    time.sleep(0.5)
 
-    cmd_start(args)
+    print("Server stopped. Restart helper will start the new server.")
 
 
 # ── Deprecated modes ──────────────────────────────────────

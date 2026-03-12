@@ -118,9 +118,7 @@ class TestFindServerPidByProcess:
         fake_proc.mkdir()
         fake_pid_dir = fake_proc / "12345"
         fake_pid_dir.mkdir()
-        (fake_pid_dir / "cmdline").write_bytes(
-            b".venv/bin/python\x00main.py\x00start"
-        )
+        (fake_pid_dir / "cmdline").write_bytes(b".venv/bin/python\x00main.py\x00start")
 
         with patch("cli.commands.server.Path", side_effect=lambda p: fake_proc if p == "/proc" else Path(p)):
             with patch.object(Path, "stat") as mock_stat:
@@ -193,7 +191,13 @@ class TestStopServer:
     @patch("cli.commands.server._find_server_pid_by_process", return_value=54321)
     @patch("cli.commands.server._read_pid", return_value=None)
     def test_fallback_to_process_scan(
-        self, mock_pid, mock_find, mock_alive, mock_kill, mock_remove, capsys,
+        self,
+        mock_pid,
+        mock_find,
+        mock_alive,
+        mock_kill,
+        mock_remove,
+        capsys,
     ):
         """When PID file is missing, fall back to process scan."""
         from cli.commands.server import _stop_server
@@ -217,8 +221,17 @@ class TestStopServer:
     @patch("cli.commands.server._is_process_alive")
     @patch("cli.commands.server._read_pid", return_value=12345)
     def test_force_sigkill_after_timeout(
-        self, mock_pid, mock_alive, mock_monotonic, mock_sleep, mock_kill,
-        mock_getpgid, mock_killpg, mock_remove, mock_orphans, capsys,
+        self,
+        mock_pid,
+        mock_alive,
+        mock_monotonic,
+        mock_sleep,
+        mock_kill,
+        mock_getpgid,
+        mock_killpg,
+        mock_remove,
+        mock_orphans,
+        capsys,
     ):
         """Force mode escalates to SIGKILL when SIGTERM times out."""
         from cli.commands.server import _stop_server
@@ -251,7 +264,11 @@ class TestStopServer:
     @patch("cli.commands.server._find_server_pid_by_process", return_value=None)
     @patch("cli.commands.server._read_pid", return_value=None)
     def test_force_kills_orphans_when_no_server(
-        self, mock_pid, mock_find, mock_orphans, capsys,
+        self,
+        mock_pid,
+        mock_find,
+        mock_orphans,
+        capsys,
     ):
         """Force mode cleans up orphan runners even when server is not running."""
         from cli.commands.server import _stop_server
@@ -313,9 +330,19 @@ class TestCmdStart:
     @patch("cli.commands.server._is_process_alive", return_value=False)
     @patch("cli.commands.server._read_pid", return_value=999)
     def test_stale_pid_cleanup_and_start(
-        self, mock_pid, mock_alive, mock_find, mock_kill, mock_write_pid,
-        mock_ensure, mock_animas, mock_shared, mock_create, mock_uvicorn,
-        mock_watchdog, mock_remove,
+        self,
+        mock_pid,
+        mock_alive,
+        mock_find,
+        mock_kill,
+        mock_write_pid,
+        mock_ensure,
+        mock_animas,
+        mock_shared,
+        mock_create,
+        mock_uvicorn,
+        mock_watchdog,
+        mock_remove,
     ):
         from cli.commands.server import cmd_start
 
@@ -335,7 +362,6 @@ class TestCmdStart:
             ws_ping_timeout=5,
         )
 
-
     @patch("cli.commands.server._remove_pid_file")
     @patch("cli.commands.server._start_pid_watchdog")
     @patch("uvicorn.run")
@@ -348,9 +374,18 @@ class TestCmdStart:
     @patch("cli.commands.server._find_server_pid_by_process", return_value=None)
     @patch("cli.commands.server._read_pid", return_value=None)
     def test_uvicorn_timeout_keep_alive(
-        self, mock_pid, mock_find, mock_kill, mock_write_pid,
-        mock_ensure, mock_animas, mock_shared, mock_create, mock_uvicorn,
-        mock_watchdog, mock_remove,
+        self,
+        mock_pid,
+        mock_find,
+        mock_kill,
+        mock_write_pid,
+        mock_ensure,
+        mock_animas,
+        mock_shared,
+        mock_create,
+        mock_uvicorn,
+        mock_watchdog,
+        mock_remove,
     ):
         from cli.commands.server import cmd_start
 
@@ -375,9 +410,18 @@ class TestCmdStart:
     @patch("cli.commands.server._find_server_pid_by_process", return_value=None)
     @patch("cli.commands.server._read_pid", return_value=None)
     def test_uvicorn_ws_ping_settings(
-        self, mock_pid, mock_find, mock_kill, mock_write_pid,
-        mock_ensure, mock_animas, mock_shared, mock_create, mock_uvicorn,
-        mock_watchdog, mock_remove,
+        self,
+        mock_pid,
+        mock_find,
+        mock_kill,
+        mock_write_pid,
+        mock_ensure,
+        mock_animas,
+        mock_shared,
+        mock_create,
+        mock_uvicorn,
+        mock_watchdog,
+        mock_remove,
     ):
         from cli.commands.server import cmd_start
 
@@ -438,39 +482,123 @@ class TestCmdStop:
 
 
 class TestCmdRestart:
-    @patch("cli.commands.server.cmd_start")
     @patch("cli.commands.server._clear_pycache", return_value=0)
     @patch("cli.commands.server._stop_server", return_value=True)
-    @patch("time.sleep")
-    def test_restart_success(self, mock_sleep, mock_stop, mock_clear, mock_start):
+    @patch("cli.commands.server._spawn_restart_helper", return_value=99999)
+    @patch("cli.commands.server._is_process_alive", return_value=True)
+    @patch("cli.commands.server._read_pid", return_value=12345)
+    def test_restart_spawns_helper_then_stops(
+        self,
+        mock_pid,
+        mock_alive,
+        mock_helper,
+        mock_stop,
+        mock_clear,
+        capsys,
+    ):
         from cli.commands.server import cmd_restart
 
         args = argparse.Namespace(host="0.0.0.0", port=18500, force=False)
         cmd_restart(args)
 
+        mock_helper.assert_called_once_with(args, 12345)
         mock_stop.assert_called_once_with(force=False)
-        mock_start.assert_called_once_with(args)
+        out = capsys.readouterr().out
+        assert "99999" in out
 
-    @patch("cli.commands.server._stop_server", return_value=False)
-    def test_restart_stop_fails(self, mock_stop):
-        from cli.commands.server import cmd_restart
-
-        args = argparse.Namespace(host="0.0.0.0", port=18500, force=False)
-        with pytest.raises(SystemExit):
-            cmd_restart(args)
-
-    @patch("cli.commands.server.cmd_start")
     @patch("cli.commands.server._clear_pycache", return_value=0)
     @patch("cli.commands.server._stop_server", return_value=True)
-    @patch("time.sleep")
-    def test_restart_with_force(self, mock_sleep, mock_stop, mock_clear, mock_start):
+    @patch("cli.commands.server._spawn_restart_helper", return_value=99999)
+    @patch("cli.commands.server._is_process_alive", return_value=True)
+    @patch("cli.commands.server._read_pid", return_value=12345)
+    def test_restart_with_force(
+        self,
+        mock_pid,
+        mock_alive,
+        mock_helper,
+        mock_stop,
+        mock_clear,
+    ):
         from cli.commands.server import cmd_restart
 
         args = argparse.Namespace(host="0.0.0.0", port=18500, force=True)
         cmd_restart(args)
 
         mock_stop.assert_called_once_with(force=True)
-        mock_start.assert_called_once_with(args)
+
+    @patch("cli.commands.server._clear_pycache", return_value=0)
+    @patch("cli.commands.server._stop_server", return_value=True)
+    @patch("cli.commands.server._spawn_restart_helper", return_value=99999)
+    @patch("cli.commands.server._is_process_alive", return_value=False)
+    @patch("cli.commands.server._read_pid", return_value=12345)
+    def test_restart_stale_pid_passes_none(
+        self,
+        mock_pid,
+        mock_alive,
+        mock_helper,
+        mock_stop,
+        mock_clear,
+    ):
+        """When PID exists but process is dead, old_pid=None is passed to helper."""
+        from cli.commands.server import cmd_restart
+
+        args = argparse.Namespace(host="0.0.0.0", port=18500, force=False)
+        cmd_restart(args)
+
+        mock_helper.assert_called_once_with(args, None)
+
+    @patch("cli.commands.server._clear_pycache", return_value=0)
+    @patch("cli.commands.server._stop_server", return_value=True)
+    @patch("cli.commands.server._spawn_restart_helper", return_value=99999)
+    @patch("cli.commands.server._read_pid", return_value=None)
+    def test_restart_no_pid(self, mock_pid, mock_helper, mock_stop, mock_clear):
+        """When no PID file exists, old_pid=None is passed to helper."""
+        from cli.commands.server import cmd_restart
+
+        args = argparse.Namespace(host="0.0.0.0", port=18500, force=False)
+        cmd_restart(args)
+
+        mock_helper.assert_called_once_with(args, None)
+
+
+class TestSpawnRestartHelper:
+    @patch("cli.commands.server._get_daemon_log_path")
+    def test_helper_starts_detached_process(self, mock_log_path, tmp_path):
+        from cli.commands.server import _spawn_restart_helper
+
+        log_file = tmp_path / "daemon.log"
+        mock_log_path.return_value = log_file
+
+        args = argparse.Namespace(host="0.0.0.0", port=18500)
+
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.pid = 77777
+            mock_popen.return_value = mock_proc
+
+            pid = _spawn_restart_helper(args, old_pid=12345)
+
+        assert pid == 77777
+        call_kwargs = mock_popen.call_args
+        assert call_kwargs.kwargs["start_new_session"] is True
+
+    @patch("cli.commands.server._get_daemon_log_path")
+    def test_helper_accepts_none_old_pid(self, mock_log_path, tmp_path):
+        from cli.commands.server import _spawn_restart_helper
+
+        log_file = tmp_path / "daemon.log"
+        mock_log_path.return_value = log_file
+
+        args = argparse.Namespace(host="0.0.0.0", port=18500)
+
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.pid = 88888
+            mock_popen.return_value = mock_proc
+
+            pid = _spawn_restart_helper(args, old_pid=None)
+
+        assert pid == 88888
 
 
 # ── Deprecated commands ──────────────────────────────────
