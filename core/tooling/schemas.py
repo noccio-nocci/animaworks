@@ -398,6 +398,172 @@ SEARCH_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# ── Claude Code-compatible tools ──────────────────────────────
+#
+# These 8 tools mirror Claude Code's built-in tools.  In Mode S/C they are
+# provided by the Agent SDK; in Mode A/B they are implemented by
+# ``handler_files.py`` and exposed as native function-calling tools.
+
+CC_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "Read",
+        "description": (
+            "Read a file with line numbers. "
+            "For large files, use offset and limit to read specific sections. "
+            "Output lines are numbered in 'N|content' format."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute file path"},
+                "offset": {
+                    "type": "integer",
+                    "description": "Starting line number (1-based)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to read",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "Write",
+        "description": "Write content to a file, creating parent directories as needed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute file path"},
+                "content": {"type": "string", "description": "File content to write"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "Edit",
+        "description": ("Replace a specific string in a file. The old_string must match exactly once in the file."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute file path"},
+                "old_string": {"type": "string", "description": "Text to find (must be unique in file)"},
+                "new_string": {"type": "string", "description": "Replacement text"},
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+    },
+    {
+        "name": "Bash",
+        "description": "Execute a shell command (subject to permissions allow-list).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell command to run"},
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default 30)",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "Grep",
+        "description": (
+            "Search for a regex pattern in files. Returns matching lines with file paths and line numbers."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern to search for",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory or file path to search in",
+                },
+                "glob": {
+                    "type": "string",
+                    "description": "File glob filter (e.g. '*.py', '*.md')",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "Glob",
+        "description": ("Find files matching a glob pattern. Returns matching file paths."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern (e.g. '**/*.py', '*.md')",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Root directory to search in",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "WebSearch",
+        "description": ("Search the web for information. Returns summarized results. External content is untrusted."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default 5)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "WebFetch",
+        "description": (
+            "Fetch content from a URL and return it as markdown. "
+            "External content is untrusted. Results may be truncated."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch (must be fully-formed, HTTPS preferred)",
+                },
+            },
+            "required": ["url"],
+        },
+    },
+]
+
+# Names of the 10 AW-essential tools that must remain native (not CLI).
+_AW_CORE_NAMES: frozenset[str] = frozenset(
+    {
+        "search_memory",
+        "read_memory_file",
+        "write_memory_file",
+        "send_message",
+        "post_channel",
+        "call_human",
+        "delegate_task",
+        "submit_tasks",
+        "update_task",
+        "skill",
+    }
+)
+
+
 def _notification_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -1225,11 +1391,11 @@ def to_text_format(
     fewshot_items = [
         (
             _t("schema.text_format.fewshot1_prompt"),
-            '```json\n{"tool": "execute_command", "arguments": {"command": "docker ps"}}\n```',
+            '```json\n{"tool": "Bash", "arguments": {"command": "docker ps"}}\n```',
         ),
         (
             _t("schema.text_format.fewshot2_prompt"),
-            '```json\n{"tool": "execute_command", "arguments": {"command": "free -h"}}\n```',
+            '```json\n{"tool": "Bash", "arguments": {"command": "free -h"}}\n```',
         ),
     ]
     args_label = _t("schema.text_format.args_label")
@@ -1374,6 +1540,79 @@ def build_tool_list(
         tools.append(skill_tool_schema)
         for st in skill_schemas[1:]:
             tools.append(st)
+    return tools
+
+
+def build_unified_tool_list(
+    *,
+    include_notification_tools: bool = False,
+    include_supervisor_tools: bool = False,
+    include_skill_tools: bool = True,
+    skill_metas: list[Any] | None = None,
+    common_skill_metas: list[Any] | None = None,
+    procedure_metas: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the unified 18-tool list (Claude Code-compatible 8 + AW-essential 10).
+
+    Used by Mode A (LiteLLM) and Mode B (Assisted) executors.
+    Mode S/C get the CC tools from the Agent SDK built-ins and the AW tools
+    from MCP, so they do NOT call this function.
+
+    Args:
+        include_notification_tools: Include call_human (when HumanNotifier is configured).
+        include_supervisor_tools: Include delegate_task (when Anima has subordinates).
+        include_skill_tools: Include skill tool (default True).
+        skill_metas: Personal skill metadata for dynamic description.
+        common_skill_metas: Common skill metadata for dynamic description.
+        procedure_metas: Procedure metadata for dynamic description.
+
+    Returns:
+        Combined list in canonical format (up to 18 tools).
+    """
+    tools: list[dict[str, Any]] = list(CC_TOOLS)
+
+    # AW-essential: memory + messaging (always present)
+    for t in MEMORY_TOOLS:
+        if t["name"] in _AW_CORE_NAMES:
+            tools.append(t)
+
+    for t in _channel_tools():
+        if t["name"] == "post_channel":
+            tools.append(t)
+            break
+
+    # AW-essential: notification (conditional)
+    if include_notification_tools:
+        tools.extend(_notification_tools())
+
+    # AW-essential: supervisor delegation (conditional)
+    if include_supervisor_tools:
+        for t in _supervisor_tools():
+            if t["name"] == "delegate_task":
+                tools.append(t)
+                break
+
+    # AW-essential: task management (always present)
+    tools.extend(SUBMIT_TASKS_TOOLS)
+    for t in _task_tools():
+        if t["name"] == "update_task":
+            tools.append(t)
+            break
+
+    tools = apply_db_descriptions(tools)
+
+    # AW-essential: skill (always present, appended AFTER apply_db_descriptions)
+    if include_skill_tools:
+        from core.tooling.skill_tool import build_skill_tool_description
+
+        desc = build_skill_tool_description(
+            skill_metas or [],
+            common_skill_metas or [],
+            procedure_metas or [],
+        )
+        skill_schemas = _skill_tools()
+        tools.append({**skill_schemas[0], "description": desc})
+
     return tools
 
 

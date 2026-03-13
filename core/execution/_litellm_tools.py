@@ -26,7 +26,7 @@ from core.execution._sanitize import TOOL_TRUST_LEVELS, wrap_tool_result
 from core.execution._tool_summary import make_tool_detail_chunk
 from core.execution.base import ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.tooling.schemas import (
-    build_tool_list,
+    build_unified_tool_list,
     to_litellm_format,
 )
 
@@ -148,20 +148,10 @@ class ToolProcessingMixin:
     )
 
     def _build_base_tools(self) -> list[dict[str, Any]]:
-        """Build the base LiteLLM-format tool list."""
-        canonical = build_tool_list(
-            include_file_tools=True,
-            include_search_tools=True,
-            include_use_tool=False,
+        """Build the base LiteLLM-format tool list (unified 18-tool schema)."""
+        canonical = build_unified_tool_list(
             include_notification_tools=self._tool_handler._human_notifier is not None,
-            include_admin_tools=(self._anima_dir / "skills" / "newstaff.md").exists(),
             include_supervisor_tools=self._has_subordinates(),
-            include_tool_management=True,
-            include_task_tools=True,
-            include_submit_tasks=True,
-            include_background_task_tools=getattr(self._tool_handler, "_background_manager", None) is not None,
-            include_vault_tools=True,
-            include_skill_tools=True,
             skill_metas=self._memory.list_skill_metas(),
             common_skill_metas=self._memory.list_common_skill_metas(),
             procedure_metas=self._memory.list_procedure_metas(),

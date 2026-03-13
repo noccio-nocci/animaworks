@@ -235,6 +235,15 @@ class ToolHandler(
             "vault_get": self._handle_vault_get,
             "vault_store": self._handle_vault_store,
             "vault_list": self._handle_vault_list,
+            # CC-compatible aliases (Mode A/B unified schema)
+            "Read": self._handle_read_file,
+            "Write": self._handle_write_file,
+            "Edit": self._handle_edit_file,
+            "Bash": self._handle_execute_command,
+            "Grep": self._handle_search_code,
+            "Glob": self._handle_glob,
+            "WebSearch": self._handle_web_search,
+            "WebFetch": self._handle_web_fetch,
         }
 
     # ── Properties and session management ─────────────────────

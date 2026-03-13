@@ -999,18 +999,23 @@ def build_system_prompt(
             if _non_s:
                 _add(_non_s, "tool_guides", 2)
 
+    # CLI hint for non-heartbeat (animaworks-tool overview)
+    if not is_heartbeat:
+        cli_hint = (
+            "\n## CLI Tools\n"
+            "For supervisor management, vault, channel management, "
+            "background tasks, and external tools (Slack, Chatwork, Gmail, GitHub, etc.):\n"
+            "```\nBash: animaworks-tool <tool> <subcommand> [args]\n```\n"
+            "Use `skill machine-tool` to see available commands."
+        )
+        _add(cli_hint, "tool_guides", 1)
+
     # External tools hint (mode-dependent)
     if not is_heartbeat and (tool_registry or personal_tools):
         _ext_cats = sorted(set((tool_registry or []) + list((personal_tools or {}).keys())))
         if _ext_cats:
             _cats_str = ", ".join(_ext_cats)
-            if execution_mode.lower() == "b":
-                ext_tools = (
-                    f"## External Tools\n"
-                    f"Available via `use_tool`: {_cats_str}\n"
-                    f"Use the `skill` tool to look up usage details for each tool before calling."
-                )
-            elif execution_mode.lower() in ("s", "c"):
+            if execution_mode.lower() == "b" or execution_mode.lower() in ("s", "c"):
                 ext_tools = (
                     f"## External Tools\n"
                     f"Available categories: {_cats_str}\n"
@@ -1022,7 +1027,7 @@ def build_system_prompt(
                     f"## External Tools\n"
                     f"Available categories: {_cats_str}\n"
                     f"Use the `skill` tool to look up CLI usage, "
-                    f"then execute via `execute_command`: `animaworks-tool <tool> <subcommand>`."
+                    f"then execute via Bash: `animaworks-tool <tool> <subcommand>`."
                 )
             if "machine" in _ext_cats:
                 ext_tools += t("builder.machine_hint")

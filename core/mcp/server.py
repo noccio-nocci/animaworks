@@ -51,38 +51,21 @@ server = Server("aw")
 
 _EXPOSED_TOOL_NAMES: frozenset[str] = frozenset(
     {
+        # AW-essential: memory
+        "search_memory",
+        "read_memory_file",
+        "write_memory_file",
+        # AW-essential: messaging
         "send_message",
         "post_channel",
-        "read_channel",
-        "manage_channel",
-        "read_dm_history",
-        "backlog_task",
-        "update_task",
-        "list_tasks",
+        # AW-essential: notification
         "call_human",
-        "search_memory",
-        "report_procedure_outcome",
-        "report_knowledge_outcome",
-        "check_permissions",
-        "disable_subordinate",
-        "enable_subordinate",
-        "set_subordinate_model",
-        "set_subordinate_background_model",
-        "restart_subordinate",
-        "org_dashboard",
-        "ping_subordinate",
-        "read_subordinate_state",
+        # AW-essential: task management
         "delegate_task",
-        "task_tracker",
-        "audit_subordinate",
-        "skill",
-        "create_skill",
         "submit_tasks",
-        "check_background_task",
-        "list_background_tasks",
-        "vault_get",
-        "vault_store",
-        "vault_list",
+        "update_task",
+        # AW-essential: skill/CLI manual
+        "skill",
     }
 )
 

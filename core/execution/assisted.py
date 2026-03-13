@@ -60,7 +60,7 @@ from core.messenger import Messenger
 from core.prompt.context import ContextTracker
 from core.schemas import ImageData, ModelConfig
 from core.tooling.handler import ToolHandler
-from core.tooling.schemas import build_tool_list, to_text_format
+from core.tooling.schemas import build_unified_tool_list, to_text_format
 
 logger = logging.getLogger("animaworks.execution.assisted")
 
@@ -214,21 +214,10 @@ class AssistedExecutor(BaseExecutor):
         return {s["name"] for s in schemas}
 
     def _build_tool_schemas(self) -> list[dict[str, Any]]:
-        """Build canonical tool schemas for text format generation."""
-        canonical = build_tool_list(
-            include_file_tools=True,
-            include_search_tools=True,
-            include_discovery_tools=False,
-            include_use_tool=bool(self._tool_registry),
+        """Build canonical tool schemas for text format generation (unified 18-tool schema)."""
+        canonical = build_unified_tool_list(
             include_notification_tools=self._tool_handler._human_notifier is not None,
-            include_admin_tools=(self._anima_dir / "skills" / "newstaff.md").exists(),
             include_supervisor_tools=self._has_subordinates(),
-            include_tool_management=False,
-            include_task_tools=True,
-            include_submit_tasks=True,
-            include_background_task_tools=getattr(self._tool_handler, "_background_manager", None) is not None,
-            include_vault_tools=True,
-            include_skill_tools=True,
             skill_metas=self._memory.list_skill_metas(),
             common_skill_metas=self._memory.list_common_skill_metas(),
             procedure_metas=self._memory.list_procedure_metas(),
