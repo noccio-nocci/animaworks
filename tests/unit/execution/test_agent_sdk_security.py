@@ -141,6 +141,99 @@ class TestCheckA1FileAccess:
         result = _check_a1_file_access(path, anima_dir, write=True)
         assert result is None
 
+    # ── subordinate_management_files (direct subordinate r/w) ──
+
+    def test_read_subordinate_injection_via_mgmt(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        """Supervisor can read direct subordinate's injection.md."""
+        mgmt = [other_anima_dir / "injection.md"]
+        path = str(other_anima_dir / "injection.md")
+        result = _check_a1_file_access(
+            path, anima_dir, write=False, subordinate_management_files=mgmt,
+        )
+        assert result is None
+
+    def test_write_subordinate_injection_via_mgmt(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        """Supervisor can write direct subordinate's injection.md."""
+        mgmt = [other_anima_dir / "injection.md"]
+        path = str(other_anima_dir / "injection.md")
+        result = _check_a1_file_access(
+            path, anima_dir, write=True, subordinate_management_files=mgmt,
+        )
+        assert result is None
+
+    def test_read_subordinate_status_via_mgmt(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        mgmt = [other_anima_dir / "status.json"]
+        path = str(other_anima_dir / "status.json")
+        result = _check_a1_file_access(
+            path, anima_dir, write=False, subordinate_management_files=mgmt,
+        )
+        assert result is None
+
+    # ── descendant_read_files (read-only) ──
+
+    def test_read_descendant_identity_allowed(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        desc_read = [other_anima_dir / "identity.md"]
+        path = str(other_anima_dir / "identity.md")
+        result = _check_a1_file_access(
+            path, anima_dir, write=False, descendant_read_files=desc_read,
+        )
+        assert result is None
+
+    def test_write_descendant_identity_blocked(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        """descendant_read_files should NOT grant write access."""
+        desc_read = [other_anima_dir / "identity.md"]
+        path = str(other_anima_dir / "identity.md")
+        result = _check_a1_file_access(
+            path, anima_dir, write=True, descendant_read_files=desc_read,
+        )
+        assert result is not None
+
+    def test_read_descendant_injection_allowed(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        desc_read = [other_anima_dir / "injection.md"]
+        path = str(other_anima_dir / "injection.md")
+        result = _check_a1_file_access(
+            path, anima_dir, write=False, descendant_read_files=desc_read,
+        )
+        assert result is None
+
+    # ── descendant_read_dirs (read-only directory) ──
+
+    def test_read_descendant_pending_dir_allowed(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        pending_dir = other_anima_dir / "state" / "pending"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        desc_dirs = [pending_dir]
+        path = str(pending_dir / "task_001.json")
+        result = _check_a1_file_access(
+            path, anima_dir, write=False, descendant_read_dirs=desc_dirs,
+        )
+        assert result is None
+
+    def test_write_descendant_pending_dir_blocked(
+        self, anima_dir: Path, other_anima_dir: Path,
+    ):
+        pending_dir = other_anima_dir / "state" / "pending"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        desc_dirs = [pending_dir]
+        path = str(pending_dir / "task_001.json")
+        result = _check_a1_file_access(
+            path, anima_dir, write=True, descendant_read_dirs=desc_dirs,
+        )
+        assert result is not None
+
 
 # ── _check_a1_bash_command ───────────────────────────────────
 

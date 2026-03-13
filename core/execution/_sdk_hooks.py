@@ -58,17 +58,28 @@ def _collect_all_subordinates(
 
 def _cache_subordinate_paths(
     anima_dir: Path,
-) -> tuple[list[Path], list[Path], list[Path]]:
+) -> tuple[list[Path], list[Path], list[Path], list[Path], list[Path]]:
     """Cache subordinate and peer paths for permission checks at hook build time.
 
     Collects paths for **all** hierarchical subordinates (not just direct
-    reports) so that a top-level supervisor can access cron.md, heartbeat.md,
+    reports) so that a top-level supervisor can access management files
     and activity_log of any anima beneath them in the org tree.
-    Also collects peer activity_log dirs (same supervisor) for verification.
+
+    Returns:
+        (sub_activity_dirs, sub_mgmt_files, peer_activity_dirs,
+         descendant_read_files, descendant_read_dirs)
+
+    - sub_mgmt_files: direct subordinates' cron.md, heartbeat.md, status.json,
+      injection.md (read/write)
+    - descendant_read_files: all descendants' identity.md, injection.md,
+      status.json, state files (read-only)
+    - descendant_read_dirs: all descendants' state/pending/ (read-only dir)
     """
     sub_activity_dirs: list[Path] = []
     sub_mgmt_files: list[Path] = []
     peer_activity_dirs: list[Path] = []
+    descendant_read_files: list[Path] = []
+    descendant_read_dirs: list[Path] = []
     try:
         from core.config.models import load_config
         from core.paths import get_animas_dir
@@ -77,11 +88,28 @@ def _cache_subordinate_paths(
         animas_dir = get_animas_dir()
         anima_name = anima_dir.name
         all_subs = _collect_all_subordinates(anima_name, cfg.animas)
+
+        direct_subs: set[str] = set()
+        for sub_name, sub_cfg in cfg.animas.items():
+            if sub_cfg.supervisor == anima_name:
+                direct_subs.add(sub_name)
+
         for sub_name in all_subs:
             sub_dir = (animas_dir / sub_name).resolve()
             sub_activity_dirs.append(sub_dir / "activity_log")
-            sub_mgmt_files.append(sub_dir / "cron.md")
-            sub_mgmt_files.append(sub_dir / "heartbeat.md")
+
+            if sub_name in direct_subs:
+                for fname in ("cron.md", "heartbeat.md", "status.json", "injection.md"):
+                    sub_mgmt_files.append(sub_dir / fname)
+
+            descendant_read_files.append(sub_dir / "identity.md")
+            descendant_read_files.append(sub_dir / "injection.md")
+            descendant_read_files.append(sub_dir / "status.json")
+            descendant_read_files.append(sub_dir / "state" / "current_task.md")
+            descendant_read_files.append(sub_dir / "state" / "pending.md")
+            descendant_read_files.append(sub_dir / "state" / "task_queue.jsonl")
+            descendant_read_dirs.append(sub_dir / "state" / "pending")
+
         # Collect peer activity_log dirs (same supervisor, excluding self)
         my_supervisor = None
         if anima_name in cfg.animas:
@@ -92,7 +120,7 @@ def _cache_subordinate_paths(
                 peer_activity_dirs.append(peer_dir / "activity_log")
     except Exception:
         logger.debug("Failed to cache subordinate paths for Mode S hook", exc_info=True)
-    return sub_activity_dirs, sub_mgmt_files, peer_activity_dirs
+    return sub_activity_dirs, sub_mgmt_files, peer_activity_dirs, descendant_read_files, descendant_read_dirs
 
 
 # ── Task interception ────────────────────────────────────────
@@ -463,7 +491,7 @@ def _build_pre_tool_hook(
     )
 
     # Cache subordinate and peer paths once at hook build time
-    _sub_activity_dirs, _sub_mgmt_files, _peer_activity_dirs = _cache_subordinate_paths(anima_dir)
+    _sub_activity_dirs, _sub_mgmt_files, _peer_activity_dirs, _desc_read_files, _desc_read_dirs = _cache_subordinate_paths(anima_dir)
     intercepted_task_ids: set[str] = set()
     _trust_order = {"trusted": 2, "medium": 1, "untrusted": 0}
 
@@ -662,6 +690,8 @@ def _build_pre_tool_hook(
                 write=True,
                 subordinate_activity_dirs=_sub_activity_dirs,
                 subordinate_management_files=_sub_mgmt_files,
+                descendant_read_files=_desc_read_files,
+                descendant_read_dirs=_desc_read_dirs,
                 peer_activity_dirs=_peer_activity_dirs,
                 superuser=superuser,
             )
@@ -686,6 +716,8 @@ def _build_pre_tool_hook(
                 write=False,
                 subordinate_activity_dirs=_sub_activity_dirs,
                 subordinate_management_files=_sub_mgmt_files,
+                descendant_read_files=_desc_read_files,
+                descendant_read_dirs=_desc_read_dirs,
                 peer_activity_dirs=_peer_activity_dirs,
                 superuser=superuser,
             )

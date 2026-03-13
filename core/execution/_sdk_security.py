@@ -75,6 +75,8 @@ def _check_a1_file_access(
     write: bool,
     subordinate_activity_dirs: list[Path] | None = None,
     subordinate_management_files: list[Path] | None = None,
+    descendant_read_files: list[Path] | None = None,
+    descendant_read_dirs: list[Path] | None = None,
     peer_activity_dirs: list[Path] | None = None,
     superuser: bool = False,
 ) -> str | None:
@@ -106,10 +108,22 @@ def _check_a1_file_access(
                     if resolved.is_relative_to(peer_activity):
                         return None
 
-            # Supervisor can read/write subordinate's cron.md & heartbeat.md
+            # Supervisor can read/write subordinate's management files
             if subordinate_management_files:
                 for mgmt_file in subordinate_management_files:
                     if resolved == mgmt_file:
+                        return None
+
+            # Descendant read-only files (identity.md, state files)
+            if not write and descendant_read_files:
+                for desc_file in descendant_read_files:
+                    if resolved == desc_file:
+                        return None
+
+            # Descendant read-only directories (state/pending/)
+            if not write and descendant_read_dirs:
+                for desc_dir in descendant_read_dirs:
+                    if resolved.is_relative_to(desc_dir):
                         return None
 
             return f"Access to other anima's directory is not allowed: {file_path}"

@@ -128,7 +128,7 @@ class TestPreToolHookTaskBranch:
         anima_dir.mkdir(parents=True)
         (anima_dir / "state" / "pending").mkdir(parents=True)
 
-        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=(set(), set(), set())):
+        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=([], [], [], [], [])):
             return _build_pre_tool_hook(anima_dir, has_subordinates=True)
 
     @pytest.fixture()
@@ -147,7 +147,7 @@ class TestPreToolHookTaskBranch:
 
         callback = MagicMock()
 
-        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=(set(), set(), set())):
+        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=([], [], [], [], [])):
             hook_fn = _build_pre_tool_hook(anima_dir, on_task_intercepted=callback, has_subordinates=True)
 
         return hook_fn, callback, anima_dir

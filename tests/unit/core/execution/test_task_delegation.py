@@ -282,7 +282,7 @@ class TestPreToolHookTaskBranching:
         anima_dir.mkdir(parents=True)
         (anima_dir / "state" / "pending").mkdir(parents=True)
 
-        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=([], [], [])):
+        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=([], [], [], [], [])):
             return _build_pre_tool_hook(anima_dir, has_subordinates=False)
 
     @pytest.fixture()
@@ -299,7 +299,7 @@ class TestPreToolHookTaskBranching:
         anima_dir.mkdir(parents=True)
         (anima_dir / "state" / "pending").mkdir(parents=True)
 
-        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=([], [], [])):
+        with patch("core.execution._sdk_hooks._cache_subordinate_paths", return_value=([], [], [], [], [])):
             return _build_pre_tool_hook(anima_dir, has_subordinates=True)
 
     async def test_no_subs_intercepts_to_pending(self, hook_no_subs) -> None:
