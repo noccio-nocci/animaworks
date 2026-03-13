@@ -85,7 +85,7 @@ class HeartbeatMixin:
           2. config.heartbeat.default_model (global)
           3. None (use main model)
         """
-        from core.config.models import load_config
+        from core.config.models import load_config, resolve_execution_mode
         from core.schemas import ModelConfig
 
         bg_model = self.agent.model_config.background_model
@@ -97,12 +97,18 @@ class HeartbeatMixin:
         if bg_model == self.agent.model_config.model:
             return None
 
+        # Recalculate resolved_mode for the background model so that
+        # the correct executor type is created (e.g. claude-* → S, codex/* → C).
+        # Without this, model_copy carries the main model's resolved_mode,
+        # which may be incompatible with the background model name.
+        config = load_config()
+        bg_resolved_mode = resolve_execution_mode(config, bg_model)
+
         bg_credential = self.agent.model_config.background_credential
         new_config: ModelConfig = self.agent.model_config.model_copy(
-            update={"model": bg_model},
+            update={"model": bg_model, "resolved_mode": bg_resolved_mode},
         )
         if bg_credential:
-            config = load_config()
             if bg_credential in config.credentials:
                 cred = config.credentials[bg_credential]
                 new_config.api_key = cred.api_key or None
