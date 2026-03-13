@@ -177,8 +177,8 @@ def _get_engine_priority() -> list[str]:
         config = load_config()
         if config.machine.engine_priority:
             return list(config.machine.engine_priority)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to load engine priority from config, using default: %s", exc)
     return list(_DEFAULT_ENGINE_PRIORITY)
 
 
@@ -257,8 +257,8 @@ def _resolve_engine_credentials(engine: str) -> dict[str, str]:
 
             val = get_credential(cred_name, f"machine/{engine}", key_name, env_var)
             result[env_var] = val
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to resolve credential %s for engine %s: %s", cred_name, engine, exc)
     return result
 
 
