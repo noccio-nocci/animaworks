@@ -169,7 +169,12 @@ export function setupWebSocket(deps) {
     });
     if (evtType === "message_sent" && data.to_person) {
       if (getCurrentView() === "org") {
-        showMessageLine(data.name, data.to_person, data.summary || "");
+        const intent = data.meta?.intent || "";
+        const fromType = data.meta?.from_type || "";
+        let msgLineType = "internal";
+        if (intent === "delegation") msgLineType = "delegation";
+        else if (fromType === "external") msgLineType = "external";
+        showMessageLine(data.name, data.to_person, data.summary || "", { lineType: msgLineType });
       }
       addTimelineEvent({
         id: Date.now().toString(),
