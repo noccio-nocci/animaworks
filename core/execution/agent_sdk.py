@@ -136,17 +136,25 @@ async def _graceful_interrupt_stream(
     Primary path: ``client.interrupt()`` → wait for ``ResultMessage`` →
     save ``session_id``.  Fallback: use the ``session_id`` captured from
     the most recent ``StreamEvent`` if interrupt times out.
+
+    The entire interrupt + receive sequence is bounded by
+    ``INTERRUPT_TIMEOUT_SEC`` to prevent hangs when the CLI does not
+    respond after acknowledging the interrupt.
     """
     from claude_agent_sdk import ResultMessage
 
-    try:
-        await asyncio.wait_for(client.interrupt(), timeout=INTERRUPT_TIMEOUT_SEC)
+    async def _interrupt_and_receive() -> str | None:
+        await client.interrupt()
         async for msg in client.receive_messages():
             if isinstance(msg, ResultMessage):
-                if msg.session_id and session_type in _RESUMABLE_SESSION_TYPES:
-                    _save_session_id(anima_dir, msg.session_id, session_type, thread_id=thread_id)
-                    logger.info("Saved session_id from ResultMessage after interrupt")
-                break
+                return msg.session_id
+        return None
+
+    try:
+        sid = await asyncio.wait_for(_interrupt_and_receive(), timeout=INTERRUPT_TIMEOUT_SEC)
+        if sid and session_type in _RESUMABLE_SESSION_TYPES:
+            _save_session_id(anima_dir, sid, session_type, thread_id=thread_id)
+            logger.info("Saved session_id from ResultMessage after interrupt")
     except Exception:
         if captured_session_id and session_type in _RESUMABLE_SESSION_TYPES:
             _save_session_id(anima_dir, captured_session_id, session_type, thread_id=thread_id)
@@ -165,18 +173,23 @@ async def _graceful_interrupt_blocking(
     """Send graceful interrupt to CLI in blocking mode and save session_id.
 
     ``receive_response()`` does not yield ``StreamEvent``, so there is no
-    fallback — only the ``ResultMessage`` path.
+    fallback — only the ``ResultMessage`` path.  The entire sequence is
+    bounded by ``INTERRUPT_TIMEOUT_SEC``.
     """
     from claude_agent_sdk import ResultMessage
 
-    try:
-        await asyncio.wait_for(client.interrupt(), timeout=INTERRUPT_TIMEOUT_SEC)
+    async def _interrupt_and_receive() -> str | None:
+        await client.interrupt()
         async for msg in client.receive_response():
             if isinstance(msg, ResultMessage):
-                if msg.session_id and session_type in _RESUMABLE_SESSION_TYPES:
-                    _save_session_id(anima_dir, msg.session_id, session_type, thread_id=thread_id)
-                    logger.info("Saved session_id from ResultMessage after blocking interrupt")
-                break
+                return msg.session_id
+        return None
+
+    try:
+        sid = await asyncio.wait_for(_interrupt_and_receive(), timeout=INTERRUPT_TIMEOUT_SEC)
+        if sid and session_type in _RESUMABLE_SESSION_TYPES:
+            _save_session_id(anima_dir, sid, session_type, thread_id=thread_id)
+            logger.info("Saved session_id from ResultMessage after blocking interrupt")
     except Exception:
         logger.warning("interrupt() failed in blocking mode; session_id not saved")
 
