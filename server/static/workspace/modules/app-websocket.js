@@ -71,12 +71,19 @@ export function setupWebSocket(deps) {
       lastAnimaStatus[data.name] = data.status;
       addActivity("system", data.name, `Status: ${data.status}`);
     }
-    updateAnimaStatus(data.name, data.status || data);
-    if (getCurrentView() === "org") {
-      const state = typeof data.status === "object"
-        ? (data.status.state || data.status.status || "idle")
-        : String(data.status || "idle");
-      updateAvatarExpression(data.name, state.toLowerCase());
+    if (isReplayMode()) {
+      bufferReplayEvent((d) => {
+        updateAnimaStatus(d.name, d.status || d);
+        updateAvatarExpression(d.name, (typeof d.status === "object" ? (d.status.state || d.status.status || "idle") : String(d.status || "idle")).toLowerCase());
+      }, data);
+    } else {
+      updateAnimaStatus(data.name, data.status || data);
+      if (getCurrentView() === "org") {
+        const state = typeof data.status === "object"
+          ? (data.status.state || data.status.status || "idle")
+          : String(data.status || "idle");
+        updateAvatarExpression(data.name, state.toLowerCase());
+      }
     }
   }));
 
@@ -87,7 +94,7 @@ export function setupWebSocket(deps) {
 
     if (data.type === "message") {
       showMessageEffect(data.from_person, data.to_person, data.summary || "");
-      if (getCurrentView() === "org") {
+      if (getCurrentView() === "org" && !isReplayMode()) {
         showMessageLine(data.from_person, data.to_person, data.summary || "");
       }
     }
@@ -229,11 +236,15 @@ export function setupWebSocket(deps) {
 
     addActivity("chat", from, `[#${channel}] ${text}`);
 
-    updateCardActivity(from, {
-      eventType: "board_post",
-      channel,
-      summary: text.slice(0, 60),
-    });
+    if (isReplayMode()) {
+      bufferReplayEvent((d) => updateCardActivity(d.from, { eventType: "board_post", channel: d.channel, summary: d.text.slice(0, 60) }), { from, channel, text });
+    } else {
+      updateCardActivity(from, {
+        eventType: "board_post",
+        channel,
+        summary: text.slice(0, 60),
+      });
+    }
 
     addTimelineEvent({
       id: Date.now().toString(),

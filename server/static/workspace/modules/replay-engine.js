@@ -14,6 +14,7 @@ const logger = createLogger("replay-engine");
 const MAX_STREAM_ENTRIES = 4;
 const SPEED_OPTIONS = [1, 5, 10, 50, 100];
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const MAX_LIVE_BUFFER = 1000;
 
 // ── Event normalization ──────────────────────────────────────────────────────
 
@@ -128,6 +129,7 @@ export class ReplayEngine {
     this._rafId = null;
     this._lastWallMs = 0;
     this._liveBuffer = [];
+    this._lastTimeUpdateWall = 0;
   }
 
   /**
@@ -293,7 +295,9 @@ export class ReplayEngine {
    * @param {object} event
    */
   bufferLiveEvent(event) {
-    this._liveBuffer.push(event);
+    if (this._liveBuffer.length < MAX_LIVE_BUFFER) {
+      this._liveBuffer.push(event);
+    }
   }
 
   /**
@@ -327,7 +331,10 @@ export class ReplayEngine {
     }
 
     this._virtualTimeMs = nextVirtual;
-    this._onTimeUpdate(this._virtualTimeMs, this.getProgress());
+    if (now - this._lastTimeUpdateWall >= 66) {
+      this._lastTimeUpdateWall = now;
+      this._onTimeUpdate(this._virtualTimeMs, this.getProgress());
+    }
 
     if (this._virtualTimeMs >= this._timeRange.end) {
       this._playing = false;
