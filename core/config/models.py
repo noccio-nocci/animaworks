@@ -74,6 +74,7 @@ class AnimaModelConfig(BaseModel):
     supervisor: str | None = None
     speciality: str | None = None
     model: str | None = None
+    extra_mcp_servers: dict[str, dict] = Field(default_factory=dict)
 
 
 # ── Default model names (single source of truth) ─────────────────────────────
@@ -97,6 +98,7 @@ class AnimaDefaults(BaseModel):
     execution_mode: str | None = None  # None = auto-detect from model
     supervisor: str | None = None
     speciality: str | None = None
+    extra_mcp_servers: dict[str, dict] = Field(default_factory=dict)
     thinking: bool | None = None  # Extended thinking (Bedrock: reasoning_effort, Ollama: think)
     thinking_effort: str | None = None  # "low"/"medium"/"high"/"max" (default: "high")
     llm_timeout: int = 600  # default LLM API timeout (seconds)
@@ -753,6 +755,8 @@ def resolve_anima_config(
     #   3. anima_defaults (global defaults)
     resolved: dict[str, Any] = {}
     for field_name in AnimaDefaults.model_fields:
+        if field_name == "extra_mcp_servers":
+            continue
         if field_name in status_values:
             resolved[field_name] = status_values[field_name]
         elif field_name in ("supervisor", "speciality"):
@@ -764,6 +768,8 @@ def resolve_anima_config(
                 resolved[field_name] = getattr(defaults, field_name)
         else:
             resolved[field_name] = getattr(defaults, field_name)
+
+    resolved["extra_mcp_servers"] = dict(anima_entry.extra_mcp_servers)
 
     resolved_defaults = AnimaDefaults.model_validate(resolved)
 
