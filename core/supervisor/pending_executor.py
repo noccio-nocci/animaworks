@@ -37,22 +37,10 @@ def _resolve_default_workspace(anima_dir: Path) -> str:
 
     Returns absolute path string, or empty string if not set or resolution fails.
     """
-    status_path = anima_dir / "status.json"
-    if not status_path.is_file():
-        return ""
-    try:
-        data = json.loads(status_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return ""
-    alias = (data.get("default_workspace") or "").strip()
-    if not alias:
-        return ""
-    try:
-        from core.workspace import resolve_workspace
+    from core.workspace import resolve_default_workspace
 
-        return str(resolve_workspace(alias))
-    except ValueError:
-        return ""
+    resolved, _alias = resolve_default_workspace(anima_dir)
+    return str(resolved) if resolved else ""
 
 
 # ── DAG helpers ──────────────────────────────────────────────

@@ -314,25 +314,14 @@ def _read_default_workspace(anima_dir: Path) -> str:
 
     Returns a formatted string for prompt injection, or empty string if not set.
     """
-    import json
+    from core.workspace import resolve_default_workspace
 
-    status_path = anima_dir / "status.json"
-    if not status_path.is_file():
-        return ""
-    try:
-        data = json.loads(status_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return ""
-    alias = (data.get("default_workspace") or "").strip()
+    resolved, alias = resolve_default_workspace(anima_dir)
     if not alias:
         return ""
-    try:
-        from core.workspace import resolve_workspace
-
-        resolved = resolve_workspace(alias)
+    if resolved:
         return t("builder.default_workspace", path=str(resolved), alias=alias)
-    except ValueError:
-        return t("builder.default_workspace_unresolved", alias=alias)
+    return t("builder.default_workspace_unresolved", alias=alias)
 
 
 def _discover_other_animas(anima_dir: Path) -> list[str]:
