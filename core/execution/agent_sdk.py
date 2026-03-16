@@ -236,6 +236,19 @@ class AgentSDKExecutor(BaseExecutor):
             env["ANTHROPIC_BASE_URL"] = self._model_config.api_base_url
         return env
 
+    def _build_extra_mcp_servers(self) -> dict[str, dict]:
+        try:
+            from core.config.models import load_config
+
+            config = load_config()
+            anima_name = self._anima_dir.name
+            anima_config = config.animas.get(anima_name)
+            if anima_config is None:
+                return {}
+            return dict(anima_config.extra_mcp_servers)
+        except Exception:
+            return {}
+
     def _build_mcp_env(self) -> dict[str, str]:
         """Build env dict for the MCP server subprocess.
 
@@ -349,6 +362,10 @@ class AgentSDKExecutor(BaseExecutor):
         ]
         _allowed_tools.extend(["Task", "Agent"])
 
+        # extra_mcp_servers で追加したサーバーのツールも自動的に許可リストに追加
+        for server_name in self._build_extra_mcp_servers():
+            _allowed_tools.append(f"mcp__{server_name}__*")
+
         kwargs: dict[str, Any] = dict(
             system_prompt=prompt_kwarg,
             allowed_tools=_allowed_tools,
@@ -367,6 +384,7 @@ class AgentSDKExecutor(BaseExecutor):
                     "args": ["-m", "core.mcp.server"],
                     "env": self._build_mcp_env(),
                 },
+                **self._build_extra_mcp_servers(),
             },
             hooks={
                 "PreToolUse": [
