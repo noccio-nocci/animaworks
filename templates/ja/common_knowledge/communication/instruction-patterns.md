@@ -7,13 +7,13 @@
 
 | ツール | 用途 | 備考 |
 |--------|------|------|
-| `delegate_task` | 直属部下へのタスク委譲 | タスクキューに追加＋DM送信。進捗を `task_tracker` で追跡可能。直属部下のみ |
-| `send_message` | 1対1の依頼・報告・質問 | `intent` 必須: `report` / `question` のいずれか。タスク委譲（直属部下）は `delegate_task` を使用。人間エイリアス宛ては外部チャネル（Slack/Chatwork等）へ配信 |
+| `delegate_task` | 配下へのタスク委譲 | タスクキューに追加＋DM送信。進捗を `task_tracker` で追跡可能。子・孫・曾孫…全配下に使用可能 |
+| `send_message` | 1対1の依頼・報告・質問 | `intent` 必須: `report` / `question` のいずれか。配下へのタスク委譲は `delegate_task` を使用。人間エイリアス宛ては外部チャネル（Slack/Chatwork等）へ配信 |
 | `post_channel` | 全体共有（お知らせ、解決報告） | acknowledgments・感謝・FYI は Board を使用。`@名前` でメンション可能（メンション先にDM通知）。詳細は `board-guide.md` 参照 |
 | `manage_channel` | チャネルACL管理 | チャネルの作成・メンバー追加・削除・情報確認。制限チャネル運用時に使用。詳細は `board-guide.md` 参照 |
 
 **send_message の制約**:
-- `intent` は必須。`report` / `question` のみ許可。acknowledgment・感謝・FYI は Board（`post_channel`）を使用すること。タスク委譲（直属部下）は `delegate_task` を使用
+- `intent` は必須。`report` / `question` のみ許可。acknowledgment・感謝・FYI は Board（`post_channel`）を使用すること。配下へのタスク委譲は `delegate_task` を使用
 - 1 run あたり最大 N 宛先、各宛先1通まで。N はロール別デフォルト（general=2, ops=2, writer=3, researcher=3, engineer=5, manager=10）。`status.json` の `max_recipients_per_run` でオーバーライド可能。N 人以上への伝達は Board を使用
 - オプション: `thread_id`（スレッドID）、`reply_to`（返信先メッセージID）で会話のスレッドを維持可能
 
@@ -47,9 +47,9 @@ send_message(
     intent="question"
 )
 ```
-問題点: 何のデータか、どの期間か、どの形式で出力するか、いつまでかが不明。直属部下への依頼なら `delegate_task` を使用すること。
+問題点: 何のデータか、どの期間か、どの形式で出力するか、いつまでかが不明。配下への依頼なら `delegate_task` を使用すること。
 
-**良い指示:**（直属部下なら `delegate_task` を使用。同僚・非直属への依頼は `intent="question"`）
+**良い指示:**（配下なら `delegate_task` を使用。同僚・非配下への依頼は `intent="question"`）
 ```
 send_message(
     to="alice",
@@ -75,7 +75,7 @@ send_message(
     intent="question"
 )
 ```
-問題点: どのAPI、どのエラー、調査の深さ、報告形式が不明。直属部下なら `delegate_task` を使用すること。
+問題点: どのAPI、どのエラー、調査の深さ、報告形式が不明。配下なら `delegate_task` を使用すること。
 
 **良い指示:**
 ```
@@ -127,9 +127,9 @@ send_message(
 
 ## タスク委任パターン
 
-### パターン1: 単発タスク（直属部下への委譲）
+### パターン1: 単発タスク（配下への委譲）
 
-一度きりの作業を**直属部下**に委譲する場合、`delegate_task` を使用する。タスクキューに追加され、進捗を `task_tracker` で追跡できる。
+一度きりの作業を**配下**（子・孫・曾孫…）に委譲する場合、`delegate_task` を使用する。タスクキューに追加され、進捗を `task_tracker` で追跡できる。
 
 必須パラメータ: `name`（委譲先）、`instruction`（指示内容）、`deadline`（期限。相対形式 `30m`/`2h`/`1d` または ISO8601）。オプション: `summary`（1行要約）。
 
@@ -149,9 +149,9 @@ delegate_task(
 )
 ```
 
-### パターン1b: 単発タスク（同僚・非直属への依頼）
+### パターン1b: 単発タスク（同僚・非配下への依頼）
 
-直属部下でない相手への依頼は `send_message` で `intent="question"` を指定する。
+配下でない相手への依頼は `send_message` で `intent="question"` を指定する。
 
 ```
 send_message(
@@ -199,7 +199,7 @@ send_message(
 
 ### パターン3: 段階的タスク（マイルストーン付き）
 
-大きなタスクを段階に分けて委任するパターン。直属部下なら `delegate_task` を使用。同僚・非直属への依頼は `intent="question"`。
+大きなタスクを段階に分けて委任するパターン。配下なら `delegate_task` を使用。同僚・非配下への依頼は `intent="question"`。
 
 ```
 send_message(
@@ -257,7 +257,7 @@ send_message(
 
 ### 成果物受領後のフィードバック
 
-修正依頼は委譲にあたるため、直属部下なら `delegate_task` を使用。同僚・非直属への依頼は `intent="question"` を指定する。
+修正依頼は委譲にあたるため、配下なら `delegate_task` を使用。同僚・非配下への依頼は `intent="question"` を指定する。
 
 ```
 send_message(
@@ -315,7 +315,7 @@ send_message(
 
 ## 指示のテンプレート
 
-以下のテンプレートを `send_message` で使用する際は、`intent` を適切に指定すること（依頼=question、報告=report、質問=question。直属部下へのタスク委譲は `delegate_task` を使用）。
+以下のテンプレートを `send_message` で使用する際は、`intent` を適切に指定すること（依頼=question、報告=report、質問=question。配下へのタスク委譲は `delegate_task` を使用）。
 
 ### 汎用タスク依頼テンプレート
 

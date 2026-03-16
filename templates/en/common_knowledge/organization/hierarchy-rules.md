@@ -66,14 +66,14 @@ Anima with subordinates have dedicated tools for organizational management autom
 | `org_dashboard` | All subordinates (recursive) | Display process status, last activity, current tasks, and task count for all subordinates in a tree | None |
 | `ping_subordinate` | All subordinates (recursive) | Liveness check for subordinates. Omit `name` for all at once, specify for a single Anima | `name` (optional) |
 | `read_subordinate_state` | All subordinates (recursive) | Read subordinate's `state/current_task.md` and `state/pending.md` | `name` (required) |
-| `delegate_task` | Direct subordinates only | Delegate task (add to subordinate queue + send DM + create tracking entry on your side) | `name`, `instruction`, `deadline` (required), `summary` (optional) |
-| `task_tracker` | Your delegated tasks | Track progress of tasks delegated via `delegate_task` from subordinate queue | `status` (optional: "all"/"active"/"completed", default "active") |
-| `audit_subordinate` | All subordinates (recursive) | Generate activity timeline or statistics summary. Omit `name` to audit all subordinates at once (merged timeline) | `name` (optional), `mode` (optional: `"report"`/`"summary"`, default `"report"`), `hours` (optional: 1–168, default 24), `direct_only` (optional: boolean), `since` (optional: `"HH:MM"` start time today, takes precedence over hours) |
-| `disable_subordinate` | Direct subordinates | Disable subordinate (status.json enabled=false, process stops in ~30 seconds) | `name` (required), `reason` (optional) |
-| `enable_subordinate` | Direct subordinates | Re-enable a disabled subordinate | `name` (required) |
-| `set_subordinate_model` | Direct subordinates | Change subordinate's model (updates status.json; `restart_subordinate` required to apply) | `name`, `model` (required), `reason` (optional) |
-| `set_subordinate_background_model` | Direct subordinates | Change subordinate's background model (Heartbeat/Inbox/Cron). Empty string to clear. `restart_subordinate` required to apply | `name`, `model` (required), `credential`, `reason` (optional) |
-| `restart_subordinate` | Direct subordinates | Restart subordinate process (restart_requested flag, restarts in ~30 seconds) | `name` (required), `reason` (optional) |
+| `delegate_task` | All descendants (recursive) | Delegate task (add to descendant queue + send DM + create tracking entry on your side) | `name`, `instruction`, `deadline` (required), `summary` (optional) |
+| `task_tracker` | Your delegated tasks | Track progress of tasks delegated via `delegate_task` from descendant queue | `status` (optional: "all"/"active"/"completed", default "active") |
+| `audit_subordinate` | All descendants (recursive) | Generate activity timeline or statistics summary. Omit `name` to audit all descendants at once (merged timeline) | `name` (optional), `mode` (optional: `"report"`/`"summary"`, default `"report"`), `hours` (optional: 1–168, default 24), `direct_only` (optional: boolean), `since` (optional: `"HH:MM"` start time today, takes precedence over hours) |
+| `disable_subordinate` | All descendants (recursive) | Disable descendant (status.json enabled=false, process stops in ~30 seconds) | `name` (required), `reason` (optional) |
+| `enable_subordinate` | All descendants (recursive) | Re-enable a disabled descendant | `name` (required) |
+| `set_subordinate_model` | All descendants (recursive) | Change descendant's model (updates status.json; `restart_subordinate` required to apply) | `name`, `model` (required), `reason` (optional) |
+| `set_subordinate_background_model` | All descendants (recursive) | Change descendant's background model (Heartbeat/Inbox/Cron). Empty string to clear. `restart_subordinate` required to apply | `name`, `model` (required), `credential`, `reason` (optional) |
+| `restart_subordinate` | All descendants (recursive) | Restart descendant process (restart_requested flag, restarts in ~30 seconds) | `name` (required), `reason` (optional) |
 
 `check_permissions` is available to all Anima (view your permission list).
 

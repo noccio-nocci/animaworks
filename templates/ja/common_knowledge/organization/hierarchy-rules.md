@@ -66,14 +66,14 @@ alice宛: キャッシュ戦略について判断をお願いしたいです。
 | `org_dashboard` | 全配下（再帰） | 配下全体のプロセス状態・最終アクティビティ・現在タスク・タスク数をツリー表示 | なし |
 | `ping_subordinate` | 全配下（再帰） | 配下の生存確認。`name` 省略で全員一括、指定で単一 Anima のみ | `name`（任意） |
 | `read_subordinate_state` | 全配下（再帰） | 配下の `state/current_task.md` と `state/pending.md` を読み取り | `name`（必須） |
-| `delegate_task` | 直属部下のみ | タスク委譲（部下キュー追加 + DM送信 + 自分側追跡エントリ作成） | `name`, `instruction`, `deadline`（必須）, `summary`（任意） |
-| `task_tracker` | 自分の委譲タスク | `delegate_task` で委譲したタスクの進捗を部下側キューから追跡 | `status`（任意: "all"/"active"/"completed", デフォルト "active"） |
+| `delegate_task` | 全配下（再帰） | タスク委譲（配下キュー追加 + DM送信 + 自分側追跡エントリ作成） | `name`, `instruction`, `deadline`（必須）, `summary`（任意） |
+| `task_tracker` | 自分の委譲タスク | `delegate_task` で委譲したタスクの進捗を配下側キューから追跡 | `status`（任意: "all"/"active"/"completed", デフォルト "active"） |
 | `audit_subordinate` | 全配下（再帰） | 活動タイムラインまたは統計サマリーを生成。`name` 省略で全配下を一括監査（統合タイムライン） | `name`（任意）, `mode`（任意: `"report"`/`"summary"`, デフォルト `"report"`）, `hours`（任意: 1〜168, デフォルト 24）, `direct_only`（任意: boolean）, `since`（任意: `"HH:MM"` 当日の開始時刻、指定時はhoursより優先） |
-| `disable_subordinate` | 直属部下 | 部下を休止（status.json enabled=false、約30秒でプロセス停止） | `name`（必須）, `reason`（任意） |
-| `enable_subordinate` | 直属部下 | 休止した部下を再開 | `name`（必須） |
-| `set_subordinate_model` | 直属部下 | 部下のモデルを変更（status.json 更新。反映には `restart_subordinate` が必要） | `name`, `model`（必須）, `reason`（任意） |
-| `set_subordinate_background_model` | 直属部下 | 部下のバックグラウンドモデル（Heartbeat/Inbox/Cron用）を変更。空文字でクリア。反映には `restart_subordinate` が必要 | `name`, `model`（必須）, `credential`, `reason`（任意） |
-| `restart_subordinate` | 直属部下 | 部下プロセスを再起動（restart_requested フラグ、約30秒で再起動） | `name`（必須）, `reason`（任意） |
+| `disable_subordinate` | 全配下（再帰） | 配下を休止（status.json enabled=false、約30秒でプロセス停止） | `name`（必須）, `reason`（任意） |
+| `enable_subordinate` | 全配下（再帰） | 休止した配下を再開 | `name`（必須） |
+| `set_subordinate_model` | 全配下（再帰） | 配下のモデルを変更（status.json 更新。反映には `restart_subordinate` が必要） | `name`, `model`（必須）, `reason`（任意） |
+| `set_subordinate_background_model` | 全配下（再帰） | 配下のバックグラウンドモデル（Heartbeat/Inbox/Cron用）を変更。空文字でクリア。反映には `restart_subordinate` が必要 | `name`, `model`（必須）, `credential`, `reason`（任意） |
+| `restart_subordinate` | 全配下（再帰） | 配下プロセスを再起動（restart_requested フラグ、約30秒で再起動） | `name`（必須）, `reason`（任意） |
 
 `check_permissions` は全 Anima が利用可能（自分の権限一覧を確認）。
 

@@ -10,29 +10,24 @@ description: >-
 
 # Skill: Subordinate Management (Supervisor Tools)
 
-Supervisor tools automatically enabled for Anima that have subordinates. Manages pause, resume, model change, background model change, and restart of direct subordinates; status confirmation across all subordinates; and task delegation with progress tracking.
+Supervisor tools automatically enabled for Anima that have subordinates. All tools work on all descendants (children, grandchildren, great-grandchildren, etc.) — no distinction between direct and transitive subordinates.
 
 ## Available Tools
 
-### Direct Subordinates Only
+### All Descendants (Children, Grandchildren, and Beyond)
 
 | Tool | Purpose |
 |------|---------|
-| `disable_subordinate` | Pause subordinate (status.json `enabled: false` → process stop + prevent auto-resume) |
-| `enable_subordinate` | Resume paused subordinate |
-| `set_subordinate_model` | Change subordinate's main LLM model (updates status.json; requires `restart_subordinate` to take effect) |
-| `set_subordinate_background_model` | Change subordinate's background model (for heartbeat/cron; updates status.json; requires `restart_subordinate` to take effect; empty string to clear) |
-| `restart_subordinate` | Restart subordinate process (status.json `restart_requested` flag; Reconciliation restarts within ~30 seconds) |
-| `delegate_task` | Delegate task to direct subordinate (queue add + DM send + tracking entry on your side) |
-
-### All Subordinates (Including Grandchildren)
-
-| Tool | Purpose |
-|------|---------|
-| `org_dashboard` | Tree view of process status, last activity, current task, and task count for all subordinates |
-| `ping_subordinate` | Liveness check for subordinates (`name` omitted = all at once, specified = single) |
-| `read_subordinate_state` | Read subordinate's `current_task.md` and `pending.md` |
-| `audit_subordinate` | Comprehensive audit of subordinate's recent activity (summary, tasks, errors, tool usage, communication) |
+| `disable_subordinate` | Pause descendant (status.json `enabled: false` → process stop + prevent auto-resume) |
+| `enable_subordinate` | Resume paused descendant |
+| `set_subordinate_model` | Change descendant's main LLM model (updates status.json; requires `restart_subordinate` to take effect) |
+| `set_subordinate_background_model` | Change descendant's background model (for heartbeat/cron; updates status.json; requires `restart_subordinate` to take effect; empty string to clear) |
+| `restart_subordinate` | Restart descendant process (status.json `restart_requested` flag; Reconciliation restarts within ~30 seconds) |
+| `delegate_task` | Delegate task to descendant (queue add + DM send + tracking entry on your side) |
+| `org_dashboard` | Tree view of process status, last activity, current task, and task count for all descendants |
+| `ping_subordinate` | Liveness check for descendants (`name` omitted = all at once, specified = single) |
+| `read_subordinate_state` | Read descendant's `current_task.md` and `pending.md` |
+| `audit_subordinate` | Comprehensive audit of descendant's recent activity (summary, tasks, errors, tool usage, communication) |
 
 ### Delegated Task Tracking
 
@@ -114,7 +109,5 @@ For assigning workspaces to subordinates (primary working directory), see the `w
 
 ## Permissions
 
-- **Direct subordinates only**: disable_subordinate, enable_subordinate, set_subordinate_model, set_subordinate_background_model, restart_subordinate, delegate_task
-- **All subordinates (recursive)**: org_dashboard, ping_subordinate, read_subordinate_state, audit_subordinate
-- You cannot pause, resume, change model, or delegate to subordinates of subordinates (grandchildren). Ask their supervisor
+- **All descendants (recursive)**: All tools work on any descendant — no distinction between direct subordinates and grandchildren
 - You cannot operate on yourself

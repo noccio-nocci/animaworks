@@ -9,25 +9,20 @@ description: >-
 
 # スキル: 部下管理（スーパーバイザーツール）
 
-部下を持つAnimaに自動で有効化されるスーパーバイザーツール群。直属部下の休止・復帰・モデル変更・バックグラウンドモデル変更・再起動、配下全体の状態確認、タスク委譲と進捗追跡を行う。
+部下を持つAnimaに自動で有効化されるスーパーバイザーツール群。全配下（子・孫・曾孫…）の休止・復帰・モデル変更・バックグラウンドモデル変更・再起動、状態確認、タスク委譲と進捗追跡を行う。
 
 ## 使えるツール
 
-### 直属部下のみ操作可能
+### 全配下（子・孫・曾孫…すべて）に操作可能
 
 | ツール | 用途 |
 |--------|------|
-| `disable_subordinate` | 部下を休止（status.json `enabled: false` → プロセス停止 + 自動復帰防止） |
-| `enable_subordinate` | 休止中の部下を復帰 |
-| `set_subordinate_model` | 部下のLLMモデル（メイン）を変更（status.json 更新。反映には `restart_subordinate` が必要） |
-| `set_subordinate_background_model` | 部下のバックグラウンドモデル（heartbeat/cron用）を変更（status.json 更新。反映には `restart_subordinate` が必要。空文字でクリア） |
-| `restart_subordinate` | 部下プロセスを再起動（status.json `restart_requested` フラグ。Reconciliation が約30秒以内に再起動） |
-| `delegate_task` | 直属部下にタスクを委譲（キュー追加 + DM送信 + 自分側追跡エントリ作成） |
-
-### 全配下（孫以下含む）に操作可能
-
-| ツール | 用途 |
-|--------|------|
+| `disable_subordinate` | 配下を休止（status.json `enabled: false` → プロセス停止 + 自動復帰防止） |
+| `enable_subordinate` | 休止中の配下を復帰 |
+| `set_subordinate_model` | 配下のLLMモデル（メイン）を変更（status.json 更新。反映には `restart_subordinate` が必要） |
+| `set_subordinate_background_model` | 配下のバックグラウンドモデル（heartbeat/cron用）を変更（status.json 更新。反映には `restart_subordinate` が必要。空文字でクリア） |
+| `restart_subordinate` | 配下プロセスを再起動（status.json `restart_requested` フラグ。Reconciliation が約30秒以内に再起動） |
+| `delegate_task` | 配下にタスクを委譲（キュー追加 + DM送信 + 自分側追跡エントリ作成） |
 | `org_dashboard` | 配下全体のプロセス状態・最終アクティビティ・現在タスク・タスク数をツリー表示 |
 | `ping_subordinate` | 配下の生存確認（`name` 省略で全員一括、指定で単一） |
 | `read_subordinate_state` | 配下の `current_task.md` と `pending.md` を読み取り |
@@ -113,7 +108,5 @@ task_tracker(status="active")      # 委譲タスクの進捗確認（status: al
 
 ## 権限
 
-- **直属部下のみ**: disable_subordinate, enable_subordinate, set_subordinate_model, set_subordinate_background_model, restart_subordinate, delegate_task
-- **全配下（再帰）**: org_dashboard, ping_subordinate, read_subordinate_state, audit_subordinate
-- 部下の部下（孫）の休止・復帰・モデル変更・委譲は不可。その部下の上司に依頼すること
+- **全配下（子・孫・曾孫…再帰）**: 全ツールが使用可能。直属部下と孫以下で区別しない
 - 自分自身の操作は不可
