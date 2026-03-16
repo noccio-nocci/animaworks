@@ -27,9 +27,7 @@ _MIN_JAPANESE_CHARS = 2
 
 _SCAN_DIRS = ("core", "cli", "server")
 
-_EXCLUDED_FILES: set[str] = {
-    "core/i18n.py",
-}
+_EXCLUDED_FILES: set[str] = set()
 
 _EXCLUDED_DIRS: set[str] = {
     "archive",
@@ -37,6 +35,7 @@ _EXCLUDED_DIRS: set[str] = {
     ".venv",
     "tests",
     "node_modules",
+    "i18n",
 }
 
 _LOGGER_METHODS: set[str] = {
@@ -98,7 +97,7 @@ KNOWN_VIOLATIONS: dict[str, int] = {
     # tool descriptions — already have ja/en dict structure
     "core/tooling/prompt_db.py": 26,
     # Japanese field names in schema descriptions (上司, 基本情報)
-    "core/tooling/schemas.py": 2,
+    "core/tooling/schemas/admin.py": 2,
     # user-facing message (バックグラウンドタスク投入)
     "core/tools/__init__.py": 1,
     # tool guide with Japanese content

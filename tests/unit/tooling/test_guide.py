@@ -40,21 +40,21 @@ class TestBuildToolsGuide:
 
 
 class TestLoadToolSchemas:
-    @patch("core.tooling.schemas.load_external_schemas")
+    @patch("core.tooling.schemas.loader.load_external_schemas")
     def test_empty_registry_no_personal(self, mock_ext):
         mock_ext.return_value = []
         result = load_tool_schemas([], None)
         assert result == []
 
-    @patch("core.tooling.schemas.load_external_schemas")
+    @patch("core.tooling.schemas.loader.load_external_schemas")
     def test_delegates_to_load_external_schemas(self, mock_ext):
         mock_ext.return_value = [{"name": "web_search", "description": "d", "parameters": {}}]
         result = load_tool_schemas(["web_search"])
         mock_ext.assert_called_once_with(["web_search"])
         assert len(result) == 1
 
-    @patch("core.tooling.schemas.load_personal_tool_schemas")
-    @patch("core.tooling.schemas.load_external_schemas")
+    @patch("core.tooling.schemas.loader.load_personal_tool_schemas")
+    @patch("core.tooling.schemas.loader.load_external_schemas")
     def test_includes_personal_tool_schemas(self, mock_ext, mock_personal):
         mock_ext.return_value = []
         mock_personal.return_value = [
@@ -70,8 +70,8 @@ class TestLoadToolSchemas:
         assert result[0]["name"] == "my_tool"
         assert result[0]["parameters"] == {"type": "object", "properties": {}}
 
-    @patch("core.tooling.schemas.load_personal_tool_schemas")
-    @patch("core.tooling.schemas.load_external_schemas")
+    @patch("core.tooling.schemas.loader.load_personal_tool_schemas")
+    @patch("core.tooling.schemas.loader.load_external_schemas")
     def test_personal_tool_without_get_tool_schemas(self, mock_ext, mock_personal):
         mock_ext.return_value = []
         mock_personal.return_value = []
@@ -79,8 +79,8 @@ class TestLoadToolSchemas:
         result = load_tool_schemas([], {"my_tool": "/path/to/tool.py"})
         assert result == []
 
-    @patch("core.tooling.schemas.load_personal_tool_schemas")
-    @patch("core.tooling.schemas.load_external_schemas")
+    @patch("core.tooling.schemas.loader.load_personal_tool_schemas")
+    @patch("core.tooling.schemas.loader.load_external_schemas")
     def test_personal_tool_import_error(self, mock_ext, mock_personal):
         mock_ext.return_value = []
         mock_personal.return_value = []
@@ -88,8 +88,8 @@ class TestLoadToolSchemas:
         result = load_tool_schemas([], {"my_tool": "/path/to/tool.py"})
         assert result == []
 
-    @patch("core.tooling.schemas.load_personal_tool_schemas")
-    @patch("core.tooling.schemas.load_external_schemas")
+    @patch("core.tooling.schemas.loader.load_personal_tool_schemas")
+    @patch("core.tooling.schemas.loader.load_external_schemas")
     def test_personal_tool_uses_parameters_fallback(self, mock_ext, mock_personal):
         mock_ext.return_value = []
         mock_personal.return_value = [

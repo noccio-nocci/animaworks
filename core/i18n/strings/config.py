@@ -1,0 +1,215 @@
+# AnimaWorks - Digital Anima Framework
+# Copyright (C) 2026 AnimaWorks Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# This file is part of AnimaWorks core/server, licensed under Apache-2.0.
+# See LICENSE for the full license text.
+
+"""Domain-specific i18n strings."""
+
+from __future__ import annotations
+
+STRINGS: dict[str, dict[str, str]] = {
+    "anima.agent_error": {
+        "ja": "[ERROR: エージェント実行中にエラーが発生しました]",
+        "en": "[ERROR: An error occurred during agent execution]",
+    },
+    "anima.bg_notif_result": {
+        "ja": "- 結果: {summary}",
+        "en": "- Result: {summary}",
+    },
+    "anima.bg_notif_status": {
+        "ja": "- ステータス: {status}",
+        "en": "- Status: {status}",
+    },
+    "anima.bg_notif_task_id": {
+        "ja": "- タスクID: {task_id}",
+        "en": "- Task ID: {task_id}",
+    },
+    "anima.bg_notif_tool": {
+        "ja": "- ツール: {tool}",
+        "en": "- Tool: {tool}",
+    },
+    "anima.bg_task_done": {
+        "ja": "バックグラウンドタスク完了: {tool}",
+        "en": "Background task completed: {tool}",
+    },
+    "anima.bg_task_failed": {
+        "ja": "バックグラウンドタスク失敗: {tool}",
+        "en": "Background task failed: {tool}",
+    },
+    "anima.bootstrap_prompt": {
+        "ja": "あなたの bootstrap.md ファイルを読み、指示に従ってください。",
+        "en": "Read your bootstrap.md file and follow its instructions.",
+    },
+    "anima.consolidation_end": {
+        "ja": "{type}記憶統合完了",
+        "en": "{type} consolidation completed",
+    },
+    "anima.consolidation_error": {
+        "ja": "記憶統合エラー: {exc}",
+        "en": "Consolidation error: {exc}",
+    },
+    "anima.consolidation_start": {
+        "ja": "{type}記憶統合開始",
+        "en": "{type} consolidation started",
+    },
+    "anima.cron_cmd_error": {
+        "ja": "run_cron_commandエラー: {exc}",
+        "en": "run_cron_command error: {exc}",
+    },
+    "anima.cron_cmd_summary": {
+        "ja": "コマンド: {task}",
+        "en": "Command: {task}",
+    },
+    "anima.cron_task_error": {
+        "ja": "run_cron_taskエラー: {exc}",
+        "en": "run_cron_task error: {exc}",
+    },
+    "anima.cron_task_summary": {
+        "ja": "タスク: {task}",
+        "en": "Task: {task}",
+    },
+    "anima.greeting_error": {
+        "ja": "[ERROR: 挨拶生成中にエラーが発生しました]",
+        "en": "[ERROR: An error occurred during greeting generation]",
+    },
+    "anima.heartbeat_episode": {
+        "ja": ("## {ts} ハートビート活動\n\n{summary}"),
+        "en": ("## {ts} Heartbeat activity\n\n{summary}"),
+    },
+    "anima.heartbeat_error": {
+        "ja": "run_heartbeatエラー: {exc}",
+        "en": "run_heartbeat error: {exc}",
+    },
+    "anima.heartbeat_msgs_processed": {
+        "ja": ("\n\n（{count}件のメッセージを処理）"),
+        "en": ("\n\n({count} messages processed)"),
+    },
+    "anima.heartbeat_start": {
+        "ja": "定期巡回開始",
+        "en": "Periodic check started",
+    },
+    "anima.inbox_error": {
+        "ja": "inbox処理エラー: {exc}",
+        "en": "inbox processing error: {exc}",
+    },
+    "anima.inbox_start": {
+        "ja": "Inbox MSG処理開始",
+        "en": "Inbox message processing started",
+    },
+    "anima.initializing": {
+        "ja": "現在初期化中です。しばらくお待ちください。",
+        "en": "Initializing. Please wait.",
+    },
+    "anima.msg_received_episode": {
+        "ja": ("## {ts} {from_person}からのメッセージ受信\n\n**送信者**: {from_person}\n**内容**:\n{content}"),
+        "en": ("## {ts} Message received from {from_person}\n\n**Sender**: {from_person}\n**Content**:\n{content}"),
+    },
+    "anima.no_activity_log": {
+        "ja": "(アクティビティログなし)",
+        "en": "(No activity log)",
+    },
+    "anima.no_episodes_today": {
+        "ja": "(本日のエピソードはありません)",
+        "en": "(No episodes today)",
+    },
+    "anima.platform_context": {
+        "ja": (
+            "[platform_context: このメッセージは {source} 経由で受信しました。あなたのテキスト応答は自動的に {source} 経由で送信者に返されます。send_message ツールで別チャネルへの送信を試みないでください。]"
+        ),
+        "en": (
+            "[platform_context: This message was received via {source}. Your text response will be automatically sent back to the sender via {source}. Do NOT attempt to send via another channel using the send_message tool.]"
+        ),
+    },
+    "anima.process_message_error": {
+        "ja": "process_messageエラー: {exc}",
+        "en": "process_message error: {exc}",
+    },
+    "anima.process_stream_error": {
+        "ja": "process_message_streamエラー: {exc}",
+        "en": "process_message_stream error: {exc}",
+    },
+    "anima.recovery_crash_info": {
+        "ja": (
+            "### クラッシュ復旧情報\n\n- 発生日時: {ts}\n- トリガー: {trigger}\n- 回復テキスト長: {recovered_chars}文字\n- ツール呼び出し数: {tool_calls}回\n- 原因: プロセスが予期せず終了しました（SIGKILL/OOM等の可能性）"
+        ),
+        "en": (
+            "### Crash recovery information\n\n- Occurred at: {ts}\n- Trigger: {trigger}\n- Recovered text length: {recovered_chars} chars\n- Tool calls: {tool_calls}\n- Cause: Process terminated unexpectedly (possible SIGKILL/OOM)"
+        ),
+    },
+    "anima.recovery_error_info": {
+        "ja": (
+            "### エラー情報\n\n- エラー種別: {exc_type}\n- エラー内容: {exc_msg}\n- 発生日時: {ts}\n- 未処理メッセージ数: {count}"
+        ),
+        "en": (
+            "### Error information\n\n- Error type: {exc_type}\n- Error message: {exc_msg}\n- Occurred at: {ts}\n- Unprocessed message count: {count}"
+        ),
+    },
+    "anima.reflections_header": {
+        "ja": "振り返り（REFLECTION）",
+        "en": "Reflections",
+    },
+    "anima.reflections_intro": {
+        "ja": "エピソード中の [REFLECTION] タグから抽出された意識的な洞察です。優先的に知識化を検討してください。",
+        "en": (
+            "Conscious insights extracted from [REFLECTION] tags in episodes. Prioritize these for knowledge extraction."
+        ),
+    },
+    "anima.response_interrupted": {
+        "ja": "[応答が中断されました]",
+        "en": "[Response was interrupted]",
+    },
+    "anima.response_interrupted_prefix": {
+        "ja": ("\n[応答が中断されました]"),
+        "en": ("\n[Response was interrupted]"),
+    },
+    "anima.status_idle": {
+        "ja": "待機中",
+        "en": "Idle",
+    },
+    "anima.task_none": {
+        "ja": "特になし",
+        "en": "None",
+    },
+    "anima.unread_prefix": {
+        "ja": "- {from_person} [⚠️ 未返信{count}回目]: ",
+        "en": "- {from_person} [⚠️ Unreplied #{count}]: ",
+    },
+    "anima.visit_desk": {
+        "ja": "[デスクを訪問]",
+        "en": "[Desk visit]",
+    },
+    "config.anima_count_detail": {
+        "ja": "{count}名",
+        "en": "{count} anima(s)",
+    },
+    "config.anima_registration": {
+        "ja": "Anima登録",
+        "en": "Anima registration",
+    },
+    "config.anthropic_api_key": {
+        "ja": "Anthropic APIキー",
+        "en": "Anthropic API key",
+    },
+    "config.config_file": {
+        "ja": "設定ファイル",
+        "en": "Config file",
+    },
+    "config.google_api_key": {
+        "ja": "Google APIキー",
+        "en": "Google API key",
+    },
+    "config.init_complete": {
+        "ja": "初期化完了",
+        "en": "Initialization complete",
+    },
+    "config.openai_api_key": {
+        "ja": "OpenAI APIキー",
+        "en": "OpenAI API key",
+    },
+    "config.shared_dir": {
+        "ja": "共有ディレクトリ",
+        "en": "Shared directory",
+    },
+}
