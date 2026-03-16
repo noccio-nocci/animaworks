@@ -95,6 +95,7 @@ class ModelConfig(BaseModel):
     mode_s_auth: str | None = None  # Mode S auth: "max"|"api"|"bedrock"|"vertex"|None(=max)
     frequency_penalty: float | None = None
     presence_penalty: float | None = None
+    extra_mcp_servers: dict[str, dict] = Field(default_factory=dict)
 
 
 class AnimaConfig(BaseModel):

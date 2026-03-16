@@ -22,11 +22,12 @@ from core.schemas import ModelConfig
 def _make_executor(
     anima_dir: Path,
     model: str = "claude-sonnet-4-6",
+    extra_mcp_servers: dict[str, dict] | None = None,
 ) -> AgentSDKExecutor:
     """Create an AgentSDKExecutor with minimal config."""
     from core.execution.agent_sdk import AgentSDKExecutor
 
-    mc = ModelConfig(model=model, api_key="test-key")
+    mc = ModelConfig(model=model, api_key="test-key", extra_mcp_servers=extra_mcp_servers or {})
     return AgentSDKExecutor(model_config=mc, anima_dir=anima_dir)
 
 
@@ -238,6 +239,83 @@ class TestMcpServerConfig:
             await executor.execute(prompt="hello", system_prompt="sys")
 
         assert "mcp__aw__*" in captured_options["allowed_tools"]
+
+    @pytest.mark.asyncio
+    async def test_extra_mcp_servers_merged_into_mcp_servers(
+        self,
+        tmp_path: Path,
+        mock_sdk,
+    ) -> None:
+        """extra_mcp_servers are merged into mcp_servers dict."""
+        mock_module, mock_types, captured_options = mock_sdk
+        extra = {
+            "browser": {"command": "npx", "args": ["playwright", "run-server"]},
+            "jira": {"command": "python", "args": ["-m", "jira_mcp"]},
+        }
+        executor = _make_executor(tmp_path / "animas" / "test-anima", extra_mcp_servers=extra)
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "claude_agent_sdk": mock_module,
+                "claude_agent_sdk.types": mock_types,
+            },
+        ):
+            await executor.execute(prompt="hello", system_prompt="sys")
+
+        mcp_servers = captured_options["mcp_servers"]
+        # Built-in server should still be present
+        assert "aw" in mcp_servers
+        # Extra servers should be merged as-is
+        assert mcp_servers["browser"]["command"] == "npx"
+        assert mcp_servers["jira"]["args"] == ["-m", "jira_mcp"]
+
+    @pytest.mark.asyncio
+    async def test_extra_mcp_servers_add_allowed_tool_wildcards(
+        self,
+        tmp_path: Path,
+        mock_sdk,
+    ) -> None:
+        """extra_mcp_servers also add mcp__{name}__* wildcards to allowed_tools."""
+        mock_module, mock_types, captured_options = mock_sdk
+        extra = {
+            "browser": {"command": "npx", "args": ["playwright", "run-server"]},
+        }
+        executor = _make_executor(tmp_path / "animas" / "test-anima", extra_mcp_servers=extra)
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "claude_agent_sdk": mock_module,
+                "claude_agent_sdk.types": mock_types,
+            },
+        ):
+            await executor.execute(prompt="hello", system_prompt="sys")
+
+        allowed = captured_options["allowed_tools"]
+        assert "mcp__browser__*" in allowed
+
+    @pytest.mark.asyncio
+    async def test_empty_extra_mcp_servers_has_no_effect(
+        self,
+        tmp_path: Path,
+        mock_sdk,
+    ) -> None:
+        """When extra_mcp_servers is empty, behaviour matches default (aw only)."""
+        mock_module, mock_types, captured_options = mock_sdk
+        executor = _make_executor(tmp_path / "animas" / "test-anima", extra_mcp_servers={})
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "claude_agent_sdk": mock_module,
+                "claude_agent_sdk.types": mock_types,
+            },
+        ):
+            await executor.execute(prompt="hello", system_prompt="sys")
+
+        mcp_servers = captured_options["mcp_servers"]
+        assert set(mcp_servers.keys()) == {"aw"}
 
 
 # ── TestBashSendRemoved ─────────────────────────────────────

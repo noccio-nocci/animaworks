@@ -221,6 +221,10 @@ class AgentSDKExecutor(BaseExecutor):
     def supports_streaming(self) -> bool:  # noqa: D102
         return True
 
+    @property
+    def _extra_mcp_servers(self) -> dict[str, dict]:
+        return self._model_config.extra_mcp_servers or {}
+
     def _resolve_agent_sdk_model(self) -> str:
         """Return the model name suitable for Agent SDK (strip provider prefix)."""
         import re
@@ -424,6 +428,10 @@ class AgentSDKExecutor(BaseExecutor):
         ]
         _allowed_tools.extend(["Task", "Agent"])
 
+        # extra_mcp_servers で追加したサーバーの MCP ツールも許可リストに追加
+        for server_name in self._extra_mcp_servers:
+            _allowed_tools.append(f"mcp__{server_name}__*")
+
         kwargs: dict[str, Any] = dict(
             system_prompt=prompt_kwarg,
             allowed_tools=_allowed_tools,
@@ -442,6 +450,7 @@ class AgentSDKExecutor(BaseExecutor):
                     "args": ["-m", "core.mcp.server"],
                     "env": self._build_mcp_env(),
                 },
+                **self._extra_mcp_servers,
             },
             hooks={
                 "PreToolUse": [

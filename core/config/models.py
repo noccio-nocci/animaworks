@@ -97,6 +97,7 @@ class AnimaDefaults(BaseModel):
     execution_mode: str | None = None  # None = auto-detect from model
     supervisor: str | None = None
     speciality: str | None = None
+    extra_mcp_servers: dict[str, dict] = Field(default_factory=dict)
     thinking: bool | None = None  # Extended thinking (Bedrock: reasoning_effort, Ollama: think)
     thinking_effort: str | None = None  # "low"/"medium"/"high"/"max" (default: "high")
     llm_timeout: int = 600  # default LLM API timeout (seconds)
@@ -704,6 +705,7 @@ def _load_status_json(anima_dir: Path) -> dict[str, Any]:
         "max_outbound_per_day": "max_outbound_per_day",
         "max_recipients_per_run": "max_recipients_per_run",
         "default_workspace": "default_workspace",
+        "extra_mcp_servers": "extra_mcp_servers",
     }
     # Fields where None is a valid explicit value (e.g. supervisor=null
     # means "top-level / no supervisor").  Empty string is still "not set".
@@ -1066,6 +1068,7 @@ def load_model_config(anima_dir: Path) -> ModelConfig:
         llm_timeout=resolved.llm_timeout,
         extra_keys=credential.keys or {},
         mode_s_auth=resolved.mode_s_auth,
+        extra_mcp_servers=resolved.extra_mcp_servers,
     )
 
 
