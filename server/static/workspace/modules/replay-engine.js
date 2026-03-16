@@ -146,12 +146,14 @@ export class ReplayEngine {
       this._events = raw.map(normalizeEvent).filter((e) => eventTimeMs(e) > 0);
       this._events.sort((a, b) => eventTimeMs(a) - eventTimeMs(b));
 
+      const now = Date.now();
+      const rangeStart = now - hours * ONE_HOUR_MS;
       if (this._events.length === 0) {
-        this._timeRange = { start: Date.now() - hours * ONE_HOUR_MS, end: Date.now() };
+        this._timeRange = { start: rangeStart, end: now };
       } else {
         this._timeRange = {
-          start: eventTimeMs(this._events[0]),
-          end: eventTimeMs(this._events[this._events.length - 1]),
+          start: Math.min(rangeStart, eventTimeMs(this._events[0])),
+          end: Math.max(now, eventTimeMs(this._events[this._events.length - 1])),
         };
       }
 
