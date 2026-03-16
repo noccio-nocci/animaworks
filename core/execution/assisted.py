@@ -49,6 +49,7 @@ from core.execution.base import (
     ToolCallRecord,
     _truncate_for_record,
     strip_thinking_tags,
+    strip_untagged_thinking,
     tool_input_save_budget,
     tool_result_save_budget,
 )
@@ -324,13 +325,16 @@ class AssistedExecutor(BaseExecutor):
             resolve_thinking_effort,
         )
 
+        _thinking = self._model_config.thinking
+        if _thinking is None and self._model_config.model.startswith("openai/"):
+            _thinking = True
         _eff_max = (
             max_tokens_override
             if max_tokens_override is not None
             else resolve_max_tokens(
                 self._model_config.model,
                 self._model_config.max_tokens,
-                self._model_config.thinking,
+                _thinking,
             )
         )
         kwargs: dict[str, Any] = {
@@ -382,6 +386,11 @@ class AssistedExecutor(BaseExecutor):
                 kwargs["extra_body"]["enable_thinking"] = self._model_config.thinking
             else:
                 kwargs["think"] = self._model_config.thinking
+        elif self._model_config.model.startswith("openai/"):
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"]["enable_thinking"] = True
+            kwargs["extra_body"].setdefault("chat_template_kwargs", {})
+            kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] = True
         elif self._model_config.model.startswith("ollama/"):
             kwargs["think"] = False
 
@@ -666,11 +675,22 @@ class AssistedExecutor(BaseExecutor):
                 )
                 choice = response.choices[0]
                 content = choice.message.content or ""
+                _rc = getattr(choice.message, "reasoning_content", None) or getattr(choice.message, "reasoning", None) or ""
+                if _rc:
+                    yield {"type": "thinking_start"}
+                    yield {"type": "thinking_delta", "text": _rc}
+                    yield {"type": "thinking_end"}
                 thinking, content = strip_thinking_tags(content)
-                if thinking:
+                if thinking and not _rc:
                     yield {"type": "thinking_start"}
                     yield {"type": "thinking_delta", "text": thinking}
                     yield {"type": "thinking_end"}
+                if not thinking and not _rc:
+                    _ut, content = strip_untagged_thinking(content)
+                    if _ut:
+                        yield {"type": "thinking_start"}
+                        yield {"type": "thinking_delta", "text": _ut}
+                        yield {"type": "thinking_end"}
                 if hasattr(response, "usage") and response.usage:
                     _usage_acc_bs.input_tokens += response.usage.prompt_tokens or 0
                     _usage_acc_bs.output_tokens += response.usage.completion_tokens or 0

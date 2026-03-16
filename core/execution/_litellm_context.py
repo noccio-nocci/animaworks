@@ -57,10 +57,13 @@ class ContextMixin:
             resolve_thinking_effort,
         )
 
+        _thinking = self._model_config.thinking
+        if _thinking is None and self._model_config.model.startswith("openai/"):
+            _thinking = True
         _eff_max = resolve_max_tokens(
             self._model_config.model,
             self._model_config.max_tokens,
-            self._model_config.thinking,
+            _thinking,
         )
         kwargs: dict[str, Any] = {
             "model": self._model_config.model,
@@ -117,6 +120,11 @@ class ContextMixin:
                 kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] = self._model_config.thinking
             else:
                 kwargs["think"] = self._model_config.thinking
+        elif self._model_config.model.startswith("openai/"):
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"]["enable_thinking"] = True
+            kwargs["extra_body"].setdefault("chat_template_kwargs", {})
+            kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] = True
         elif self._model_config.model.startswith("ollama/"):
             kwargs["think"] = False
         # Ollama num_ctx: explicitly set context window to prevent silent truncation

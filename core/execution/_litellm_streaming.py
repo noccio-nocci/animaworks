@@ -31,6 +31,7 @@ from core.execution.base import (
     TokenUsage,
     ToolCallRecord,
     strip_thinking_tags,
+    strip_untagged_thinking,
     supports_streaming_tool_use,
 )
 from core.execution.reminder import (
@@ -256,14 +257,28 @@ class StreamingMixin:
                 # ── Non-streaming fallback: convert response to streaming events ──
                 if not _use_stream:
                     msg_obj = response.choices[0].message
+                    _rc = getattr(msg_obj, "reasoning_content", None) or getattr(msg_obj, "reasoning", None) or ""
+                    if _rc and not _reasoning_seen:
+                        _reasoning_seen = True
+                        _reasoning_parts.append(_rc)
+                        yield {"type": "thinking_start"}
+                        yield {"type": "thinking_delta", "text": _rc}
+                        yield {"type": "thinking_end"}
                     if msg_obj.content:
                         thinking_text, response_text = strip_thinking_tags(msg_obj.content)
-                        if thinking_text:
+                        if thinking_text and not _reasoning_seen:
                             yield {"type": "thinking_start"}
                             yield {"type": "thinking_delta", "text": thinking_text}
                             yield {"type": "thinking_end"}
                             _reasoning_seen = True
                             _reasoning_parts.append(thinking_text)
+                        if not _reasoning_seen and not thinking_text:
+                            _ut, response_text = strip_untagged_thinking(response_text if not thinking_text else response_text)
+                            if _ut:
+                                _reasoning_seen = True
+                                yield {"type": "thinking_start"}
+                                yield {"type": "thinking_delta", "text": _ut}
+                                yield {"type": "thinking_end"}
                         if response_text:
                             # Detect text-format tool calls.
                             # Llama 4 Maverick sometimes returns function calls as plain
@@ -511,6 +526,27 @@ class StreamingMixin:
                             yield {"type": "thinking_start"}
                         yield {"type": "thinking_delta", "text": _leaked_think}
                         yield {"type": "thinking_end"}
+
+                    if not _reasoning_seen and not _leaked_think:
+                        _untagged_think, _clean2 = strip_untagged_thinking(full_text)
+                        if _untagged_think:
+                            logger.info(
+                                "A stream: strip_untagged_thinking detected thinking (%d chars)",
+                                len(_untagged_think),
+                            )
+                            full_text = _clean2
+                            _reasoning_seen = True
+                            yield {"type": "thinking_start"}
+                            yield {"type": "thinking_delta", "text": _untagged_think}
+                            yield {"type": "thinking_end"}
+
+                    if _reasoning_parts and not _leaked_think and not _reasoning_seen:
+                        _rc_text = "".join(_reasoning_parts)
+                        if _rc_text:
+                            _reasoning_seen = True
+                            yield {"type": "thinking_start"}
+                            yield {"type": "thinking_delta", "text": _rc_text}
+                            yield {"type": "thinking_end"}
                     logger.debug(
                         "A stream final response at iteration=%d",
                         iteration,
@@ -597,6 +633,14 @@ class StreamingMixin:
                 len(_leaked),
             )
             full_text = _clean
+        elif not _reasoning_seen:
+            _ut, _clean2 = strip_untagged_thinking(full_text)
+            if _ut:
+                logger.info(
+                    "A stream max-iter: strip_untagged_thinking detected thinking (%d chars)",
+                    len(_ut),
+                )
+                full_text = _clean2
         logger.warning("A stream max iterations (%d) reached", max_iterations)
         yield {
             "type": "done",

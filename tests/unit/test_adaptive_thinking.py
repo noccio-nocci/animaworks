@@ -524,7 +524,7 @@ class TestLiteLLMAdaptiveThinking:
         assert kwargs["extra_body"]["enable_thinking"] is False
         assert "think" not in kwargs
 
-    def test_openai_thinking_none_no_extra_body(self, anima_dir, tool_handler, memory):
+    def test_openai_thinking_none_defaults_to_true(self, anima_dir, tool_handler, memory):
         from core.execution.litellm_loop import LiteLLMExecutor
 
         cfg = ModelConfig(
@@ -539,8 +539,8 @@ class TestLiteLLMAdaptiveThinking:
             memory=memory,
         )
         kwargs = ex._build_llm_kwargs()
-        assert "extra_body" not in kwargs
-        assert "think" not in kwargs
+        assert kwargs["extra_body"]["enable_thinking"] is True
+        assert kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
 
     def test_bedrock_glm_gets_enable_thinking_true(self, anima_dir, tool_handler, memory):
         from core.execution.litellm_loop import LiteLLMExecutor
