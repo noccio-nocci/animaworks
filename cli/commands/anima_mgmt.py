@@ -181,7 +181,7 @@ def _print_anima_status(name: str, status: dict) -> None:
         print(f"  Restarts: {status['restart_count']}")
 
     if status.get("active_label"):
-        print(f"  Active label: {status['active_label']}")
+        print(f"  Working on: {status['active_label']}")
 
 
 def _read_model_from_status_json(anima_dir: Path) -> tuple[str, str]:
