@@ -222,7 +222,7 @@ class OrgToolsMixin:
         if not target_name:
             return _error_result("InvalidArguments", "name is required")
 
-        err = self._check_subordinate(target_name)
+        err = self._check_descendant(target_name)
         if err:
             return err
 
@@ -276,7 +276,7 @@ class OrgToolsMixin:
         if not target_name:
             return _error_result("InvalidArguments", "name is required")
 
-        err = self._check_subordinate(target_name)
+        err = self._check_descendant(target_name)
         if err:
             return err
 
@@ -330,7 +330,7 @@ class OrgToolsMixin:
         if not model:
             return _error_result("InvalidArguments", "model is required")
 
-        err = self._check_subordinate(target_name)
+        err = self._check_descendant(target_name)
         if err:
             return err
 
@@ -383,7 +383,7 @@ class OrgToolsMixin:
         if not target_name:
             return _error_result("InvalidArguments", "name is required")
 
-        err = self._check_subordinate(target_name)
+        err = self._check_descendant(target_name)
         if err:
             return err
 
@@ -430,7 +430,7 @@ class OrgToolsMixin:
         if not target_name:
             return _error_result("InvalidArguments", "name is required")
 
-        err = self._check_subordinate(target_name)
+        err = self._check_descendant(target_name)
         if err:
             return err
 
@@ -757,7 +757,7 @@ class OrgToolsMixin:
                 "deadline is required. Use relative format ('30m', '2h', '1d') or ISO8601.",
             )
 
-        err = self._check_subordinate(target_name)
+        err = self._check_descendant(target_name)
         if err:
             return err
 

@@ -69,7 +69,7 @@ def _cache_subordinate_paths(
         (sub_activity_dirs, sub_mgmt_files, peer_activity_dirs,
          descendant_read_files, descendant_read_dirs)
 
-    - sub_mgmt_files: direct subordinates' cron.md, heartbeat.md, status.json,
+    - sub_mgmt_files: all descendants' cron.md, heartbeat.md, status.json,
       injection.md (read/write)
     - descendant_read_files: all descendants' identity.md, injection.md,
       status.json, state files (read-only)
@@ -89,18 +89,12 @@ def _cache_subordinate_paths(
         anima_name = anima_dir.name
         all_subs = _collect_all_subordinates(anima_name, cfg.animas)
 
-        direct_subs: set[str] = set()
-        for sub_name, sub_cfg in cfg.animas.items():
-            if sub_cfg.supervisor == anima_name:
-                direct_subs.add(sub_name)
-
         for sub_name in all_subs:
             sub_dir = (animas_dir / sub_name).resolve()
             sub_activity_dirs.append(sub_dir / "activity_log")
 
-            if sub_name in direct_subs:
-                for fname in ("cron.md", "heartbeat.md", "status.json", "injection.md"):
-                    sub_mgmt_files.append(sub_dir / fname)
+            for fname in ("cron.md", "heartbeat.md", "status.json", "injection.md"):
+                sub_mgmt_files.append(sub_dir / fname)
 
             descendant_read_files.append(sub_dir / "identity.md")
             descendant_read_files.append(sub_dir / "injection.md")

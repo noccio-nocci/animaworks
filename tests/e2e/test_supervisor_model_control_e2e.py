@@ -53,7 +53,7 @@ def _make_tool_handler(supervisor_dir: Path, supervisor_name: str) -> ToolHandle
 
 
 def _mock_config_for_check(animas: dict[str, dict]) -> MagicMock:
-    """Build a MagicMock config with AnimaModelConfig entries for _check_subordinate."""
+    """Build a MagicMock config with AnimaModelConfig entries for _check_descendant."""
     config = MagicMock()
     config.animas = {
         name: AnimaModelConfig(**fields)
@@ -98,7 +98,7 @@ class TestSetSubordinateModelE2E:
 
         handler = _make_tool_handler(supervisor_dir, "supervisor")
 
-        # _check_subordinate calls load_config() — use real config via data_dir env
+        # _check_descendant calls load_config() — use real config via data_dir env
         result = handler.handle(
             "set_subordinate_model",
             {"name": "worker", "model": "claude-opus-4-6", "reason": "e2e test"},

@@ -257,10 +257,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "handler.file_read_shared": {"ja": "shared/", "en": "shared/"},
     "handler.file_write_own": {"ja": "自分のディレクトリ", "en": "Own directory"},
     "handler.subordinate_management": {
-        "ja": "直属部下のcron.md, heartbeat.md, status.json, injection.md",
-        "en": "Direct subordinate's cron.md, heartbeat.md, status.json, injection.md",
+        "ja": "配下のcron.md, heartbeat.md, status.json, injection.md",
+        "en": "Descendant's cron.md, heartbeat.md, status.json, injection.md",
     },
-    "handler.subordinate_dir_list": {"ja": "直属部下のディレクトリ一覧", "en": "Direct subordinate directory listing"},
+    "handler.subordinate_dir_list": {"ja": "配下のディレクトリ一覧", "en": "Descendant directory listing"},
     "handler.descendant_activity": {"ja": "配下のactivity_log", "en": "Descendant activity_log"},
     "handler.descendant_state": {
         "ja": "配下のstatus.json, identity.md, injection.md, state/, task_queue.jsonl",
@@ -1576,19 +1576,19 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ja": (
             "配下のAnimaの行動を監査する。ActivityLogから「何を考えて何をやったか」を"
             "抽出し、統計サマリーまたは日報形式で返す。\n"
-            "name省略で全直属部下を一括監査。name指定で特定の配下（孫含む）を監査。\n"
+            "name省略で全配下を一括監査。name指定で特定の配下（孫含む）を監査。\n"
             "mode='summary'で統計、mode='report'で時系列の日報形式。"
         ),
         "en": (
             "Audit subordinate Anima behavior. Extracts thoughts and actions from ActivityLog "
             "and returns statistics summary or chronological report.\n"
-            "Omit name to audit all direct subordinates. Specify name for any descendant.\n"
+            "Omit name to audit all descendants. Specify name for any descendant.\n"
             "mode='summary' for stats, mode='report' for chronological daily report."
         ),
     },
     "schema.audit_subordinate.name": {
-        "ja": "監査対象のAnima名（省略時は全直属部下）",
-        "en": "Target Anima name (omit for all direct subordinates)",
+        "ja": "監査対象のAnima名（省略時は全配下）",
+        "en": "Target Anima name (omit for all descendants)",
     },
     "schema.audit_subordinate.mode": {
         "ja": "出力モード。report=タイムライン日報（デフォルト）、summary=統計サマリー",
@@ -1669,18 +1669,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Workspace alias or alias#hash. The subordinate will work in this directory",
     },
     "schema.delegate_task.desc": {
-        "ja": "直属部下にタスクを委譲する。部下のタスクキューに追加し、state/pending/ に書き出して即時実行をトリガーする。同時にDMで指示を送信。自分側にも追跡用エントリが作成される。直属部下のみ操作可能。",
-        "en": "Delegate a task to a direct subordinate. Adds to the subordinate's task queue and writes to state/pending/ to trigger immediate execution. Also sends a DM with instructions. A tracking entry is created on your side. Only direct subordinates can be targeted.",
+        "ja": "配下のAnimaにタスクを委譲する。配下のタスクキューに追加し、state/pending/ に書き出して即時実行をトリガーする。同時にDMで指示を送信。自分側にも追跡用エントリが作成される。配下であれば操作可能。",
+        "en": "Delegate a task to a descendant Anima. Adds to the descendant's task queue and writes to state/pending/ to trigger immediate execution. Also sends a DM with instructions. A tracking entry is created on your side. Any descendant can be targeted.",
     },
     "schema.delegate_task.instruction": {"ja": "タスクの指示内容", "en": "Task instructions"},
     "schema.delegate_task.name": {
-        "ja": "委譲先の直属部下のAnima名",
-        "en": "Direct subordinate Anima name to delegate to",
+        "ja": "委譲先の配下Anima名",
+        "en": "Descendant Anima name to delegate to",
     },
     "schema.delegate_task.summary": {"ja": "タスクの1行要約", "en": "One-line task summary"},
     "schema.disable_subordinate.desc": {
-        "ja": "部下のAnimaを休止させる（プロセス停止 + 自動復帰防止）。自分の直属部下のみ操作可能。",
-        "en": "Disable a subordinate Anima (stop process + prevent auto-restart). Only direct subordinates can be targeted.",
+        "ja": "配下のAnimaを休止させる（プロセス停止 + 自動復帰防止）。自分の配下であれば操作可能。",
+        "en": "Disable a descendant Anima (stop process + prevent auto-restart). Any descendant can be targeted.",
     },
     "schema.disable_subordinate.name": {
         "ja": "休止させる部下のAnima名（例: hinata）",
@@ -1691,8 +1691,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Reason for disabling (recorded in activity_log)",
     },
     "schema.enable_subordinate.desc": {
-        "ja": "休止中の部下のAnimaを復帰させる。自分の直属部下のみ操作可能。",
-        "en": "Re-enable a disabled subordinate Anima. Only direct subordinates can be targeted.",
+        "ja": "休止中の配下のAnimaを復帰させる。自分の配下であれば操作可能。",
+        "en": "Re-enable a disabled descendant Anima. Any descendant can be targeted.",
     },
     "schema.enable_subordinate.name": {
         "ja": "復帰させる部下のAnima名（例: hinata）",
@@ -1791,12 +1791,12 @@ _STRINGS: dict[str, dict[str, str]] = {
     "schema.read_subordinate_state.name": {"ja": "読み取る配下のAnima名", "en": "Subordinate Anima name to read"},
     "schema.restart_subordinate.desc": {
         "ja": (
-            "部下のAnimaプロセスを再起動する（直属部下のみ可能）。\n"
+            "配下のAnimaプロセスを再起動する（配下であれば操作可能）。\n"
             "モデル変更（set_subordinate_model）後に呼び出すことで新モデルを即時反映できる。\n"
             "Reconciliation ループが 30 秒以内にプロセスを再起動する。"
         ),
         "en": (
-            "Restart a subordinate Anima process (direct subordinates only).\n"
+            "Restart a descendant Anima process (any descendant can be targeted).\n"
             "Call this after set_subordinate_model to apply the new model immediately.\n"
             "The reconciliation loop will restart the process within 30 seconds."
         ),
@@ -1812,14 +1812,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "schema.set_subordinate_background_model.desc": {
         "ja": (
-            "部下のバックグラウンドモデル（heartbeat/cron用）を変更する（直属部下のみ可能）。\n"
+            "配下のAnimaのバックグラウンドモデル（heartbeat/cron用）を変更する（配下であれば操作可能）。\n"
             "変更は即時 status.json に保存される。反映には restart_subordinate を併用すること。\n"
             "\n"
             "バックグラウンドモデル未設定時はメインモデル（model）がそのまま使用される。\n"
             "クリアするには model に空文字 '' を指定する。"
         ),
         "en": (
-            "Change a subordinate's background model (for heartbeat/cron). Direct subordinates only.\n"
+            "Change a descendant's background model (for heartbeat/cron). Any descendant can be targeted.\n"
             "Changes are saved to status.json immediately. Use restart_subordinate to apply.\n"
             "\n"
             "When no background model is set, the main model is used.\n"
@@ -1834,7 +1834,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "schema.set_subordinate_background_model.reason": {"ja": "変更理由", "en": "Reason for change"},
     "schema.set_subordinate_model.desc": {
         "ja": (
-            "部下のLLMモデルを変更する（直属部下のみ可能）。\n"
+            "配下のAnimaのLLMモデルを変更する（配下であれば操作可能）。\n"
             "変更は即時 config.json に保存されるが、実行中プロセスへの反映には restart_subordinate を併用すること。\n"
             "\n"
             "指定するモデル名は provider/model_name 形式（Claude は prefix 不要）。\n"
@@ -1861,7 +1861,7 @@ _STRINGS: dict[str, dict[str, str]] = {
             ""
         ),
         "en": (
-            "Change a subordinate's LLM model (direct subordinates only).\n"
+            "Change a descendant's LLM model (any descendant can be targeted).\n"
             "Changes are saved to config.json immediately, but require restart_subordinate to take effect on a running process.\n"
             "\n"
             "Model names use provider/model_name format (Claude models need no prefix).\n"

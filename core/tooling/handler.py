@@ -167,11 +167,6 @@ class ToolHandler(
                 if _sub_cfg.supervisor == self._anima_name:
                     _sub_dir = (_animas_dir / _sub_name).resolve()
                     self._subordinate_activity_dirs.append(_sub_dir / "activity_log")
-                    self._subordinate_management_files.append(_sub_dir / "cron.md")
-                    self._subordinate_management_files.append(_sub_dir / "heartbeat.md")
-                    self._subordinate_management_files.append(_sub_dir / "status.json")
-                    self._subordinate_management_files.append(_sub_dir / "injection.md")
-                    self._subordinate_root_dirs.append(_sub_dir)
             # Cache peer activity_log dirs (same supervisor, excluding self)
             for _peer_name, _peer_cfg in _cfg.animas.items():
                 if _peer_name != self._anima_name and _peer_cfg.supervisor == _my_supervisor:
@@ -180,6 +175,9 @@ class ToolHandler(
             _all_descendants = self._get_all_descendants()
             for _desc_name in _all_descendants:
                 _desc_dir = (_animas_dir / _desc_name).resolve()
+                for _fname in ("cron.md", "heartbeat.md", "status.json", "injection.md"):
+                    self._subordinate_management_files.append(_desc_dir / _fname)
+                self._subordinate_root_dirs.append(_desc_dir)
                 self._descendant_activity_dirs.append(_desc_dir / "activity_log")
                 self._descendant_state_files.append(_desc_dir / "state" / "current_task.md")
                 self._descendant_state_files.append(_desc_dir / "state" / "pending.md")

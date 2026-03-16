@@ -103,7 +103,7 @@ class TestSetSubordinateModel:
 
         with (
             patch(
-                "core.tooling.handler.ToolHandler._check_subordinate",
+                "core.tooling.handler.ToolHandler._check_descendant",
                 return_value=None,
             ),
             patch("core.paths.get_data_dir", return_value=tmp_path),
@@ -135,7 +135,7 @@ class TestSetSubordinateModel:
 
         with (
             patch(
-                "core.tooling.handler.ToolHandler._check_subordinate",
+                "core.tooling.handler.ToolHandler._check_descendant",
                 return_value=None,
             ),
             patch("core.paths.get_data_dir", return_value=tmp_path),
@@ -192,7 +192,7 @@ class TestSetSubordinateModel:
         }, ensure_ascii=False)
 
         with patch(
-            "core.tooling.handler.ToolHandler._check_subordinate",
+            "core.tooling.handler.ToolHandler._check_descendant",
             return_value=perm_denied,
         ):
             result = handler._handle_set_subordinate_model(
@@ -230,7 +230,7 @@ class TestRestartSubordinate:
 
         with (
             patch(
-                "core.tooling.handler.ToolHandler._check_subordinate",
+                "core.tooling.handler.ToolHandler._check_descendant",
                 return_value=None,
             ),
             patch(
@@ -264,7 +264,7 @@ class TestRestartSubordinate:
 
         with (
             patch(
-                "core.tooling.handler.ToolHandler._check_subordinate",
+                "core.tooling.handler.ToolHandler._check_descendant",
                 return_value=None,
             ),
             patch("core.paths.get_animas_dir", return_value=tmp_path / "animas"),
@@ -296,7 +296,7 @@ class TestRestartSubordinate:
         }, ensure_ascii=False)
 
         with patch(
-            "core.tooling.handler.ToolHandler._check_subordinate",
+            "core.tooling.handler.ToolHandler._check_descendant",
             return_value=perm_denied,
         ):
             result = handler._handle_restart_subordinate({"name": "outsider"})

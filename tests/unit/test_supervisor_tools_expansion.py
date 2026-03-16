@@ -388,7 +388,7 @@ class TestDelegateTask:
         assert own_task["status"] == "delegated"
         assert own_task["meta"]["delegated_to"] == "hinata"
 
-    def test_delegate_to_non_subordinate(self, tmp_path):
+    def test_delegate_to_non_descendant(self, tmp_path):
         handler = _make_handler(tmp_path, "sakura")
         mock_cfg = _mock_config(tmp_path, {
             "sakura": {},
@@ -402,7 +402,7 @@ class TestDelegateTask:
                 "deadline": "1h",
             })
         assert "PermissionDenied" in result
-        assert "直属部下ではありません" in result
+        assert "配下ではありません" in result
 
     def test_delegate_missing_fields(self, tmp_path):
         handler = _make_handler(tmp_path, "sakura")
@@ -563,6 +563,263 @@ class TestDescendantFilePermission:
             str(natsume_dir / "state" / "current_task.md"),
         )
         assert result is None
+
+
+# ── Descendant management file permission tests ───────────
+
+
+def _make_handler_with_hierarchy(tmp_path: Path, *, anima_name: str = "sakura") -> tuple[ToolHandler, Path]:
+    """Create a ToolHandler with a 3-level hierarchy: sakura -> hinata -> natsume."""
+    animas_dir = tmp_path / "animas"
+    sakura_dir = animas_dir / anima_name
+    sakura_dir.mkdir(parents=True)
+    (sakura_dir / "permissions.md").write_text("", encoding="utf-8")
+    (sakura_dir / "state").mkdir(exist_ok=True)
+
+    for sub in ("hinata", "natsume"):
+        d = animas_dir / sub
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "state").mkdir(exist_ok=True)
+        (d / "state" / "pending").mkdir(exist_ok=True)
+        (d / "activity_log").mkdir(exist_ok=True)
+        for fname in ("cron.md", "heartbeat.md", "status.json", "injection.md", "identity.md"):
+            (d / fname).write_text("", encoding="utf-8")
+        (d / "state" / "current_task.md").write_text("", encoding="utf-8")
+        (d / "state" / "pending.md").write_text("", encoding="utf-8")
+        (d / "state" / "task_queue.jsonl").write_text("", encoding="utf-8")
+
+    mock_cfg = _mock_config(tmp_path, {
+        anima_name: {},
+        "hinata": {"supervisor": anima_name},
+        "natsume": {"supervisor": "hinata"},
+    })
+
+    memory = MagicMock()
+    memory.read_permissions.return_value = ""
+
+    with (
+        patch("core.config.models.load_config", return_value=mock_cfg),
+        patch("core.paths.get_animas_dir", return_value=animas_dir),
+    ):
+        handler = ToolHandler(
+            anima_dir=sakura_dir,
+            memory=memory,
+            tool_registry=[],
+        )
+    return handler, animas_dir
+
+
+class TestDescendantManagementFilePermission:
+    """Grandchild management files (cron.md, heartbeat.md, status.json, injection.md) should be read/write."""
+
+    def test_grandchild_cron_readable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "cron.md"))
+        assert result is None
+
+    def test_grandchild_cron_writable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "cron.md"), write=True)
+        assert result is None
+
+    def test_grandchild_heartbeat_readable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "heartbeat.md"))
+        assert result is None
+
+    def test_grandchild_heartbeat_writable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "heartbeat.md"), write=True)
+        assert result is None
+
+    def test_grandchild_injection_writable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "injection.md"), write=True)
+        assert result is None
+
+    def test_grandchild_status_json_writable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "status.json"), write=True)
+        assert result is None
+
+    def test_grandchild_identity_read_only(self, tmp_path):
+        """identity.md must remain read-only even for descendants."""
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "identity.md"))
+        assert result is None
+        result = handler._check_file_permission(str(animas_dir / "natsume" / "identity.md"), write=True)
+        assert result is not None
+
+    def test_grandchild_root_dir_listable(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        result = handler._check_file_permission(str(animas_dir / "natsume"))
+        assert result is None
+
+    def test_direct_child_still_has_management_rw(self, tmp_path):
+        """Direct child management files must remain read/write after refactor."""
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        for fname in ("cron.md", "heartbeat.md", "status.json", "injection.md"):
+            result = handler._check_file_permission(str(animas_dir / "hinata" / fname), write=True)
+            assert result is None, f"Write to direct child {fname} should be allowed"
+
+
+class TestDescendantOrgToolPermission:
+    """Org tools (disable/enable/restart/set_model/set_bg_model/delegate_task) should work for grandchildren."""
+
+    def test_disable_grandchild(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        (animas_dir / "natsume" / "status.json").write_text(
+            json.dumps({"enabled": True, "supervisor": "hinata"}), encoding="utf-8",
+        )
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+        })
+        with (
+            patch("core.config.models.load_config", return_value=mock_cfg),
+            patch("core.paths.get_animas_dir", return_value=animas_dir),
+        ):
+            result = handler.handle("disable_subordinate", {"name": "natsume", "reason": "test"})
+        assert "PermissionDenied" not in result
+        status = json.loads((animas_dir / "natsume" / "status.json").read_text(encoding="utf-8"))
+        assert status["enabled"] is False
+
+    def test_enable_grandchild(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        (animas_dir / "natsume" / "status.json").write_text(
+            json.dumps({"enabled": False, "supervisor": "hinata"}), encoding="utf-8",
+        )
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+        })
+        with (
+            patch("core.config.models.load_config", return_value=mock_cfg),
+            patch("core.paths.get_animas_dir", return_value=animas_dir),
+        ):
+            result = handler.handle("enable_subordinate", {"name": "natsume"})
+        assert "PermissionDenied" not in result
+
+    def test_restart_grandchild(self, tmp_path):
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        (animas_dir / "natsume" / "status.json").write_text(
+            json.dumps({"enabled": True, "supervisor": "hinata"}), encoding="utf-8",
+        )
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+        })
+        with (
+            patch("core.config.models.load_config", return_value=mock_cfg),
+            patch("core.paths.get_animas_dir", return_value=animas_dir),
+        ):
+            result = handler.handle("restart_subordinate", {"name": "natsume", "reason": "test"})
+        assert "PermissionDenied" not in result
+
+    def test_delegate_task_to_grandchild(self, tmp_path):
+        messenger = MagicMock()
+        msg_mock = MagicMock()
+        msg_mock.id = "msg1"
+        msg_mock.thread_id = "t1"
+        msg_mock.type = "message"
+        messenger.send.return_value = msg_mock
+
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        handler._messenger = messenger
+
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+        })
+        with (
+            patch("core.config.models.load_config", return_value=mock_cfg),
+            patch("core.paths.get_animas_dir", return_value=animas_dir),
+        ):
+            result = handler.handle("delegate_task", {
+                "name": "natsume",
+                "instruction": "テストタスク",
+                "summary": "テスト",
+                "deadline": "2h",
+            })
+        assert "PermissionDenied" not in result
+        assert "委譲しました" in result
+
+    def test_non_descendant_still_blocked(self, tmp_path):
+        """Org tools should still block non-descendant targets."""
+        handler, animas_dir = _make_handler_with_hierarchy(tmp_path)
+        _setup_subordinate(tmp_path, "mio", supervisor="taka")
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+            "mio": {"supervisor": "taka"},
+        })
+        with patch("core.config.models.load_config", return_value=mock_cfg):
+            result = handler.handle("disable_subordinate", {"name": "mio"})
+        assert "PermissionDenied" in result
+
+
+# ── Mode S descendant management file tests ────────────────
+
+
+class TestSdkHooksDescendantManagementFiles:
+    """_cache_subordinate_paths should include grandchild management files."""
+
+    def test_grandchild_mgmt_files_in_cache(self, tmp_path):
+        from core.execution._sdk_hooks import _cache_subordinate_paths
+
+        animas_dir = tmp_path / "animas"
+        sakura_dir = animas_dir / "sakura"
+        sakura_dir.mkdir(parents=True)
+        for name in ("hinata", "natsume"):
+            d = animas_dir / name
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "state").mkdir(exist_ok=True)
+
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+        })
+        with (
+            patch("core.config.models.load_config", return_value=mock_cfg),
+            patch("core.paths.get_animas_dir", return_value=animas_dir),
+        ):
+            _, sub_mgmt_files, _, _, _ = _cache_subordinate_paths(sakura_dir)
+
+        natsume_dir = (animas_dir / "natsume").resolve()
+        mgmt_names = {p.name for p in sub_mgmt_files if p.parent == natsume_dir}
+        assert mgmt_names == {"cron.md", "heartbeat.md", "status.json", "injection.md"}
+
+    def test_direct_child_mgmt_files_still_present(self, tmp_path):
+        from core.execution._sdk_hooks import _cache_subordinate_paths
+
+        animas_dir = tmp_path / "animas"
+        sakura_dir = animas_dir / "sakura"
+        sakura_dir.mkdir(parents=True)
+        for name in ("hinata", "natsume"):
+            d = animas_dir / name
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "state").mkdir(exist_ok=True)
+
+        mock_cfg = _mock_config(tmp_path, {
+            "sakura": {},
+            "hinata": {"supervisor": "sakura"},
+            "natsume": {"supervisor": "hinata"},
+        })
+        with (
+            patch("core.config.models.load_config", return_value=mock_cfg),
+            patch("core.paths.get_animas_dir", return_value=animas_dir),
+        ):
+            _, sub_mgmt_files, _, _, _ = _cache_subordinate_paths(sakura_dir)
+
+        hinata_dir = (animas_dir / "hinata").resolve()
+        mgmt_names = {p.name for p in sub_mgmt_files if p.parent == hinata_dir}
+        assert mgmt_names == {"cron.md", "heartbeat.md", "status.json", "injection.md"}
 
 
 # ── build_tool_list integration tests ──────────────────────

@@ -92,7 +92,7 @@ class TestDisableSubordinate:
         assert status["model"] == "claude-sonnet-4-6"
         assert status["role"] == "general"
 
-    def test_disable_non_subordinate_rejected(self, tmp_path):
+    def test_disable_non_descendant_rejected(self, tmp_path):
         handler = _make_handler(tmp_path, "sakura")
         _setup_subordinate(tmp_path, "mio", supervisor="taka", enabled=True)
 
@@ -105,7 +105,7 @@ class TestDisableSubordinate:
             result = handler.handle("disable_subordinate", {"name": "mio"})
 
         assert "PermissionDenied" in result
-        assert "直属部下ではありません" in result
+        assert "配下ではありません" in result
 
     def test_disable_self_rejected(self, tmp_path):
         handler = _make_handler(tmp_path, "sakura")
@@ -122,7 +122,8 @@ class TestDisableSubordinate:
         with patch("core.config.models.load_config", return_value=mock_cfg):
             result = handler.handle("disable_subordinate", {"name": "nobody"})
 
-        assert "AnimaNotFound" in result
+        assert "PermissionDenied" in result
+        assert "配下ではありません" in result
 
     def test_disable_already_disabled(self, tmp_path):
         handler = _make_handler(tmp_path, "sakura")
