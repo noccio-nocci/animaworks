@@ -26,7 +26,6 @@ _HEARTBEAT_NOISE_TYPES = frozenset(
         "tool_use",
         "tool_result",
         "heartbeat_start",
-        "heartbeat_end",
         "heartbeat_reflection",
         "inbox_processing_start",
         "inbox_processing_end",

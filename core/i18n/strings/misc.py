@@ -26,6 +26,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "定期巡回完了",
         "en": "Periodic check completed",
     },
+    "activity.heartbeat_reflection": {
+        "ja": "HB振り返り",
+        "en": "HB reflection",
+    },
     "activity.heartbeat_start": {
         "ja": "定期巡回開始",
         "en": "Periodic check started",
