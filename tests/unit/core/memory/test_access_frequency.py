@@ -202,9 +202,12 @@ class TestScoreAdjustmentsFrequency:
         ratio = hundred_freq / one_freq
         assert ratio < 10, f"Expected logarithmic scaling (ratio < 10), got ratio={ratio:.2f}"
 
-        # Verify exact expected values
+        # Verify exact expected values (with hard cap from FREQUENCY_LOG_CAP)
+        from core.memory.rag.retriever import FREQUENCY_LOG_CAP
+
+        cap = WEIGHT_FREQUENCY * FREQUENCY_LOG_CAP
         expected_one = WEIGHT_FREQUENCY * math.log1p(1)
-        expected_hundred = WEIGHT_FREQUENCY * math.log1p(100)
+        expected_hundred = min(WEIGHT_FREQUENCY * math.log1p(100), cap)
         assert abs(one_freq - expected_one) < 1e-9
         assert abs(hundred_freq - expected_hundred) < 1e-9
 

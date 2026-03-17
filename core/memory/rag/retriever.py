@@ -33,9 +33,16 @@ RECENCY_HALF_LIFE_DAYS = 30.0
 
 WEIGHT_FREQUENCY = 0.1
 
+# Hard cap for frequency boost to prevent unbounded score inflation.
+# log1p(19) ≈ 3.0, so access_count < 19 behaves identically to before.
+FREQUENCY_LOG_CAP = 3.0
+
 # Importance boost for [IMPORTANT]-tagged chunks (amygdala model:
 # lowers activation threshold for emotionally significant memories)
 WEIGHT_IMPORTANCE = 0.20
+
+# Metadata key prefix for per-anima access counts on shared collections.
+_PER_ANIMA_AC_PREFIX = "ac_"
 
 
 # ── Data structures ─────────────────────────────────────────────────
@@ -186,7 +193,7 @@ class MemoryRetriever:
         ]
 
         # 3. Apply temporal decay and frequency boost
-        results = self._apply_score_adjustments(results)
+        results = self._apply_score_adjustments(results, anima_name)
 
         # 3b. Filter by minimum vector score
         if min_score is not None:
@@ -301,14 +308,19 @@ class MemoryRetriever:
     def _apply_score_adjustments(
         self,
         results: list[RetrievalResult],
+        anima_name: str | None = None,
     ) -> list[RetrievalResult]:
         """Apply temporal decay, frequency boost, and importance boost.
 
         - Temporal decay: exponential decay based on document age
-        - Frequency boost: log-scaled boost based on access count (Hebbian LTP)
+        - Frequency boost: log-scaled boost based on access count (Hebbian LTP),
+          capped at ``WEIGHT_FREQUENCY * FREQUENCY_LOG_CAP``.
+          For shared chunks, per-anima access count (``ac_{anima_name}``) is
+          used instead of the global ``access_count``.
         - Importance boost: flat boost for [IMPORTANT]-tagged chunks (amygdala model)
         """
         now = now_local()
+        cap = WEIGHT_FREQUENCY * FREQUENCY_LOG_CAP
 
         for result in results:
             # --- Temporal decay ---
@@ -328,8 +340,13 @@ class MemoryRetriever:
             result.source_scores["recency"] = recency_score
 
             # --- Frequency boost (Hebbian LTP analog) ---
-            access_count = int(str(result.metadata.get("access_count", 0)))
-            frequency_boost = WEIGHT_FREQUENCY * math.log1p(access_count)
+            is_shared = result.metadata.get("anima") == "shared"
+            if is_shared and anima_name:
+                ac_key = f"{_PER_ANIMA_AC_PREFIX}{anima_name}"
+                access_count = int(str(result.metadata.get(ac_key, 0)))
+            else:
+                access_count = int(str(result.metadata.get("access_count", 0)))
+            frequency_boost = min(WEIGHT_FREQUENCY * math.log1p(access_count), cap)
             result.score += frequency_boost
             result.source_scores["frequency"] = frequency_boost
 
@@ -343,25 +360,32 @@ class MemoryRetriever:
     def record_access(self, results: list[RetrievalResult], anima_name: str) -> None:
         """Record access for retrieved results (LTP analog).
 
-        Increments access_count and updates last_accessed_at for each result.
-        Reads current access_count from the DB to avoid stale metadata in
-        search results causing missed increments.
+        For personal collections: increments ``access_count``.
+        For shared collections: increments per-anima ``ac_{anima_name}``
+        and the global ``access_count`` (debug/audit only).
         """
         if not results:
             return
 
         now_iso_str = now_iso()
-        ids_by_collection: dict[str, list[str]] = {}
+
+        # Group by (collection, is_shared) so we can branch logic
+        _Batch = dict[str, list[str]]  # collection → [doc_ids]
+        personal_batches: _Batch = {}
+        shared_batches: _Batch = {}
 
         for r in results:
             memory_type = r.metadata.get("memory_type", "knowledge")
             source = r.metadata.get("anima", anima_name)
             collection = f"{source}_{memory_type}"
-            ids_by_collection.setdefault(collection, []).append(r.doc_id)
+            if source == "shared":
+                shared_batches.setdefault(collection, []).append(r.doc_id)
+            else:
+                personal_batches.setdefault(collection, []).append(r.doc_id)
 
-        for collection, ids in ids_by_collection.items():
+        for collection, ids in personal_batches.items():
             try:
-                current = self._read_current_access_counts(collection, ids)
+                current = self._read_metadata_field(collection, ids, "access_count")
                 metas = [
                     {
                         "access_count": current.get(doc_id, 0) + 1,
@@ -374,17 +398,90 @@ class MemoryRetriever:
             except Exception as e:
                 logger.warning("Failed to record access for %s: %s", collection, e)
 
-    def _read_current_access_counts(self, collection: str, ids: list[str]) -> dict[str, int]:
-        """Read current access_count values from the vector store."""
+        ac_key = f"{_PER_ANIMA_AC_PREFIX}{anima_name}"
+        for collection, ids in shared_batches.items():
+            try:
+                current_pa = self._read_metadata_field(collection, ids, ac_key)
+                current_global = self._read_metadata_field(collection, ids, "access_count")
+                metas = [
+                    {
+                        ac_key: current_pa.get(doc_id, 0) + 1,
+                        "access_count": current_global.get(doc_id, 0) + 1,
+                        "last_accessed_at": now_iso_str,
+                    }
+                    for doc_id in ids
+                ]
+                self.vector_store.update_metadata(collection, ids, metas)
+                logger.debug(
+                    "Recorded per-anima access (%s) for %d chunks in %s",
+                    ac_key,
+                    len(ids),
+                    collection,
+                )
+            except Exception as e:
+                logger.warning("Failed to record access for %s: %s", collection, e)
+
+    def _read_metadata_field(
+        self,
+        collection: str,
+        ids: list[str],
+        field: str = "access_count",
+    ) -> dict[str, int]:
+        """Read an integer metadata field from the vector store."""
         try:
             coll = self.vector_store.client.get_collection(name=collection)
             data = coll.get(ids=ids, include=["metadatas"])
             return {
-                doc_id: int(str(meta.get("access_count", 0)))
+                doc_id: int(str(meta.get(field, 0)))
                 for doc_id, meta in zip(data["ids"], data["metadatas"], strict=False)
             }
         except Exception:
             return {}
+
+    def reset_shared_access_counts(self) -> dict[str, int]:
+        """Reset access_count and per-anima ac_* fields in shared collections.
+
+        Returns:
+            Dict mapping collection name to number of chunks reset.
+        """
+        _SHARED_COLLECTIONS = ("shared_common_knowledge", "shared_common_skills")
+        result: dict[str, int] = {}
+
+        for collection_name in _SHARED_COLLECTIONS:
+            try:
+                coll = self.vector_store.client.get_collection(name=collection_name)
+            except Exception:
+                continue
+
+            try:
+                data = coll.get(include=["metadatas"])
+                if not data["ids"]:
+                    continue
+
+                reset_metas: list[dict[str, str | int | float]] = []
+                for meta in data["metadatas"]:
+                    patch: dict[str, str | int | float] = {
+                        "access_count": 0,
+                        "last_accessed_at": "",
+                    }
+                    for key in meta:
+                        if key.startswith(_PER_ANIMA_AC_PREFIX):
+                            patch[key] = 0
+                    reset_metas.append(patch)
+
+                self.vector_store.update_metadata(
+                    collection_name, data["ids"], reset_metas
+                )
+                result[collection_name] = len(data["ids"])
+                logger.info(
+                    "Reset access counts for %d chunks in %s",
+                    len(data["ids"]),
+                    collection_name,
+                )
+            except Exception as e:
+                logger.warning("Failed to reset %s: %s", collection_name, e)
+
+        return result
 
     # ── Config helpers ──────────────────────────────────────────────
 
