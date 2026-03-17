@@ -7,9 +7,307 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-03-17
+
+### Added
+- improve priming query quality for chat/inbox/heartbeat
+- compress role specialty prompts and add report-formats common knowledge
+- improve priming quality — Channel B/C/E noise removal, knowledge injection, task priority
+- cap frequency_boost and implement per-anima access counting for shared collections
+- unify resolve_context_window with models.json as SSoT (#115)
+- vector-primary search_memory with rich results and episode chunking fix
+- align read_file budget with Claude Code Read tool constraints
+- Mode A context compaction — align tool output limits with Mode S + LLM one-shot compaction
+- replace permissions.md templates with JSON, add CLI permissions command
+- replace MD parsers with JSON loader, unify execution mode security
+- add PermissionsConfig model, loader, and MD→JSON migration
+- enable progressive streaming for Codex mode (C) over IPC
+- add --background CLI flag to machine tool & improve SKILL docs
+- restrict delegate_task to direct subordinates only
+- unify descendant permissions with direct subordinate (#108)
+- add replay time range selector UI (1h/3h/6h/12h/24h)
+- reinforce memory consolidation merge pipeline
+- add agent-browser skill and browser automation guide
+- prevent injection.md bloat — [IMPORTANT] always-prime, size governance, workspace separation
+- read-before-write guard and knowledge dedup hints for write_memory_file
+- add background parameter to Bash tool for async command execution with streaming output
+- centralize embedding inference into server process
+- SWE-bench multi-agent evaluation infrastructure
+- add replay mode to Dashboard (Business 2D) org-dashboard
+- workspace registry and alias resolution for Anima working directories
+- add real-time context window usage ring indicator to chat UI
+- graceful interrupt for Mode S session preservation
+- inject machine tool MUST directive into TaskExec prompt
+- enhance Dashboard (Business 2D) real-time visualization
+- add fuzzy CJK-Latin spacing tolerance to Edit tool
+- Phase 4 — CLI subcommands for supervisor/vault/internal tools + test fixes
+- unify tool schema — 18-tool Claude Code-compatible architecture
+- add machine-tool common skill and fix hint reference
+- show machine tool hint in system prompt for non-heartbeat triggers
+- machine tool engine priority with __list__ discovery
+- unified CLI fallback routing — both entry points resolve all commands
+- dynamically hide machine tool engines based on CLI availability
+- add machine tool — external agent CLI as stateless power tools for Animas
+- Support prefers-color-scheme for default theme (fixes #56) (#87)
+- add housekeeping rotation for task_results/ and pending/failed/
+- add --since HH:MM filter to audit_subordinate tool and CLI
+- add conceptual integration of [IMPORTANT] memories (amygdala→semantic consolidation)
+- consolidation retry + PostToolUse knowledge frontmatter hook (#73)
+- task queue 2-layer sync — plan_tasks Layer 2 registration + PendingExec completion/failure sync
+- add task-architecture.md to common_knowledge anatomy
+- add AST-based hardcoded Japanese string detection test
+- add 2-stage heartbeat timeout (soft reminder + hard cutoff)
+- prevent current_task.md bloat with HB cleanup instruction and auto-pruning
+- task_queue compact with archival + list_tasks output optimization
+- deprecate send_message(intent="delegation"), enforce delegate_task usage
+- delegate_task writes to subordinate state/pending for immediate execution
+- enrich call_human thread replies with notification context
+- add advanced agent benchmark (Sonnet 4.6 vs Qwen3.5-35B)
+- add importance boost to RAG retriever (amygdala model)
+- add 4-model agent benchmark results and Qwen3.5-35B recommendation
+- add AnimaWorks agent benchmark runner for hina evaluation
+- add Team Presets API with industry x purpose templates
+- add AI Brainstorm feature with multi-character perspective generation
+- add Team Builder UI, External Tasks widget, fd_limits utility and watchdog graceful import
+- add common_knowledge access paths reference, update index files and tests
+- add reference/ shared directory infrastructure
+- move 8 detailed reference docs from common_knowledge to reference/
+- add streaming repetition detection as safety net
+- add penalty parameter support in models.json and _build_llm_kwargs
+- add Bedrock Kimi K2.5 thinking support via reasoning_config
+- pass enable_thinking via extra_body for openai/* models (vLLM)
+- unify thinking display across all execution modes
+- support thinking mode for Qwen models on AWS Bedrock
+- collapsible background sessions in chat main tab
+
+### Fixed
+- tighten session summary task extraction criteria to reduce false positives
+- use dict access in compressed summary keyword search test
+- use dict keys instead of tuple indices in conversation summary tests
+- use dict key instead of tuple index in procedures search test
+- align e2e activity log test with chat noise filtering
+- prevent race condition in restart helper when PID file is missing
+- update test assertions for compressed communication_rules template
+- address review feedback (iteration 1)
+- prevent thread context from truncating user messages in inbox
+- remove hiring_context from init.py, cli.py, compare_prompt_db.py
+- replace silent except-pass with logged debug message in rag_search
+- e2e test_hybrid_search_common_knowledge failing on CI
+- e2e test_search_memory_text_scope failing due to missing ChromaDB collection
+- remove dimension param from create_collection to prevent GPU model loading in runners
+- resolve ruff lint and format issues
+- update test mock paths after slack/chatwork submodule refactoring (9033eab8)
+- update test mock path for _call_compression_llm after refactoring
+- restore direct retriever injection in PrimingEngine._get_or_create_retriever
+- resolve ruff lint errors in core/ — I001 import sort + F401 unused import
+- replace parse_permitted_tools() with load_permissions() + get_permitted_tools()
+- inter-anima boundary check and test updates for permissions.json
+- eliminate SSE streaming race condition in _sse_tail event delivery
+- update E2E test to check task_queue.jsonl instead of current_state.md
+- ruff format core/memory/task_queue.py
+- address review feedback — remove remaining pending.md refs, batch task lookups
+- update budget constant test for Channel E (300 → 500)
+- Issue #114 — update templates and handler for current_state/pending separation
+- address review feedback (iteration 1)
+- replay now fetches all events for selected time range
+- set reasoning_content=None in mock to prevent MagicMock thinking injection
+- replace silent except Exception: pass with except OSError in pipe cleanup
+- update test assertions for openai/ thinking default and i18n baseline
+- initialize _read_paths in _make_handler for test_path_traversal
+- initialize _read_paths in _FakeWriteHandler and pre-populate in overwrite test
+- add archive_memory_file to MCP tools and strengthen consolidation prompts
+- block delegation tools during memory consolidation
+- exclude .archive/ and _archived/ from merge candidates and RAG indexing
+- ruff lint and format for core/ cli/ server/
+- replay time range now covers full requested hours
+- use raw vector similarity for merge candidates, improve archive exclusion
+- improve replay feature — event mapping, 24h range, 200x speed
+- address review feedback (iteration 2)
+- address review feedback (iteration 1)
+- default enable_thinking=True for openai/ models and detect untagged thinking
+- use polling for heartbeat intervals that don't divide evenly into 60
+- broaden _get_locale() exception handling to include ConfigError
+- remove unused imports (F401) in tests and scripts
+- remove extraneous f-prefix from f-strings without placeholders (F541)
+- remove unused imports and variables (F401/F841)
+- make sync tests async to match module-level pytestmark
+- implement strip_untagged_thinking for vLLM tag-free thinking detection
+- explicitly disable thinking for openai/ models when thinking=None
+- address review feedback — correct env var and cleanup
+- isolate SWE runtime from production ~/.animaworks/
+- mock load_auth and slack_socket_manager in server unit tests
+- correct invalid loop variable in schemas.py (F821)
+- export const チェックを test_websocket_imports_match_org_exports に追加
+- use visible tool in dashboard viz test
+- combine if-elif branches in activity.py (SIM114)
+- expand onDone search window from 1000 to 1200 chars
+- add sync comments for VISIBLE_TOOL_NAMES across FE/BE
+- address review feedback — buffer all WS events during replay
+- filter tool_use from Dashboard card streams
+- multi-layer defense against <think> tag leakage into chat responses
+- repair org-dashboard crash + feat: add grid snap for card placement
+- isolate streaming updates per thread to prevent cross-thread bleed
+- restore context ring on Anima tab switch
+- wrap entire interrupt+receive in timeout guard
+- normalize readable locations in permission templates
+- add shared/ write permission to all role templates
+- address review feedback (iteration 1)
+- use horizontal whitespace only in fuzzy CJK-Latin pattern
+- align E2E tests with unified 18-tool architecture
+- map WebSearch 'limit' param to 'count' in dispatch layer
+- address review findings — _WRITE_TOOLS, path traversal, budget mapping
+- replace silent except-pass with logged exceptions in machine.py
+- add injection.md/status.json to Mode S subordinate file access
+- inject credentials from AnimaWorks config into machine subprocess
+- apply ruff format to machine.py and update i18n hardcode baseline
+- address review findings for machine tool
+- prevent thinking preview scroll-jump by patching DOM in-place
+- prevent thinking preview scroll-jump by patching DOM in-place
+- recalculate resolved_mode in _resolve_background_config
+- fall back to CPU when CUDA OOM during embedding model load
+- extend t() locale allowlist to include zh and ko (#78)
+- preserve </think> on early-exit path for safety-net
+- remove misleading offset/limit hint from read_memory_file truncation message (#80)
+- map legacy 'ts' field to timestamp in Message validator
+- inboxの不正ファイルがメッセージ処理全体を停止させる問題を修正
+- replace IntervalTrigger with polling-based heartbeat for interval > 60min
+- correct claude_agent_sdk import in compact_session
+- grace IPC errors when process is alive to prevent false SIGTERM
+- IntervalTrigger の end_date によるハートビート停止バグを修正
+- add 2000-line truncation to read_memory_file to prevent prompt too large
+- resolve ruff lint/format errors (import sort, formatting)
+- resolve ruff lint errors in _parse_since (F821, UP037)
+- update remaining plan_tasks references in task_queue.py docstrings
+- skip parallel tasks with failed dependencies (mirror serial check)
+- make `animaworks restart` survive caller death via detached helper
+- ensure [IMPORTANT] tag is preserved and discoverable across memory lifecycle
+- depends_onを持つタスクの初期statusをpendingに修正
+- add trailing slash to knowledge_dir_str startswith check to prevent false matches
+- strip orphan </think> tags from Qwen3.5 streaming output
+- address review feedback (iteration 1)
+- rename activity filter "タスク" → "タスク管理" to distinguish from "タスク実行"
+- add anatomy/task-architecture.md to expected file list
+- add soft < hard timeout validation to HeartbeatConfig
+- remove unused UTC import after datetime cleanup in handler_skills
+- remove redundant local datetime import shadowing now_iso in _handle_plan_tasks
+- update test_task_metrics mock for split list_tasks() calls
+- update audit.py for new list_tasks() default behavior
+- strip residual </think> tags when multiple think blocks emitted
+- isolate TestSchedulerManagerE2E from system config
+- update skill-creator test assertion and restore tags field in ja template
+- use MagicMock for synchronous get_pid in restart_race tests
+- address review feedback (iteration 2)
+- update remaining en templates to deprecate send_message delegation intent
+- update remaining ja templates to deprecate send_message delegation intent
+- replace silent except-pass with logger.debug in call_human
+- save notification mapping in CLI call_human (Mode S reply routing)
+- update existing tests for delegation intent deprecation and SDK hook changes
+- use detail length for tool_detail events in debug log
+- multiple small fixes — enable_thinking=False on Bedrock + chunk counter off-by-one
+- use actual event name in debug log (was hardcoded as text_delta)
+- repair test_stream_exception_handling mock as proper async generator
+- set data-theme attribute on body for dark themes (closes #53)
+- add HEALTHCHECK to Dockerfile and docker-compose files (closes #52)
+- add .dockerignore for smaller Docker builds (closes #51)
+- downgrade debug-labeled stream logs from INFO to DEBUG
+- repair malformed tool-call JSON in non-streaming execute() path
+- update RepetitionDetector tests for n=10/threshold=10 defaults
+- relax RepetitionDetector thresholds to reduce false positives
+- repair malformed tool-call JSON from GLM-4.7 thinking mode
+- simplify StreamingThinkFilter and add Bedrock GLM thinking support
+- support vLLM reasoning parser that strips <think> opening tag
+- resolve CI failures — ruff format + CSS hover/active parity
+- text-format tool call IDをイテレーションごとにユニーク化
+- Bedrock tool calling — keep toolConfig when history has toolUse/toolResult
+- Llama 4 Maverickのテキスト形式ツールコールをパースして実行する
+- update stale references to files moved to reference/
+- fall back to non-streaming for models without streaming tool use
+- update test expectations for moved reference files
+- set litellm.modify_params=True in all executors for Bedrock compatibility
+- immortalize SDK sessions — remove TTL, preserve on compaction failure
+- sanitize tool_use_id for Bedrock Converse API compatibility
+- address review feedback (iteration 2)
+- rename unused loop variables to underscore prefix (B007, 10件)
+- restrict synthetic thinking_blocks injection to Anthropic models only
+- use PID-unique temp file in save_config to prevent concurrent rename race
+- replace blind Exception with ValidationError in pytest.raises (B017/F841)
+- rename unused loop variables to _ prefix (B007/I001)
+- bind loop variable in lambda to prevent B023 closure bug
+- ruff format _litellm_streaming.py
+- add enable_thinking to _thinking_enabled check in streaming
+- ruff format core/execution/base.py
+- resolve UP032/UP015/SIM118/UP012/F401 lint warnings (5 files)
+- apply same Qwen Bedrock routing to assisted.py (Mode B)
+- resolve SIM110/SIM114/SIM103/B011/F841 lint warnings
+- add # noqa: F401 to try/except availability-check imports
+- replace invalid noqa directives and remove trailing whitespace
+- remove unnecessary f-prefix and unused imports (ruff F401/F541)
+- mock Agent SDK fallback in test_llm_failure_returns_none
+- untrack private-only files and harden .gitignore
+- prevent auto-scroll to bottom during thinking zone updates
+- patch Agent SDK transport to allow graceful CLI shutdown
+- pass thread_id to ConversationMemory and ShortTermMemory
+- pass source param to process_message_stream in streaming handler
+- update Message.source docstring to include googlechat
+- add source parameter to process_message for external platform awareness
+- add text_delta to mock_stream so archive_paths is called
+- add text_delta to mock_stream so archive_paths is called
+- move overflow:hidden to base .chat-bubble to cover all bubble types
+- wrap long lines in code blocks to prevent bubble overflow
+- infinite scroll not working for tool-heavy animas (hinata)
+- prevent chat bubble content overflow causing page-level scroll
+- task exec markdown rendering, compact header, italic muted body
+- session splitting on trigger change, subtle bg-session styling
+- don't archive inbox messages when LLM returns empty response
+- address review feedback (iteration 1)
+- bootstrapループ防止（3つの構造的バグ修正）
+- prevent bootstrap infinite loop (3 structural bugs)
+- update session_tool_uses tests for deferred-chaining design
+- remove stale inject_shortterm patches from litellm_loop test
+- SDK session complete isolation — chat-only resume, fresh for background
+
 ### Changed
-- Renamed `plan_tasks` tool to `submit_tasks` for clearer async execution semantics
-- Renamed `add_task` tool to `backlog_task` to distinguish from auto-executed tasks
+- compress communication/messaging prompt templates
+- remove hiring_rules/hiring_context system prompt injection
+- remove per-line truncation and align Mode S Read default with CC
+- extract magic numbers to named constants in compaction logic
+- split _image_clients.py into image/ package
+- split handler_org.py into focused Mixin submodules
+- decompose PrimingEngine, config/models, and ConversationMemory god classes
+- split slack.py and chatwork.py into focused submodules
+- split lifecycle.py, builder.py, chat.py into submodules (WT-3)
+- split i18n.py and schemas.py into domain-based packages (Phase A)
+- extract agent_sdk.py into _sdk_interrupt, _sdk_options, extended _sdk_stream/_sdk_session
+- fix ambiguous test assertion for jira args
+- rename current_task.md to current_state.md and AnimaStatus.current_task to active_label
+- add missing trust levels, fix lint and spec typo
+- restrict emotion_instruction to chat trigger only
+- streamline EN/KO/ZH READMEs to match JA structure
+- fix indentation, remove redundant imports, update exception catches and tests
+- replace generic RuntimeError with domain-specific exceptions
+- update tests, docs, and scripts for task tool rename
+- trim conceptual integration prompt — remove PII examples, reduce verbosity
+- rename task tools — plan_tasks→submit_tasks, add_task→backlog_task
+- extract _handle_hard_timeout helper to stay within 85-line budget
+- remove all intent="delegation" references from templates
+- SDK hook delegates only when subordinate explicitly named
+- replace str+Enum with StrEnum in evaluation framework (UP042)
+- restructure common_knowledge 00_index.md for clarity
+- improve bootstrap loop fix
+
+### Performance
+- open output file once per stream thread instead of per line
+- optimize Board page — lazy load, caching, incremental polling
+
+### Other
+- フィードバックに対応しました
+- symple化
+- Anima個別のMCP設定を追加
+- GoogleTasks対応
+- Revert "fix: explicitly disable thinking for openai/ models when thinking=None"
+- Revert "fix: prevent bootstrap infinite loop (3 structural bugs)"
+- Revert "style: apply ruff format to bootstrap loop fix files"
+
 
 ## [0.5.2] - 2026-03-09
 
@@ -817,8 +1115,8 @@ memory, and decision-making criteria.
 - Moved model mode patterns from config.json to models.json
 - Tool permissions changed from whitelist to default-allow (blacklist) model
 
-[Unreleased]: https://github.com/xuiltul/animaworks/compare/v0.5.2...HEAD
-[0.5.2]: https://github.com/xuiltul/animaworks/compare/v0.5.1...v0.5.2
+[Unreleased]: https://github.com/xuiltul/animaworks/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/xuiltul/animaworks/compare/v0.5.2...v0.5.3
 [0.4.3]: https://github.com/xuiltul/animaworks/compare/v0.4.2...v0.4.3
 [0.4.0]: https://github.com/xuiltul/animaworks/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/xuiltul/animaworks/compare/v0.3.0...v0.3.1
