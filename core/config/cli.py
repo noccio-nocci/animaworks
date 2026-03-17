@@ -369,7 +369,6 @@ _SECTION_FILES: dict[str, str] = {
     "communication_rules_s": "communication_rules_s.md",
     "communication_rules": "communication_rules.md",
     "a_reflection": "a_reflection.md",
-    "hiring_context": "hiring_context.md",
 }
 
 

@@ -52,7 +52,6 @@ def main() -> None:
         "communication_rules_s": "communication_rules_s.md",
         "communication_rules": "communication_rules.md",
         "a_reflection": "a_reflection.md",
-        "hiring_context": "hiring_context.md",
         "emotion_instruction": None,  # built at runtime
     }
 
