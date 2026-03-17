@@ -50,7 +50,6 @@ def _ensure_tool_prompt_db(data_dir: Path) -> None:
         "communication_rules_s": "communication_rules_s.md",
         "communication_rules": "communication_rules.md",
         "a_reflection": "a_reflection.md",
-        "hiring_context": "hiring_context.md",
     }
 
     for key, filename in _SECTION_FILES.items():
@@ -281,7 +280,6 @@ def _migrate_resync_sections_v1(
             "communication_rules_s": "communication_rules_s.md",
             "communication_rules": "communication_rules.md",
             "a_reflection": "a_reflection.md",
-            "hiring_context": "hiring_context.md",
         }
 
         updated = []
