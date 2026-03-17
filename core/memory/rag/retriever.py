@@ -469,9 +469,7 @@ class MemoryRetriever:
                             patch[key] = 0
                     reset_metas.append(patch)
 
-                self.vector_store.update_metadata(
-                    collection_name, data["ids"], reset_metas
-                )
+                self.vector_store.update_metadata(collection_name, data["ids"], reset_metas)
                 result[collection_name] = len(data["ids"])
                 logger.info(
                     "Reset access counts for %d chunks in %s",
