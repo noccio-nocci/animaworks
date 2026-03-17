@@ -247,14 +247,14 @@ class TestCompressedSummaryToRAGSearchPipeline:
 
         # Verify keyword search found matching content
         summary_results = [
-            (fname, line) for fname, line in results
-            if fname == "conversation_summary"
+            r for r in results
+            if r["memory_type"] == "conversation_summary"
         ]
         assert len(summary_results) > 0, (
             "Keyword search should find '返信不要' in conversation_summary"
         )
         assert any(
-            "返信不要" in line for _, line in summary_results
+            "返信不要" in r["content"] for r in summary_results
         ), "Matched lines should contain the search term"
 
     def test_compressed_summary_rag_vector_indexing(self, tmp_path, monkeypatch):
