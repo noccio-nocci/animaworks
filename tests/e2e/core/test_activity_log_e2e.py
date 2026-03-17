@@ -131,11 +131,16 @@ async def test_activity_log_priming_integration(
     # Verify each event type appears in the formatted output.
     # DM entries are grouped under a "DM" header (not shown as "dm_sent").
     # channel_post entries are grouped under "#channel_name" header.
+    # tool_use is filtered by _CHAT_NOISE_TYPES in chat priming (by design).
+    from core.memory.priming.channel_b import _CHAT_NOISE_TYPES
+
     for etype in event_types:
         if etype == "dm_sent":
             assert "DM" in result, "DM group header not found in priming output"
         elif etype == "channel_post":
             assert "#general" in result, "Channel group header not found in priming output"
+        elif etype in _CHAT_NOISE_TYPES:
+            assert etype not in result, f"Noise event '{etype}' should be filtered from chat priming"
         else:
             assert etype in result, f"Event type '{etype}' not found in priming output"
 
@@ -143,7 +148,6 @@ async def test_activity_log_priming_integration(
     assert "sakura" in result
     assert "taro" in result
     assert "general" in result
-    assert "web_search" in result
 
 
 @pytest.mark.asyncio
