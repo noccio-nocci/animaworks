@@ -201,6 +201,22 @@ class TestLeadingSlashStrip:
         assert result.rel == "knowledge/foo.md"
 
 
+class TestPrefixWithDotDot:
+    """Prefix-qualified paths with .. must NOT be normalized (pass-through)."""
+
+    def test_common_knowledge_with_dotdot(self):
+        result = _normalize_memory_path("common_knowledge/../secret.txt", ANIMA_DIR)
+        assert result.rel == "common_knowledge/../secret.txt"
+
+    def test_reference_with_dotdot(self):
+        result = _normalize_memory_path("reference/../../etc/passwd", ANIMA_DIR)
+        assert result.rel == "reference/../../etc/passwd"
+
+    def test_common_skills_with_dotdot(self):
+        result = _normalize_memory_path("common_skills/../hack.md", ANIMA_DIR)
+        assert result.rel == "common_skills/../hack.md"
+
+
 class TestEmptyAndEdge:
     """Edge cases."""
 
@@ -211,6 +227,15 @@ class TestEmptyAndEdge:
 
     def test_just_slash(self):
         result = _normalize_memory_path("/", ANIMA_DIR)
+        assert result is not None
+
+    def test_just_dotdot(self):
+        result = _normalize_memory_path("..", ANIMA_DIR)
+        assert result is not None
+        assert result.channel_redirect is None
+
+    def test_just_dot(self):
+        result = _normalize_memory_path(".", ANIMA_DIR)
         assert result is not None
 
     def test_no_channel_redirect_by_default(self):
