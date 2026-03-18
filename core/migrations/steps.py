@@ -133,7 +133,7 @@ def step_credentials_migration(data_dir: Path, dry_run: bool, verbose: bool) -> 
 
 
 def _iter_anima_dirs(data_dir: Path) -> list[Path]:
-    """Yield anima directories that have identity.md."""
+    """Return anima directories that have identity.md."""
     animas_dir = data_dir / "animas"
     if not animas_dir.exists():
         return []

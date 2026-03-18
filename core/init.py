@@ -381,15 +381,7 @@ def ensure_runtime_dir(*, skip_animas: bool = False) -> Path:
         try:
             _run_auto_migrations(data_dir)
         except Exception:
-            logger.exception("Auto-migration failed; continuing with legacy path")
-            try:
-                from core.config.migrate import migrate_person_to_anima
-
-                migrate_person_to_anima(data_dir)
-            except Exception:
-                logger.exception("Person-to-Anima migration failed")
-            _maybe_migrate_config(data_dir)
-            _sync_shared_templates(data_dir)
+            logger.exception("Auto-migration failed — partial state may exist; run 'animaworks migrate' manually")
         _ensure_runtime_only_dirs(data_dir)
         logger.debug("Runtime directory already initialized: %s", data_dir)
         return data_dir
