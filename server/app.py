@@ -313,14 +313,16 @@ async def lifespan(app: FastAPI):
         msg_log_scheduler.start()
         app.state.msg_log_scheduler = msg_log_scheduler
 
-        # ── Set embed URL for child processes ──────────────────
-        # Child processes inherit this env var and use HTTP for embeddings
-        # instead of loading SentenceTransformer on their own GPU.
-        import os
-
+        # ── URLs for child processes (NOT set in server's own os.environ) ─
+        # ProcessSupervisor passes these to child processes via subprocess.Popen(env=).
+        # Child processes use HTTP for embed/vector instead of loading ChromaDB locally.
         _embed_config = load_config()
         _server_port = getattr(_embed_config.server, "port", 18500)
-        os.environ["ANIMAWORKS_EMBED_URL"] = f"http://127.0.0.1:{_server_port}/api/internal/embed"
+        app.state.child_env_urls = {
+            "ANIMAWORKS_EMBED_URL": f"http://127.0.0.1:{_server_port}/api/internal/embed",
+            "ANIMAWORKS_VECTOR_URL": f"http://127.0.0.1:{_server_port}/api/internal/vector",
+        }
+        app.state.supervisor.child_env_urls = app.state.child_env_urls
 
         # ── Start anima processes in background (parallel) ──
         # Web server is already accepting requests at this point.
@@ -352,10 +354,6 @@ async def lifespan(app: FastAPI):
         await app.state.supervisor.shutdown_all()
         if hasattr(app.state, "msg_log_scheduler"):
             app.state.msg_log_scheduler.shutdown(wait=False)
-        # Clean up embed URL env var to avoid leaking into test suites
-        import os
-
-        os.environ.pop("ANIMAWORKS_EMBED_URL", None)
     logger.info("Server stopped")
 
 

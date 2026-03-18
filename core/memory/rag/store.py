@@ -100,6 +100,23 @@ class VectorStore(ABC):
     def update_metadata(self, collection: str, ids: list[str], metadatas: list[dict[str, str | int | float]]) -> None:
         """Update metadata for existing documents without re-embedding."""
 
+    @abstractmethod
+    def get_by_metadata(
+        self,
+        collection: str,
+        where: dict[str, str | int | float],
+        limit: int = 20,
+    ) -> list[SearchResult]:
+        """Retrieve documents by metadata filter without embedding search."""
+
+    @abstractmethod
+    def get_by_ids(
+        self,
+        collection: str,
+        ids: list[str],
+    ) -> list[Document]:
+        """Fetch documents (with metadata) by their IDs."""
+
 
 # ── ChromaDB implementation ─────────────────────────────────────────
 
@@ -267,19 +284,22 @@ class ChromaVectorStore(VectorStore):
 
     def get_by_metadata(
         self,
-        collection_name: str,
-        where: dict,
+        collection: str,
+        where: dict[str, str | int | float],
         limit: int = 20,
     ) -> list[SearchResult]:
         """Retrieve documents by metadata filter without embedding search."""
         try:
-            coll = self.client.get_collection(name=collection_name)
+            coll = self.client.get_collection(name=collection)
         except Exception as e:
-            logger.debug("Collection '%s' not found for get_by_metadata: %s", collection_name, e)
+            logger.debug("Collection '%s' not found for get_by_metadata: %s", collection, e)
             return []
 
+        # ChromaDB: empty dict means no filter; pass None for "return all"
+        where_arg: Any = where if where else None
+
         data = coll.get(
-            where=cast(Any, where),
+            where=where_arg,
             limit=limit,
             include=["documents", "metadatas"],
         )
@@ -299,9 +319,27 @@ class ChromaVectorStore(VectorStore):
         logger.debug(
             "get_by_metadata returned %d results from collection '%s'",
             len(search_results),
-            collection_name,
+            collection,
         )
         return search_results
+
+    def get_by_ids(self, collection: str, ids: list[str]) -> list[Document]:
+        """Fetch documents by their IDs."""
+        if not ids:
+            return []
+        try:
+            coll = self.client.get_collection(name=collection)
+        except Exception as e:
+            logger.debug("Collection '%s' not found for get_by_ids: %s", collection, e)
+            return []
+        data = coll.get(ids=ids, include=["documents", "metadatas"])
+        documents: list[Document] = []
+        for i, doc_id in enumerate(data["ids"]):
+            content = data["documents"][i] if data["documents"] and i < len(data["documents"]) else ""
+            meta_raw = data["metadatas"][i] if data["metadatas"] and i < len(data["metadatas"]) else {}
+            meta_dict = cast(Any, dict(meta_raw)) if meta_raw else {}
+            documents.append(Document(id=doc_id, content=content, metadata=meta_dict))
+        return documents
 
     def needs_cosine_migration(self) -> list[str]:
         """Return collection names still using L2 (non-cosine) distance."""

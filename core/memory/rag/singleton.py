@@ -23,31 +23,53 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
-    from core.memory.rag.store import ChromaVectorStore
+    from core.memory.rag.http_store import HttpVectorStore
+    from core.memory.rag.store import VectorStore
 
 logger = logging.getLogger(__name__)
 
 _BATCH_LIMIT = 1000
 
 _lock = threading.Lock()
-_vector_stores: dict[str | None, ChromaVectorStore | None] = {}
+_vector_stores: dict[str | None, VectorStore | None] = {}
+_http_stores: dict[str | None, HttpVectorStore] = {}
 _embedding_model: SentenceTransformer | None = None
 _embedding_model_name: str | None = None
 _init_failed: bool = False
 
 
-def get_vector_store(anima_name: str | None = None) -> ChromaVectorStore | None:
-    """Return process-level singleton ChromaVectorStore per anima.
+def _get_http_store(base_url: str, anima_name: str | None) -> HttpVectorStore:
+    """Return cached HttpVectorStore for the given base_url and anima_name."""
+    if anima_name not in _http_stores:
+        with _lock:
+            if anima_name not in _http_stores:
+                from core.memory.rag.http_store import HttpVectorStore
+
+                _http_stores[anima_name] = HttpVectorStore(base_url=base_url, anima_name=anima_name)
+    return _http_stores[anima_name]
+
+
+def get_vector_store(anima_name: str | None = None) -> VectorStore | None:
+    """Return process-level singleton VectorStore per anima.
+
+    When ``ANIMAWORKS_VECTOR_URL`` is set, delegates to the server's
+    vector API via HttpVectorStore. Otherwise uses ChromaVectorStore
+    with local ChromaDB.
 
     Args:
         anima_name: Anima name for per-anima DB isolation.
             When ``None``, uses the legacy shared directory.
 
     Returns:
-        ChromaVectorStore instance, or ``None`` if ChromaDB failed to
-        initialize (e.g., Python 3.14 + pydantic.v1 incompatibility).
+        VectorStore instance (ChromaVectorStore or HttpVectorStore),
+        or ``None`` if ChromaDB failed to initialize
+        (e.g., Python 3.14 + pydantic.v1 incompatibility).
     """
     global _init_failed
+
+    vector_url = os.environ.get("ANIMAWORKS_VECTOR_URL")
+    if vector_url:
+        return _get_http_store(vector_url, anima_name)
 
     # Fast path: already known to be broken — skip without locking
     if _init_failed:
@@ -227,6 +249,7 @@ def _reset_for_testing():
     global _embedding_model, _embedding_model_name, _init_failed
     with _lock:
         _vector_stores.clear()
+        _http_stores.clear()
         _embedding_model = None
         _embedding_model_name = None
         _init_failed = False

@@ -857,6 +857,8 @@ class PendingTaskExecutor:
                 **os.environ,
                 "ANIMAWORKS_ANIMA_DIR": args.get("anima_dir", ""),
             }
+            # ANIMAWORKS_EMBED_URL and ANIMAWORKS_VECTOR_URL are inherited from runner env
+            # (set by ProcessHandle.child_env_urls) and passed through via **os.environ
 
             result = subprocess.run(
                 cmd,

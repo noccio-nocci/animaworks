@@ -429,12 +429,8 @@ class MemoryRetriever:
     ) -> dict[str, int]:
         """Read an integer metadata field from the vector store."""
         try:
-            coll = self.vector_store.client.get_collection(name=collection)
-            data = coll.get(ids=ids, include=["metadatas"])
-            return {
-                doc_id: int(str(meta.get(field, 0)))
-                for doc_id, meta in zip(data["ids"], data["metadatas"], strict=False)
-            }
+            docs = self.vector_store.get_by_ids(collection, ids)
+            return {doc.id: int(str(doc.metadata.get(field, 0))) for doc in docs}
         except Exception:
             return {}
 
@@ -449,33 +445,25 @@ class MemoryRetriever:
 
         for collection_name in _SHARED_COLLECTIONS:
             try:
-                coll = self.vector_store.client.get_collection(name=collection_name)
-            except Exception:
-                continue
-
-            try:
-                data = coll.get(include=["metadatas"])
-                if not data["ids"]:
+                all_results = self.vector_store.get_by_metadata(collection_name, {}, limit=100000)
+                if not all_results:
                     continue
 
+                all_ids = [r.document.id for r in all_results]
                 reset_metas: list[dict[str, str | int | float]] = []
-                for meta in data["metadatas"]:
+                for r in all_results:
                     patch: dict[str, str | int | float] = {
                         "access_count": 0,
                         "last_accessed_at": "",
                     }
-                    for key in meta:
+                    for key in r.document.metadata:
                         if key.startswith(_PER_ANIMA_AC_PREFIX):
                             patch[key] = 0
                     reset_metas.append(patch)
 
-                self.vector_store.update_metadata(collection_name, data["ids"], reset_metas)
-                result[collection_name] = len(data["ids"])
-                logger.info(
-                    "Reset access counts for %d chunks in %s",
-                    len(data["ids"]),
-                    collection_name,
-                )
+                self.vector_store.update_metadata(collection_name, all_ids, reset_metas)
+                result[collection_name] = len(all_ids)
+                logger.info("Reset access counts for %d chunks in %s", len(all_ids), collection_name)
             except Exception as e:
                 logger.warning("Failed to reset %s: %s", collection_name, e)
 

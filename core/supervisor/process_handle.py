@@ -68,13 +68,20 @@ class ProcessHandle:
     """
 
     def __init__(
-        self, anima_name: str, socket_path: Path, animas_dir: Path, shared_dir: Path, log_dir: Path | None = None
+        self,
+        anima_name: str,
+        socket_path: Path,
+        animas_dir: Path,
+        shared_dir: Path,
+        log_dir: Path | None = None,
+        child_env_urls: dict[str, str] | None = None,
     ):
         self.anima_name = anima_name
         self.socket_path = socket_path
         self.animas_dir = animas_dir
         self.shared_dir = shared_dir
         self.log_dir = log_dir
+        self._child_env_urls = child_env_urls or {}
 
         self.state = ProcessState.STOPPED
         self.process: subprocess.Popen | None = None
@@ -155,11 +162,15 @@ class ProcessHandle:
                 open(stderr_path, "a") if stderr_path else None  # noqa: SIM115
             )
 
+            child_env = os.environ.copy()
+            child_env.update(self._child_env_urls)
+
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=self._stderr_file if self._stderr_file else subprocess.DEVNULL,
                 start_new_session=True,
+                env=child_env,
             )
             logger.info("Process started: %s (PID %s)", self.anima_name, self.process.pid)
 

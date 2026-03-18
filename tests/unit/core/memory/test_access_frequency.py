@@ -35,28 +35,26 @@ from core.time_utils import now_jst
 
 
 def _setup_collection_get(store, data_map: dict[str, dict] | None = None):
-    """Configure mock_vector_store.client.get_collection().get() to return metadata.
+    """Configure mock_vector_store.get_by_ids() to return Document objects.
 
     Args:
         store: The mock vector store.
         data_map: Mapping of collection name to {doc_id: {metadata dict}}.
     """
+    from core.memory.rag.store import Document
+
     if data_map is None:
         data_map = {}
 
-    def _get_collection(name):
-        coll = MagicMock()
-        col_data = data_map.get(name, {})
+    def _get_by_ids(collection, ids):
+        col_data = data_map.get(collection, {})
+        return [
+            Document(id=did, content="", metadata=col_data.get(did, {}))
+            for did in ids
+            if did in col_data
+        ]
 
-        def _get(ids=None, include=None):
-            result_ids = ids or list(col_data.keys())
-            result_metas = [col_data.get(did, {}) for did in result_ids]
-            return {"ids": result_ids, "metadatas": result_metas}
-
-        coll.get = _get
-        return coll
-
-    store.client.get_collection = _get_collection
+    store.get_by_ids = MagicMock(side_effect=_get_by_ids)
 
 
 @pytest.fixture

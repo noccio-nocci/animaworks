@@ -213,17 +213,36 @@ class _FakeVectorStore:
     def __init__(self) -> None:
         self.collections: dict[str, _FakeCollection] = {}
 
-    @property
-    def client(self):
-        return self
-
-    def get_collection(self, name):
+    def _ensure_collection(self, name):
         if name not in self.collections:
             self.collections[name] = _FakeCollection({})
         return self.collections[name]
 
+    def get_by_ids(self, collection, ids):
+        from core.memory.rag.store import Document
+
+        coll = self._ensure_collection(collection)
+        data = coll.get(ids=ids)
+        return [
+            Document(id=did, content="", metadata=data["metadatas"][i])
+            for i, did in enumerate(data["ids"])
+        ]
+
+    def get_by_metadata(self, collection, where, limit=20):
+        from core.memory.rag.store import Document, SearchResult
+
+        coll = self._ensure_collection(collection)
+        data = coll.get()
+        return [
+            SearchResult(
+                document=Document(id=did, content="", metadata=data["metadatas"][i]),
+                score=1.0,
+            )
+            for i, did in enumerate(data["ids"])
+        ]
+
     def update_metadata(self, collection, ids, metadatas):
-        coll = self.get_collection(collection)
+        coll = self._ensure_collection(collection)
         coll.update(ids, metadatas)
 
 
@@ -333,7 +352,7 @@ class TestResetSharedAccessCounts:
 
     def test_missing_collection_skipped(self, tmp_path: Path) -> None:
         vs = MagicMock()
-        vs.client.get_collection.side_effect = Exception("not found")
+        vs.get_by_metadata.return_value = []
         retriever = MemoryRetriever(vs, MagicMock(), tmp_path)
         result = retriever.reset_shared_access_counts()
 

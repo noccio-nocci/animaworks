@@ -144,6 +144,9 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
         self.on_anima_added: Callable[[str], None] | None = None
         self.on_anima_removed: Callable[[str], None] | None = None
 
+        # Env vars passed to child processes (embed/vector URLs). Set by server/app.py.
+        self.child_env_urls: dict[str, str] = {}
+
     def is_scheduler_running(self) -> bool:
         """Return whether the system scheduler is running."""
         return self._scheduler_running
@@ -275,6 +278,7 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
                 animas_dir=self.animas_dir,
                 shared_dir=self.shared_dir,
                 log_dir=self.log_dir,
+                child_env_urls=self.child_env_urls,
             )
 
             try:
