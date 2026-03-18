@@ -139,12 +139,34 @@ async def _compact_mode_s(anima: DigitalAnima, thread_id: str) -> bool:
 
 
 async def _compact_mode_a(anima: DigitalAnima, thread_id: str) -> bool:
-    """Mode A: conversation compress_if_needed + finalize_if_session_ended."""
+    """Mode A: conversation compress + shortterm save + finalize."""
     from core.memory.conversation import ConversationMemory
+    from core.memory.shortterm import SessionState, ShortTermMemory
+    from core.time_utils import now_local
 
     logger.debug("_compact_mode_a: entry (anima=%s, thread=%s)", anima.name, thread_id)
     conv = ConversationMemory(anima.anima_dir, anima.agent.model_config, thread_id=thread_id)
     compressed = await conv.compress_if_needed()
+
+    state = conv.load()
+    summary_parts: list[str] = []
+    if state.compressed_summary:
+        summary_parts.append(state.compressed_summary)
+    if state.turns:
+        for turn in state.turns[-3:]:
+            summary_parts.append(f"{turn.role}: {turn.content[:200]}")
+
+    if summary_parts:
+        shortterm = ShortTermMemory(anima.anima_dir, session_type="chat", thread_id=thread_id)
+        shortterm.save(
+            SessionState(
+                accumulated_response="\n".join(summary_parts)[:4000],
+                timestamp=now_local().isoformat(),
+                trigger="idle_compaction",
+                notes="Auto-saved during idle compaction",
+            )
+        )
+
     await conv.finalize_if_session_ended()
     logger.debug("_compact_mode_a: exit (compressed=%s)", compressed)
     return compressed

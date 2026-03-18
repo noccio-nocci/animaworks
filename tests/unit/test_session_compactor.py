@@ -316,6 +316,7 @@ class TestModeSpecificCompaction:
             mock_conv = MagicMock()
             mock_conv.compress_if_needed = AsyncMock(return_value=True)
             mock_conv.finalize_if_session_ended = AsyncMock()
+            mock_conv.load.return_value = MagicMock(compressed_summary="", turns=[])
             mock_conv_cls.return_value = mock_conv
 
             anima = MagicMock()
@@ -327,6 +328,105 @@ class TestModeSpecificCompaction:
             mock_conv.compress_if_needed.assert_awaited_once()
             mock_conv.finalize_if_session_ended.assert_awaited_once()
             assert result is True
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_a_saves_shortterm_when_state_has_content(
+        self, anima_dir: Path, model_config: ModelConfig
+    ) -> None:
+        """_compact_mode_a saves shortterm when conversation state has content."""
+        mock_turn = MagicMock()
+        mock_turn.role = "assistant"
+        mock_turn.content = "I completed the task."
+
+        with (
+            patch("core.memory.conversation.ConversationMemory") as mock_conv_cls,
+            patch("core.memory.shortterm.ShortTermMemory") as mock_stm_cls,
+        ):
+            mock_conv = MagicMock()
+            mock_conv.compress_if_needed = AsyncMock(return_value=False)
+            mock_conv.finalize_if_session_ended = AsyncMock()
+            mock_conv.load.return_value = MagicMock(
+                compressed_summary="User asked about tasks. Assistant helped.",
+                turns=[mock_turn],
+            )
+            mock_conv_cls.return_value = mock_conv
+
+            mock_stm = MagicMock()
+            mock_stm_cls.return_value = mock_stm
+
+            anima = MagicMock()
+            anima.anima_dir = anima_dir
+            anima.agent.model_config = model_config
+
+            await _compact_mode_a(anima, "default")
+
+            mock_stm_cls.assert_called_once_with(anima_dir, session_type="chat", thread_id="default")
+            mock_stm.save.assert_called_once()
+            saved_state = mock_stm.save.call_args[0][0]
+            assert "User asked about tasks" in saved_state.accumulated_response
+            assert saved_state.trigger == "idle_compaction"
+            assert saved_state.notes == "Auto-saved during idle compaction"
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_a_skips_shortterm_when_state_empty(
+        self, anima_dir: Path, model_config: ModelConfig
+    ) -> None:
+        """_compact_mode_a skips shortterm save when conversation state is empty."""
+        with (
+            patch("core.memory.conversation.ConversationMemory") as mock_conv_cls,
+            patch("core.memory.shortterm.ShortTermMemory") as mock_stm_cls,
+        ):
+            mock_conv = MagicMock()
+            mock_conv.compress_if_needed = AsyncMock(return_value=False)
+            mock_conv.finalize_if_session_ended = AsyncMock()
+            mock_conv.load.return_value = MagicMock(compressed_summary="", turns=[])
+            mock_conv_cls.return_value = mock_conv
+
+            anima = MagicMock()
+            anima.anima_dir = anima_dir
+            anima.agent.model_config = model_config
+
+            await _compact_mode_a(anima, "default")
+
+            mock_stm_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_a_shortterm_includes_last_3_turns(
+        self, anima_dir: Path, model_config: ModelConfig
+    ) -> None:
+        """_compact_mode_a includes up to last 3 turns in shortterm."""
+        turns = []
+        for i in range(5):
+            t = MagicMock()
+            t.role = "assistant" if i % 2 else "human"
+            t.content = f"Turn {i} content"
+            turns.append(t)
+
+        with (
+            patch("core.memory.conversation.ConversationMemory") as mock_conv_cls,
+            patch("core.memory.shortterm.ShortTermMemory") as mock_stm_cls,
+        ):
+            mock_conv = MagicMock()
+            mock_conv.compress_if_needed = AsyncMock(return_value=False)
+            mock_conv.finalize_if_session_ended = AsyncMock()
+            mock_conv.load.return_value = MagicMock(compressed_summary="", turns=turns)
+            mock_conv_cls.return_value = mock_conv
+
+            mock_stm = MagicMock()
+            mock_stm_cls.return_value = mock_stm
+
+            anima = MagicMock()
+            anima.anima_dir = anima_dir
+            anima.agent.model_config = model_config
+
+            await _compact_mode_a(anima, "default")
+
+            saved_state = mock_stm.save.call_args[0][0]
+            assert "Turn 2" in saved_state.accumulated_response
+            assert "Turn 3" in saved_state.accumulated_response
+            assert "Turn 4" in saved_state.accumulated_response
+            assert "Turn 0" not in saved_state.accumulated_response
+            assert "Turn 1" not in saved_state.accumulated_response
 
     @pytest.mark.asyncio
     async def test_compact_mode_b_delegates_to_mode_a(self, anima_dir: Path, model_config: ModelConfig) -> None:
@@ -503,6 +603,66 @@ class TestRunIdleCompaction:
             await run_idle_compaction(anima, "thread-1")
 
         mock_lock.release.assert_called_once()
+
+
+# ── Mode A blocking: shortterm.clear() conditioned on threshold ──────────────
+
+
+class TestModeABlockingShorttermClear:
+    """Mode A blocking path should only clear shortterm when threshold is NOT exceeded."""
+
+    @pytest.mark.asyncio
+    async def test_shortterm_preserved_when_threshold_exceeded(self, tmp_path: Path) -> None:
+        """When tracker.threshold_exceeded is True, shortterm.clear() is NOT called."""
+        from core.memory.shortterm import SessionState, ShortTermMemory
+
+        anima_dir = tmp_path / "animas" / "test-mode-a"
+        (anima_dir / "shortterm" / "chat").mkdir(parents=True)
+
+        shortterm = ShortTermMemory(anima_dir, session_type="chat")
+        shortterm.save(
+            SessionState(
+                session_id="test-session",
+                accumulated_response="Important conversation context",
+                trigger="chat",
+                notes="Saved by handle_session_chaining",
+            )
+        )
+        assert shortterm.has_pending()
+
+        tracker = MagicMock()
+        tracker.threshold_exceeded = True
+
+        if not tracker.threshold_exceeded:
+            shortterm.clear()
+
+        assert shortterm.has_pending(), "shortterm must be preserved when threshold exceeded"
+
+    @pytest.mark.asyncio
+    async def test_shortterm_cleared_when_threshold_not_exceeded(self, tmp_path: Path) -> None:
+        """When tracker.threshold_exceeded is False, shortterm.clear() IS called."""
+        from core.memory.shortterm import SessionState, ShortTermMemory
+
+        anima_dir = tmp_path / "animas" / "test-mode-a"
+        (anima_dir / "shortterm" / "chat").mkdir(parents=True)
+
+        shortterm = ShortTermMemory(anima_dir, session_type="chat")
+        shortterm.save(
+            SessionState(
+                session_id="test-session",
+                accumulated_response="Some context",
+                trigger="chat",
+            )
+        )
+        assert shortterm.has_pending()
+
+        tracker = MagicMock()
+        tracker.threshold_exceeded = False
+
+        if not tracker.threshold_exceeded:
+            shortterm.clear()
+
+        assert not shortterm.has_pending(), "shortterm must be cleared when threshold not exceeded"
 
 
 # ── Integration with anima.py ───────────────────────────────────────────────────

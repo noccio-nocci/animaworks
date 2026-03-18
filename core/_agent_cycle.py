@@ -334,7 +334,8 @@ class CycleMixin:
                 session_id=self._tool_handler.session_id,
                 tool_call_count=len(result.tool_call_records),
             )
-            shortterm.clear()
+            if not tracker.threshold_exceeded:
+                shortterm.clear()
             duration_ms = int((time.monotonic() - start) * 1000)
             logger.info(
                 "run_cycle END (a) trigger=%s duration_ms=%d response_len=%d",
