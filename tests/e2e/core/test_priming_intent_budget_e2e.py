@@ -22,6 +22,6 @@ def test_intent_budget_mapping_e2e(tmp_path) -> None:
     fallback_budget = engine._adjust_token_budget("こんにちは", "chat", intent="")
 
     assert delegation_budget == 3000
-    assert report_budget == 1500
-    assert question_budget == 1500
+    assert report_budget == 2000
+    assert question_budget == 2000
     assert fallback_budget == 500
