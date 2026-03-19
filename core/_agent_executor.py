@@ -169,6 +169,36 @@ class ExecutorFactoryMixin:
                     interrupt_event=self._interrupt_event,
                 )
 
+        if mode == "d":
+            try:
+                from core.execution.cursor_agent import (
+                    CursorAgentExecutor,
+                    is_cursor_agent_available,
+                )
+
+                if not is_cursor_agent_available():
+                    raise ImportError("cursor-agent CLI not found")
+                return CursorAgentExecutor(
+                    model_config=self.model_config,
+                    anima_dir=self.anima_dir,
+                    tool_registry=self._tool_registry,
+                    personal_tools=self._personal_tools,
+                    interrupt_event=self._interrupt_event,
+                )
+            except ImportError:
+                logger.warning(
+                    "CursorAgentExecutor unavailable (cursor-agent not installed), falling back to LiteLLM (Mode A)"
+                )
+                return LiteLLMExecutor(
+                    model_config=self.model_config,
+                    anima_dir=self.anima_dir,
+                    tool_handler=self._tool_handler,
+                    tool_registry=self._tool_registry,
+                    memory=self.memory,
+                    personal_tools=self._personal_tools,
+                    interrupt_event=self._interrupt_event,
+                )
+
         if mode == "a":
             return LiteLLMExecutor(
                 model_config=self.model_config,

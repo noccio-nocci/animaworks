@@ -66,4 +66,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "[前回の作業要約]",
         "en": "[Previous work summary]",
     },
+    "cursor_agent.not_installed": {
+        "ja": "cursor-agent CLIが見つかりません。`curl https://cursor.com/install -fsS | bash` でインストールし、`agent login` でログインしてください。",
+        "en": "cursor-agent CLI not found. Install with `curl https://cursor.com/install -fsS | bash` and run `agent login`.",
+    },
+    "cursor_agent.not_authenticated": {
+        "ja": "cursor-agentが未認証です。`agent login` を実行してCursorアカウントにログインしてください。",
+        "en": "cursor-agent is not authenticated. Run `agent login` to sign in to your Cursor account.",
+    },
+    "cursor_agent.timeout": {
+        "ja": "[cursor-agent タイムアウト: {timeout}秒以内に完了しませんでした]",
+        "en": "[cursor-agent timeout: did not complete within {timeout} seconds]",
+    },
 }

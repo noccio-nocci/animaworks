@@ -35,6 +35,8 @@ DEFAULT_MODEL_MODE_PATTERNS: dict[str, str] = {
     "claude-*": "S",
     # ── C: Codex SDK (Codex CLI wrapper) ─────────────────
     "codex/*": "C",
+    # ── D: Cursor Agent CLI ──────────────────────────────
+    "cursor/*": "D",
     # ── A: Cloud API providers (LiteLLM + tool_use) ──────
     "openai/*": "A",
     "azure/*": "A",
