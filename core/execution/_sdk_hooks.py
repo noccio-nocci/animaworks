@@ -668,11 +668,11 @@ def _build_pre_tool_hook(
                 deny_reason = (
                     f"SUCCESS — submit_tasks completed successfully (this is NOT an error). "
                     f"Result: {result_str}\n"
-                    f"All tasks{tasks_label} are now queued in your TaskExecutor "
-                    f"and will begin executing immediately in background. "
-                    f"CRITICAL: Do NOT use delegate_task, send_message, or any other method "
-                    f"to re-submit or re-assign these same tasks — doing so WILL cause "
-                    f"DUPLICATE execution with conflicting changes. "
+                    f"All tasks{tasks_label} are now queued in YOUR OWN TaskExecutor "
+                    f"and YOU will execute them yourself in background. "
+                    f"These tasks are NOT sent to any subordinate. "
+                    f"Do NOT re-submit the same tasks via any method — "
+                    f"doing so WILL cause DUPLICATE execution. "
                     f"Proceed with your current conversation."
                 )
 

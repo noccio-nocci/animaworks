@@ -150,10 +150,28 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "schema.delegate_task.desc": {
         "ja": (
-            "直属部下のAnimaにタスクを委譲する。部下のタスクキューに追加し、state/pending/ に書き出して即時実行をトリガーする。同時にDMで指示を送信。自分側にも追跡用エントリが作成される。直属部下のみ操作可能。"
+            "【重要】直属部下のAnimaにタスクを委譲する（部下のTaskExecが実行する。あなた自身は実行しない）。"
+            "部下のタスクキューに追加し、state/pending/ に書き出して即時実行をトリガーする。"
+            "同時にDMで指示を送信。自分側にも追跡用エントリが作成される。直属部下のみ操作可能。"
         ),
         "en": (
-            "Delegate a task to a direct subordinate Anima. Adds to the subordinate's task queue and writes to state/pending/ to trigger immediate execution. Also sends a DM with instructions. A tracking entry is created on your side. Only direct subordinates can be targeted."
+            "IMPORTANT: Delegate a task to a direct subordinate Anima — the SUBORDINATE executes it via their own TaskExec (not you). "
+            "Adds to the subordinate's task queue and writes to state/pending/ to trigger immediate execution. "
+            "Also sends a DM with instructions. A tracking entry is created on your side. Only direct subordinates can be targeted."
+        ),
+    },
+    "schema.submit_tasks.desc": {
+        "ja": (
+            "【重要】このツールで投入したタスクはあなた自身のTaskExecが実行します（部下には送られません）。"
+            "部下にタスクを委任する場合は delegate_task を使ってください。"
+            "複数タスクをDAGとして並列/直列実行する。parallel=trueのタスクは同時実行。depends_on指定タスクは依存完了後に実行。"
+        ),
+        "en": (
+            "IMPORTANT: Tasks submitted here are executed by YOUR OWN TaskExec — they are NOT sent to subordinates. "
+            "To delegate work to a subordinate, use delegate_task instead. "
+            "Submit multiple tasks as a DAG for parallel/serial execution. "
+            "Independent tasks with parallel=true run concurrently. "
+            "Tasks with depends_on wait for dependencies to complete."
         ),
     },
     "schema.delegate_task.instruction": {

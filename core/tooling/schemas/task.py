@@ -13,76 +13,76 @@ from typing import Any
 
 from core.i18n import t as _t
 
-SUBMIT_TASKS_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "submit_tasks",
-        "description": (
-            "Submit multiple tasks as a DAG for parallel/serial execution. "
-            "Independent tasks with parallel=true run concurrently. "
-            "Tasks with depends_on wait for all listed tasks to complete. "
-            "Results from completed dependencies are automatically injected "
-            "into dependent task context."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "batch_id": {
-                    "type": "string",
-                    "description": "Unique identifier for this batch of tasks",
-                },
-                "tasks": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "task_id": {"type": "string"},
-                            "title": {"type": "string"},
-                            "description": {"type": "string"},
-                            "parallel": {"type": "boolean", "default": False},
-                            "depends_on": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "default": [],
-                            },
-                            "acceptance_criteria": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "default": [],
-                            },
-                            "constraints": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "default": [],
-                            },
-                            "file_paths": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "default": [],
-                            },
-                            "context": {
-                                "type": "string",
-                                "description": "Background context for the task executor",
-                                "default": "",
-                            },
-                            "reply_to": {
-                                "type": "string",
-                                "description": "Name of the Anima to notify on completion (default: submitter)",
-                            },
-                            "workspace": {
-                                "type": "string",
-                                "description": "Workspace alias or alias#hash for the task's working directory",
-                                "default": "",
-                            },
-                        },
-                        "required": ["task_id", "title", "description"],
+
+def _submit_tasks_tools() -> list[dict[str, Any]]:
+    """Return submit_tasks tool schema list."""
+    return [
+        {
+            "name": "submit_tasks",
+            "description": _t("schema.submit_tasks.desc"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "batch_id": {
+                        "type": "string",
+                        "description": "Unique identifier for this batch of tasks",
                     },
-                    "minItems": 1,
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": {"type": "string"},
+                                "title": {"type": "string"},
+                                "description": {"type": "string"},
+                                "parallel": {"type": "boolean", "default": False},
+                                "depends_on": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "default": [],
+                                },
+                                "acceptance_criteria": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "default": [],
+                                },
+                                "constraints": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "default": [],
+                                },
+                                "file_paths": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "default": [],
+                                },
+                                "context": {
+                                    "type": "string",
+                                    "description": "Background context for the task executor",
+                                    "default": "",
+                                },
+                                "reply_to": {
+                                    "type": "string",
+                                    "description": "Name of the Anima to notify on completion (default: submitter)",
+                                },
+                                "workspace": {
+                                    "type": "string",
+                                    "description": "Workspace alias or alias#hash for the task's working directory",
+                                    "default": "",
+                                },
+                            },
+                            "required": ["task_id", "title", "description"],
+                        },
+                        "minItems": 1,
+                    },
                 },
+                "required": ["batch_id", "tasks"],
             },
-            "required": ["batch_id", "tasks"],
         },
-    },
-]
+    ]
+
+
+SUBMIT_TASKS_TOOLS = _submit_tasks_tools
 
 
 def _task_tools() -> list[dict[str, Any]]:

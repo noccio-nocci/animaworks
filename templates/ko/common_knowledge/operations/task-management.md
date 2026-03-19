@@ -39,7 +39,9 @@ Heartbeat은 **실행하지 않습니다**. 실행이 필요한 태스크를 발
 `submit_tasks`로 태스크를 등록하고, `update_task`로 상태를 업데이트합니다. 목록 조회는 CLI의 `animaworks-tool task list`를 사용합니다.
 큐에 등록된 태스크는 시스템 프롬프트의 Priming 섹션에 요약 표시됩니다.
 
-#### submit_tasks (태스크 등록)
+#### submit_tasks (태스크 등록 — 자신이 직접 실행)
+
+> **중요**: `submit_tasks`로 투입한 태스크는 **자신의 TaskExec**이 실행합니다 (부하에게 전달되지 않습니다). 부하에게 태스크를 위임하려면 `delegate_task`를 사용하세요.
 
 태스크의 생성 및 등록에는 `submit_tasks`를 사용합니다. 단일 태스크의 경우 tasks 배열에 1건만 지정합니다.
 
@@ -328,18 +330,20 @@ submit_tasks(batch_id="build-20260301", tasks=[
 의존 태스크는 이 결과를 컨텍스트로 자동 수신합니다. 선행 태스크가 실패한 경우 의존 태스크는 건너뛰며 `FAILED: {사유}`가 기록됩니다.
 각 태스크 완료 시, submit_tasks를 실행한 Anima에게 완료 통지가 DM으로 전송됩니다.
 
-### submit_tasks 구분 사용
+### submit_tasks와 delegate_task의 구분 사용
 
-| 시나리오 | 방법 |
-|----------|------|
-| 단일 태스크 | `submit_tasks` (tasks 배열 1건으로 투입) |
-| 복수 독립 태스크 | `submit_tasks`에서 `parallel: true` |
-| 의존 관계가 있는 태스크군 | `submit_tasks`에서 `depends_on` 지정 |
-| 부하에게 위임 | `delegate_task` (별도 메커니즘) |
+| 시나리오 | 방법 | 실행자 |
+|----------|------|--------|
+| 자신이 백그라운드에서 실행할 태스크 | `submit_tasks` | **자신** |
+| 복수 독립 태스크를 자신이 병렬 실행 | `submit_tasks`에서 `parallel: true` | **자신** |
+| 의존 관계가 있는 태스크군을 자신이 실행 | `submit_tasks`에서 `depends_on` 지정 | **자신** |
+| **부하에게 작업을 맡기고 싶을 때** | **`delegate_task`** | **부하** |
 
 **주의**: `state/pending/`에 JSON을 수동으로 기록해서는 안 됩니다. 반드시 `submit_tasks` 도구를 경유하여 투입하세요. `submit_tasks`는 Layer 1 (실행 큐)과 Layer 2 (태스크 레지스트리) 양쪽에 동시 등록하므로 태스크 추적 누락을 방지합니다.
 
-## 태스크 위임 (delegate_task / Task tool)
+## 태스크 위임 (delegate_task / Task tool) — 부하가 실행
+
+> **중요**: `delegate_task`는 **부하의 TaskExec**이 태스크를 실행합니다 (자신은 실행하지 않습니다). 자신이 백그라운드에서 실행하려면 `submit_tasks`를 사용하세요.
 
 부하를 가진 Anima (supervisor)는 `delegate_task` 도구로 태스크를 부하에게 위임할 수 있습니다.
 S모드의 Chat 경로에서는 Task tool (및 Agent tool)으로도 위임이 가능합니다. Task tool은 부하를 지명하는 파라미터가 없으며, workload 최소이고 role 매치로 자동 선택됩니다.

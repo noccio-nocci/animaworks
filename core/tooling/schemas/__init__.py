@@ -50,7 +50,7 @@ from core.tooling.schemas.supervisor import (
     _supervisor_tools,
     _vault_tools,
 )
-from core.tooling.schemas.task import SUBMIT_TASKS_TOOLS, _task_tools
+from core.tooling.schemas.task import SUBMIT_TASKS_TOOLS, _submit_tasks_tools, _task_tools
 
 __all__ = [
     "ADMIN_TOOLS",
@@ -62,6 +62,7 @@ __all__ = [
     "PROCEDURE_TOOLS",
     "SEARCH_TOOLS",
     "SUBMIT_TASKS_TOOLS",
+    "_submit_tasks_tools",
     "TOOL_MANAGEMENT_TOOLS",
     "USE_TOOL",
     "_AW_CORE_NAMES",

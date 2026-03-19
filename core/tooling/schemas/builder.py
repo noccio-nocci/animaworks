@@ -29,7 +29,7 @@ from core.tooling.schemas.supervisor import (
     _supervisor_tools,
     _vault_tools,
 )
-from core.tooling.schemas.task import SUBMIT_TASKS_TOOLS, _task_tools
+from core.tooling.schemas.task import _submit_tasks_tools, _task_tools
 
 _CONSOLIDATION_BLOCKED_TOOLS: frozenset[str] = frozenset(
     {"delegate_task", "submit_tasks", "send_message", "post_channel"}
@@ -108,7 +108,7 @@ def build_tool_list(
     if include_task_tools:
         tools.extend(_task_tools())
     if include_submit_tasks and not is_consolidation:
-        tools.extend(SUBMIT_TASKS_TOOLS)
+        tools.extend(_submit_tasks_tools())
     if include_background_task_tools:
         tools.extend(_background_task_tools())
     if include_vault_tools:
@@ -199,7 +199,7 @@ def build_unified_tool_list(
 
     # AW-essential: task management (always present, but submit_tasks blocked during consolidation)
     if not is_consolidation:
-        tools.extend(SUBMIT_TASKS_TOOLS)
+        tools.extend(_submit_tasks_tools())
     for t in _task_tools():
         if t["name"] == "update_task":
             tools.append(t)

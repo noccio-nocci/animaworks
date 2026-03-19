@@ -38,7 +38,9 @@ The persistent task queue is recorded in `state/task_queue.jsonl` in append-only
 Use `submit_tasks` to register tasks and `update_task` to update status. To retrieve the list, use the CLI: `animaworks-tool task list`.
 Tasks registered in the queue are displayed in summarized form in the system prompt Priming section.
 
-#### submit_tasks (Task Registration)
+#### submit_tasks (Task Registration — Executed by YOU)
+
+> **IMPORTANT**: Tasks submitted via `submit_tasks` are executed by **your own TaskExec** — they are NOT sent to subordinates. To assign work to a subordinate, use `delegate_task` instead.
 
 Use `submit_tasks` to create and register tasks. For a single task, specify one item in the tasks array.
 
@@ -326,18 +328,20 @@ Completed task result summaries are saved to `state/task_results/{task_id}.md` (
 Dependent tasks automatically receive these results as context. If a predecessor fails, dependent tasks are skipped and `FAILED: {reason}` is recorded.
 When each task completes, a completion notification is sent via DM to the Anima that executed submit_tasks.
 
-### When to Use submit_tasks
+### When to Use submit_tasks vs delegate_task
 
-| Scenario | Method |
-|----------|--------|
-| Single task | `submit_tasks` (submit with a single-item tasks array) |
-| Multiple independent tasks | `submit_tasks` with `parallel: true` |
-| Tasks with dependencies | `submit_tasks` with `depends_on` |
-| Delegation to subordinates | `delegate_task` (separate mechanism) |
+| Scenario | Method | Executor |
+|----------|--------|----------|
+| Background tasks you execute yourself | `submit_tasks` | **You** |
+| Multiple independent tasks you run in parallel | `submit_tasks` with `parallel: true` | **You** |
+| Tasks with dependencies you execute | `submit_tasks` with `depends_on` | **You** |
+| **Assign work to a subordinate** | **`delegate_task`** | **Subordinate** |
 
 **Important**: Do not manually write JSON files to `state/pending/`. Always submit via the `submit_tasks` tool. `submit_tasks` registers in both Layer 1 (execution queue) and Layer 2 (task registry) simultaneously, preventing task tracking gaps.
 
-## Task Delegation (delegate_task / Task tool)
+## Task Delegation (delegate_task / Task tool) — Executed by Subordinate
+
+> **IMPORTANT**: `delegate_task` causes the **subordinate's TaskExec** to execute the task (not yours). To run tasks yourself in background, use `submit_tasks` instead.
 
 Anima with subordinates (supervisors) can delegate tasks to subordinates using the `delegate_task` tool.
 In S-mode Chat path, the Task tool (and Agent tool) also supports delegation. The Task tool has no parameter to specify a subordinate; it auto-selects the subordinate with minimum workload and best role match.
