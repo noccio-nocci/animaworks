@@ -449,6 +449,8 @@ class TestExecute:
 class TestExecuteStreaming:
     @pytest.mark.asyncio
     async def test_streaming_text_deltas(self, executor):
+        from core.prompt.context import ContextTracker
+
         events = [
             {"type": "init", "session_id": "s1", "model": "gemini-2.5-pro", "timestamp": "2026-03-20T00:00:00Z"},
             {
@@ -473,13 +475,14 @@ class TestExecuteStreaming:
             },
         ]
         proc = _mock_proc(_make_ndjson_lines(events))
+        tracker = ContextTracker(model="gemini-2.5-pro", threshold=0.5)
 
         with (
             patch("core.execution.gemini_cli._find_gemini_binary", return_value="/usr/bin/gemini"),
             patch("asyncio.create_subprocess_exec", return_value=proc),
         ):
             collected = []
-            async for evt in executor.execute_streaming(prompt="hi"):
+            async for evt in executor.execute_streaming(system_prompt="You are helpful", prompt="hi", tracker=tracker):
                 collected.append(evt)
 
         text_deltas = [e for e in collected if e["type"] == "text_delta"]
@@ -490,9 +493,12 @@ class TestExecuteStreaming:
         done_events = [e for e in collected if e["type"] == "done"]
         assert len(done_events) == 1
         assert done_events[0]["full_text"] == "Hello world!"
+        assert "result_message" in done_events[0]
 
     @pytest.mark.asyncio
     async def test_streaming_tool_events(self, executor):
+        from core.prompt.context import ContextTracker
+
         events = [
             {
                 "type": "tool_use",
@@ -511,13 +517,14 @@ class TestExecuteStreaming:
             {"type": "result", "status": "success", "timestamp": "2026-03-20T00:00:03Z"},
         ]
         proc = _mock_proc(_make_ndjson_lines(events))
+        tracker = ContextTracker(model="gemini-2.5-pro", threshold=0.5)
 
         with (
             patch("core.execution.gemini_cli._find_gemini_binary", return_value="/usr/bin/gemini"),
             patch("asyncio.create_subprocess_exec", return_value=proc),
         ):
             collected = []
-            async for evt in executor.execute_streaming(prompt="test"):
+            async for evt in executor.execute_streaming(system_prompt="", prompt="test", tracker=tracker):
                 collected.append(evt)
 
         tool_starts = [e for e in collected if e["type"] == "tool_start"]
@@ -529,9 +536,12 @@ class TestExecuteStreaming:
 
     @pytest.mark.asyncio
     async def test_streaming_not_installed(self, executor):
+        from core.prompt.context import ContextTracker
+
+        tracker = ContextTracker(model="gemini-2.5-pro", threshold=0.5)
         with patch("core.execution.gemini_cli._find_gemini_binary", return_value=None):
             collected = []
-            async for evt in executor.execute_streaming(prompt="hello"):
+            async for evt in executor.execute_streaming(system_prompt="", prompt="hello", tracker=tracker):
                 collected.append(evt)
 
         assert any(

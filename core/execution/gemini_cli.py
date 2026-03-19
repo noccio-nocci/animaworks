@@ -410,26 +410,30 @@ class GeminiCLIExecutor(BaseExecutor):
 
     async def execute_streaming(
         self,
+        system_prompt: str,
         prompt: str,
-        system_prompt: str = "",
-        tracker: ContextTracker | None = None,
-        shortterm: ShortTermMemory | None = None,
-        trigger: str = "",
+        tracker: ContextTracker,
         images: list[ImageData] | None = None,
         prior_messages: list[dict[str, Any]] | None = None,
         max_turns_override: int | None = None,
+        trigger: str = "",
         thread_id: str = "default",
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Streaming execution yielding events from gemini CLI stream-json."""
         if self._check_interrupted():
-            yield {"type": "done", "full_text": "[Session interrupted by user]", "tool_call_records": []}
+            yield {
+                "type": "done",
+                "full_text": "[Session interrupted by user]",
+                "result_message": None,
+                "tool_call_records": [],
+            }
             return
 
         binary = _find_gemini_binary()
         if not binary:
             text = t("gemini_cli.not_installed")
             yield {"type": "text_delta", "text": text}
-            yield {"type": "done", "full_text": text, "tool_call_records": []}
+            yield {"type": "done", "full_text": text, "result_message": None, "tool_call_records": []}
             return
 
         self._ensure_workspace()
@@ -468,6 +472,7 @@ class GeminiCLIExecutor(BaseExecutor):
                             yield {
                                 "type": "done",
                                 "full_text": accumulated_text or "[Session interrupted by user]",
+                                "result_message": None,
                                 "tool_call_records": [r.__dict__ for r in tool_records],
                             }
                             return
@@ -556,6 +561,7 @@ class GeminiCLIExecutor(BaseExecutor):
         yield {
             "type": "done",
             "full_text": accumulated_text,
+            "result_message": None,
             "tool_call_records": [r.__dict__ for r in tool_records],
             "usage": usage.to_dict() if usage else None,
         }

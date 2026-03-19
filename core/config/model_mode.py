@@ -265,10 +265,10 @@ def _match_pattern_table(
 
 
 def _normalise_mode(raw: str) -> str:
-    """Normalise a mode value to S/C/A/B/D, applying legacy mapping if needed.
+    """Normalise a mode value to S/C/D/G/A/B, applying legacy mapping if needed.
 
     Accepts legacy values (``"A1"``, ``"A2"``, ``"autonomous"``, etc.) and
-    canonical values (``"S"``, ``"C"``, ``"A"``, ``"B"``, ``"D"``, ``"G"``).
+    canonical values (``"S"``, ``"C"``, ``"D"``, ``"G"``, ``"A"``, ``"B"``).
     """
     lower = raw.strip().lower()
     mapped = _LEGACY_MODE_MAP.get(lower)

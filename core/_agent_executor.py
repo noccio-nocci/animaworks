@@ -223,7 +223,10 @@ class ExecutorFactoryMixin:
                 model_name = fallback_model_config.model
                 if model_name.startswith("gemini/"):
                     bare = model_name.split("/", 1)[1]
-                    fallback_model_config.model = f"google/gemini-{bare}"
+                    if bare.startswith("gemini-"):
+                        fallback_model_config.model = f"google/{bare}"
+                    else:
+                        fallback_model_config.model = f"google/gemini-{bare}"
                     logger.warning(
                         "Mode G fallback remapped model: %s -> %s",
                         self.model_config.model,
