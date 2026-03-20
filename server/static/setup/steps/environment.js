@@ -19,6 +19,8 @@ let openaiAuthMode = "api_key";
 let apiKey = "";
 let apiKeyValid = null; // null = unchecked, true/false
 let codexLoginValid = null; // null = unchecked, true/false
+let cursorAgentValid = null;
+let geminiCliValid = null;
 let ollamaUrl = "http://localhost:11434";
 let selectedImageStyle = "realistic";
 let imageKeys = {
