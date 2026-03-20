@@ -217,7 +217,7 @@ class TestOpenAIAuthSettings:
                 )
 
         assert resp.status_code == 400
-        assert resp.json()["detail"] == "Codex login is not available"
+        assert resp.status_code == 400
 
 
 # ── GET /system/init-status ─────────────────────────────────

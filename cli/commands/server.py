@@ -16,10 +16,12 @@ from pathlib import Path
 
 from core.platform.process import (
     find_first_matching_pid,
-    is_process_alive as is_pid_alive,
     subprocess_session_kwargs,
     terminate_matching_processes,
     terminate_pid,
+)
+from core.platform.process import (
+    is_process_alive as is_pid_alive,
 )
 
 logger = logging.getLogger("animaworks")
@@ -201,11 +203,10 @@ _RUNNER_CMD_MARKER = "core.supervisor.runner"
 def _kill_orphan_runners() -> int:
     """Kill orphaned Anima runner processes from previous server instances.
 
-    Scans /proc for processes whose cmdline contains the runner module marker
-    and references the ~/.animaworks/ data directory.  Sends SIGTERM and waits
-    briefly for each.
+    Uses psutil to find processes whose command line contains the runner module
+    marker and references the ~/.animaworks/ data directory.
 
-    Returns the number of processes killed.
+    Returns the number of processes targeted.
     """
     from core.paths import get_data_dir
 

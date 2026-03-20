@@ -149,16 +149,16 @@ def create_config_router() -> APIRouter:
         """Persist OpenAI auth mode in config.json for the settings UI."""
         auth_mode = body.auth_mode.strip()
         if auth_mode not in ("api_key", "codex_login"):
-            raise HTTPException(status_code=400, detail="auth_mode must be 'api_key' or 'codex_login'")
+            raise HTTPException(status_code=400, detail=t("config.openai_auth_invalid_mode"))
 
         config = load_config()
         current = config.credentials.get("openai", CredentialConfig())
 
         if auth_mode == "codex_login":
             if not is_codex_cli_available():
-                raise HTTPException(status_code=400, detail="Codex CLI is not installed")
+                raise HTTPException(status_code=400, detail=t("config.codex_cli_not_installed"))
             if not is_codex_login_available():
-                raise HTTPException(status_code=400, detail="Codex login is not available")
+                raise HTTPException(status_code=400, detail=t("config.codex_login_not_available"))
             config.credentials["openai"] = CredentialConfig(
                 type="codex_login",
                 api_key="",
@@ -168,7 +168,7 @@ def create_config_router() -> APIRouter:
         else:
             api_key = body.api_key.strip()
             if not api_key:
-                raise HTTPException(status_code=400, detail="api_key is required for auth_mode=api_key")
+                raise HTTPException(status_code=400, detail=t("config.openai_api_key_required"))
             config.credentials["openai"] = CredentialConfig(
                 type="api_key",
                 api_key=api_key,

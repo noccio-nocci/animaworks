@@ -19,12 +19,19 @@ class TestAcquireFileLock:
         file_obj.tell.return_value = 0
         file_obj.fileno.return_value = 42
 
-        with patch("core.platform.locks.os.name", "nt"), patch(
-            "core.platform.locks.msvcrt.locking",
-        ) as mock_locking:
+        fake_msvcrt = SimpleNamespace(
+            LK_LOCK=1,
+            LK_NBLCK=2,
+            LK_UNLCK=0,
+            locking=MagicMock(),
+        )
+        with (
+            patch("core.platform.locks.os.name", "nt"),
+            patch.object(locks, "msvcrt", fake_msvcrt, create=True),
+        ):
             locks.acquire_file_lock(file_obj, exclusive=True, blocking=False)
 
-        mock_locking.assert_called_once_with(42, locks.msvcrt.LK_NBLCK, 1)
+        fake_msvcrt.locking.assert_called_once_with(42, fake_msvcrt.LK_NBLCK, 1)
         file_obj.seek.assert_any_call(0)
 
     def test_posix_lock_uses_flock_flags(self):
@@ -33,8 +40,14 @@ class TestAcquireFileLock:
         fake_flock = MagicMock()
         fake_fcntl.flock = fake_flock
 
-        with patch("core.platform.locks.os.name", "posix"), patch.object(
-            locks, "fcntl", fake_fcntl, create=True,
+        with (
+            patch("core.platform.locks.os.name", "posix"),
+            patch.object(
+                locks,
+                "fcntl",
+                fake_fcntl,
+                create=True,
+            ),
         ):
             locks.acquire_file_lock(file_obj, exclusive=True, blocking=False)
 
@@ -46,12 +59,19 @@ class TestReleaseFileLock:
         file_obj = MagicMock()
         file_obj.fileno.return_value = 7
 
-        with patch("core.platform.locks.os.name", "nt"), patch(
-            "core.platform.locks.msvcrt.locking",
-        ) as mock_locking:
+        fake_msvcrt = SimpleNamespace(
+            LK_LOCK=1,
+            LK_NBLCK=2,
+            LK_UNLCK=0,
+            locking=MagicMock(),
+        )
+        with (
+            patch("core.platform.locks.os.name", "nt"),
+            patch.object(locks, "msvcrt", fake_msvcrt, create=True),
+        ):
             locks.release_file_lock(file_obj)
 
-        mock_locking.assert_called_once_with(7, locks.msvcrt.LK_UNLCK, 1)
+        fake_msvcrt.locking.assert_called_once_with(7, fake_msvcrt.LK_UNLCK, 1)
 
 
 class TestFileLockContextManager:
@@ -61,9 +81,9 @@ class TestFileLockContextManager:
         with (
             patch("core.platform.locks.acquire_file_lock") as mock_acquire,
             patch("core.platform.locks.release_file_lock") as mock_release,
+            locks.file_lock(file_obj, exclusive=False),
         ):
-            with locks.file_lock(file_obj, exclusive=False):
-                pass
+            pass
 
         mock_acquire.assert_called_once_with(file_obj, exclusive=False, blocking=True)
         mock_release.assert_called_once_with(file_obj)

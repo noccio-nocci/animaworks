@@ -9,6 +9,7 @@ Transport helpers for IPC server/client communication.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _TCP_LOOPBACK_HOST = "127.0.0.1"
 _TCP_METADATA_VERSION = 1
+_ALLOWED_LOOPBACK = frozenset({ipaddress.ip_address("127.0.0.1"), ipaddress.ip_address("::1")})
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,13 @@ def _read_tcp_metadata(socket_path: Path) -> IPCTransportEndpoint | None:
     if data.get("transport") != "tcp":
         return None
     host = str(data.get("host") or _TCP_LOOPBACK_HOST)
+    try:
+        if ipaddress.ip_address(host) not in _ALLOWED_LOOPBACK:
+            logger.warning("Ignoring non-loopback IPC host %r in %s", host, socket_path)
+            return None
+    except ValueError:
+        logger.warning("Ignoring invalid IPC host %r in %s", host, socket_path)
+        return None
     port = int(data["port"])
     return IPCTransportEndpoint(
         transport="tcp",
