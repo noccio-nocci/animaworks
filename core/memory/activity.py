@@ -171,7 +171,10 @@ class ActivityLogger(
             The recorded :class:`ActivityEntry`.
         """
         if len(content) > self._MAX_CONTENT_CHARS:
-            content = content[: self._MAX_CONTENT_CHARS] + f"\n... (truncated {len(content):,} chars → {self._MAX_CONTENT_CHARS:,})"
+            content = (
+                content[: self._MAX_CONTENT_CHARS]
+                + f"\n... (truncated {len(content):,} chars → {self._MAX_CONTENT_CHARS:,})"
+            )
 
         entry = ActivityEntry(
             ts=now_iso(),
