@@ -47,7 +47,7 @@ def _make_task(name: str, schedule: str = "") -> CronTask:
 class TestCheckCronParseHealth:
     """Layer 1 — immediate detection at setup/reload time."""
 
-    def test_no_notification_when_all_registered(
+    def test_no_notification_when_all_registered_no_issues(
         self, scheduler_mgr: SchedulerManager, tmp_path: Path
     ) -> None:
         tasks = [_make_task("t1", "0 9 * * *")]
@@ -62,7 +62,7 @@ class TestCheckCronParseHealth:
             "## t1\nschedule: bad\n## t2\nschedule: also bad", tasks, registered=0
         )
         files = _notif_files(tmp_path)
-        assert len(files) >= 1
+        assert len(files) == 1
         content = files[0].read_text(encoding="utf-8")
         assert "2" in content  # task_count=2
 
@@ -73,8 +73,31 @@ class TestCheckCronParseHealth:
         tasks = [_make_task("t1")]
         scheduler_mgr._check_cron_parse_health(raw, tasks, registered=0)
         files = _notif_files(tmp_path)
-        contents = [f.read_text(encoding="utf-8") for f in files]
-        assert any("schedule:" in c for c in contents)
+        assert len(files) == 1
+        content = files[0].read_text(encoding="utf-8")
+        assert "schedule:" in content
+
+    def test_indented_schedule_detected_even_with_valid_jobs(
+        self, scheduler_mgr: SchedulerManager, tmp_path: Path
+    ) -> None:
+        """Indented schedule: lines are warned even when some jobs register."""
+        raw = "## Good\nschedule: 0 9 * * *\n## Bad\n  schedule: 0 10 * * *"
+        tasks = [_make_task("good", "0 9 * * *"), _make_task("bad")]
+        scheduler_mgr._check_cron_parse_health(raw, tasks, registered=1)
+        files = _notif_files(tmp_path)
+        assert len(files) == 1
+        content = files[0].read_text(encoding="utf-8")
+        assert "schedule:" in content
+
+    def test_multiple_issues_combined_in_single_file(
+        self, scheduler_mgr: SchedulerManager, tmp_path: Path
+    ) -> None:
+        """All-invalid + indented should produce exactly one file."""
+        raw = "## t1\n  schedule: bad"
+        tasks = [_make_task("t1", "bad")]
+        scheduler_mgr._check_cron_parse_health(raw, tasks, registered=0)
+        files = _notif_files(tmp_path)
+        assert len(files) == 1
 
     def test_unrecognized_schedule_no_tasks(
         self, scheduler_mgr: SchedulerManager, tmp_path: Path
@@ -82,7 +105,7 @@ class TestCheckCronParseHealth:
         raw = 'schedule: "0 9 * * *"'
         scheduler_mgr._check_cron_parse_health(raw, tasks=[], registered=0)
         files = _notif_files(tmp_path)
-        assert len(files) >= 1
+        assert len(files) == 1
 
     def test_empty_config_no_notification(
         self, scheduler_mgr: SchedulerManager, tmp_path: Path

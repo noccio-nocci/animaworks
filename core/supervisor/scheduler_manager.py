@@ -373,9 +373,6 @@ class SchedulerManager:
         hot-reload).  Writes a markdown file to ``background_notifications/``
         which is drained into the next heartbeat or cron context.
         """
-        if registered > 0:
-            return
-
         messages: list[str] = []
 
         if tasks and registered == 0:
@@ -389,8 +386,8 @@ class SchedulerManager:
         if not tasks and "schedule:" in raw_config:
             messages.append(t("scheduler.cron_health_unrecognized_schedule"))
 
-        for msg in messages:
-            self._write_cron_health_notification(msg)
+        if messages:
+            self._write_cron_health_notification("\n\n".join(messages))
 
     def _setup_cron_health_check(self) -> None:
         """Register a periodic job that checks cron execution health."""
