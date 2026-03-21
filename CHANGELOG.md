@@ -7,6 +7,13 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-21
+
+### Fixed
+- fix ruff lint violations: bare f-string (F541), missing `raise from` (B904), and formatting
+- add missing `_is_port_listening` and `_get_daemon_log_path` mocks to restart CLI tests
+- load `GlobalPermissionsCache` in E2E blocklist test after blocklist refactoring
+
 ## [0.6.0] - 2026-03-21
 
 ### Added
