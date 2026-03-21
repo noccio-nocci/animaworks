@@ -20,9 +20,20 @@ _BUSTUP_PROMPT = (
 )
 
 _CHIBI_PROMPT = (
-    "Transform this character into a chibi / super-deformed version. "
+    "Transform this character into a chibi / super-deformed version for 3D rigging reference T pose. "
     "2.5-head proportion, cute big eyes, simplified body. "
-    "Same outfit colors and features. White background, full body, anime style."
+    "Front view, standing perfectly straight, feet flat on the ground, legs shoulder-width apart. "
+    "Both arms raised and stretched horizontally, perfectly parallel to the ground, "
+    "forming a straight line from fingertip to fingertip like the letter T. "
+    "Arms at exactly 90 degrees from the torso — NOT drooping"
+    "If the original character is holding any item in their hands, "
+    "they must still hold that exact item in the same hand while in T-pose. "
+    "If hands are empty, extend all five fingers straight. "
+    "Do NOT bend elbows, knees, or wrists. Do NOT tilt the head. KEEP STRAIGHT FOR THE POSE AS A CLEAN, NEUTRAL T-POSE."
+    "Eyes looking straight at the camera. "
+    "Same outfit, colors, accessories, and held items as the original character. "
+    "Clean white background, full body visible, flat anime cel-shading style. "
+    "This is a neutral rigging reference sheet — no dynamic pose, no cute pose, no action."
 )
 
 _CHAT_ICON_PROMPT = (
@@ -36,6 +47,7 @@ _CHAT_ICON_PROMPT = (
 # Expression-specific prompts for bustup image variants
 _EXPRESSION_PROMPTS: dict[str, str] = {
     "neutral": (
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
         "The character with a calm relaxed expression, looking at viewer. "
         "Soft eyes, natural closed mouth, relaxed eyebrows. "
         "Arms at sides in a natural posture. "
@@ -43,7 +55,8 @@ _EXPRESSION_PROMPTS: dict[str, str] = {
         "Same character identity, outfit, and hairstyle."
     ),
     "smile": (
-        "Change the character's expression to a bright smile. "
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
+        "The character with a bright smile. "
         "Eyes curving upward into happy crescents, "
         "rosy flushed cheeks, joyful and cheerful expression. "
         "Head tilted slightly to one side, hands relaxed naturally. "
@@ -51,21 +64,24 @@ _EXPRESSION_PROMPTS: dict[str, str] = {
         "Same character identity, outfit, and hairstyle."
     ),
     "laugh": (
-        "Change the character's expression to joyful laughing. "
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
+        "The character with a joyful laughing expression. "
         "Eyes squeezed shut happily, mouth wide open showing teeth, raised cheeks. "
         "Head tilted back with amusement, one hand near mouth. "
         "Bust-up portrait, anime illustration, soft lighting. "
         "Same character identity, outfit, and hairstyle."
     ),
     "troubled": (
-        "Change the character's expression to worried and troubled. "
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
+        "The character with a worried and troubled expression. "
         "Eyebrows furrowed and pinched together, slight frown, nervous eyes. "
         "Both hands clasped together in front of chest, shoulders raised tensely. "
         "Bust-up portrait, anime illustration, soft lighting. "
         "Same character identity, outfit, and hairstyle."
     ),
     "surprised": (
-        "Change the character's expression to shocked surprise. "
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
+        "The character with a shocked surprise expression. "
         "Eyes wide open as large as possible, eyebrows raised very high, "
         "mouth dropped open in a round shape. "
         "Both hands raised up near face, leaning back slightly in shock. "
@@ -73,15 +89,17 @@ _EXPRESSION_PROMPTS: dict[str, str] = {
         "Same character identity, outfit, and hairstyle."
     ),
     "thinking": (
-        "Change the character's expression to deep contemplation. "
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
+        "The character with a deep contemplation expression. "
         "Looking slightly upward, one eye slightly narrowed, thoughtful furrowed brow. "
         "One hand on chin in a classic thinking pose, slight pout. "
         "Bust-up portrait, anime illustration, soft lighting. "
         "Same character identity, outfit, and hairstyle."
     ),
     "embarrassed": (
-        "Change the character's expression to deeply embarrassed. "
-        "Bright red blush across entire face, eyes averted to the side. "
+        "Change the character's portrait to the chest up portrait, anime illustration, soft lighting."
+        "The character with a deeply embarrassed. "
+        "Bright red blush across entire cheeks, eyes averted to the side."
         "Both hands covering cheeks or pressing index fingers together nervously. "
         "Bust-up portrait, anime illustration, soft lighting. "
         "Same character identity, outfit, and hairstyle."

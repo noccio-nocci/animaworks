@@ -50,7 +50,7 @@ _RETRYABLE_CODES = {429, 500, 502, 503}
 # Default animation presets for office digital animas
 # See https://docs.meshy.ai/api/animation-library for full catalog
 _DEFAULT_ANIMATIONS: dict[str, int] = {
-    "idle": 0,
+    "idle": 244,
     "sitting": 32,
     "waving": 28,
     "talking": 307,

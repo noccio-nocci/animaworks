@@ -138,8 +138,8 @@ export async function createGLBCharacter(name, position, url, isRigged) {
   }
 
   const height = box.max.y - box.min.y;
-  const targetHeight = 0.7;
-  const maxHeight = 0.8;  // sanity cap to prevent oversized characters
+  const targetHeight = 1.7;
+  const maxHeight = 1.8;  // sanity cap to prevent oversized characters
   const rawScale = height > 0 ? targetHeight / height : 1;
   const scale = (height > 0 && height * rawScale > maxHeight)
     ? maxHeight / height

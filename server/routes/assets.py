@@ -452,7 +452,7 @@ def create_assets_router() -> APIRouter:
 
         is_realistic = body.image_style == "realistic"
         assets_dir = anima_dir / "assets"
-        ref_filename = "avatar_fullbody_realistic.png" if is_realistic else "avatar_fullbody.png"
+        ref_filename = "avatar_fullbody_realistic.png" if is_realistic else "avatar_bustup.png"
         reference_path = assets_dir / ref_filename
         if not reference_path.exists():
             raise HTTPException(
@@ -662,7 +662,7 @@ def create_assets_router() -> APIRouter:
                     detail=f"Style reference anima not found: {body.style_from}",
                 )
             style_ref_filename = "avatar_fullbody_realistic.png" if is_realistic else "avatar_fullbody.png"
-            style_fullbody = style_dir / "assets" / style_ref_filename
+            style_fullbody = style_dir / "assets" / style_ref_filenamea
             if not style_fullbody.exists():
                 raise HTTPException(
                     status_code=404,
