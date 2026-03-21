@@ -164,10 +164,9 @@ def _check_a1_bash_command(
 
     cache = GlobalPermissionsCache.get()
 
-    inj_re = cache.injection_re if cache.loaded else None
-    if inj_re and inj_re.search(command):
-        logger.warning("Bash injection blocked: command=%s", command[:200])
-        return "Command contains injection patterns (;  \\n  `  $()  $VAR)"
+    # NOTE: injection_re is NOT checked here.  Mode S uses Claude Code's
+    # native Bash tool which legitimately requires $VAR, $(...), `;`, etc.
+    # Injection patterns are only enforced on the ToolHandler path (Mode A/B).
 
     if cache.loaded:
         for pattern, reason in cache.blocked_patterns:

@@ -24,10 +24,10 @@ from core.config.schemas import GlobalDenyPattern
 
 MINIMAL_CONFIG = {
     "version": 1,
-    "injection_patterns": [{"pattern": "[;\\n`]", "reason": "injection"}],
+    "injection_patterns": [{"pattern": "[;\\n]", "reason": "injection"}],
     "commands": {
         "deny": [
-            {"pattern": "\\brm\\s+-rf\\b", "reason": "rm -rf blocked"},
+            {"pattern": "(?i)\\brm\\s+(-\\S+\\s+)*/(?!\\w)", "reason": "rm root blocked"},
             {"pattern": "\\bmkfs\\b", "reason": "mkfs blocked"},
         ]
     },
@@ -122,7 +122,8 @@ class TestGlobalPermissionsCache:
         assert cache.injection_re is not None
         assert cache.injection_re.search(";")
         assert len(cache.blocked_patterns) == 2
-        assert cache.blocked_patterns[0][0].search("rm -rf /home")
+        assert cache.blocked_patterns[0][0].search("rm -rf /")
+        assert not cache.blocked_patterns[0][0].search("rm -rf /home")
 
     def test_load_missing_file_raises(self, tmp_path: Path):
         cache = GlobalPermissionsCache.get()

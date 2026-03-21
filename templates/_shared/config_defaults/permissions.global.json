@@ -2,19 +2,15 @@
   "version": 1,
   "injection_patterns": [
     {
-      "pattern": "[;\\n`]|\\$\\(|\\$\\{|\\$[A-Za-z_]",
-      "reason": "Shell injection detected (;  \\n  `  $()  $VAR)"
+      "pattern": "[;\\n]",
+      "reason": "Command chaining (;) and embedded newlines are blocked — use && or || instead"
     }
   ],
   "commands": {
     "deny": [
       {
-        "pattern": "(?i)\\brm\\s+(-[^\\s]*)*\\s*-r",
-        "reason": "Recursive delete (rm -r) is blocked"
-      },
-      {
-        "pattern": "(?i)\\brm\\s+-rf\\b",
-        "reason": "rm -rf is blocked"
+        "pattern": "(?i)\\brm\\s+(-\\S+\\s+)*/(?!\\w)",
+        "reason": "Recursive delete targeting root (/) is blocked"
       },
       {
         "pattern": "\\bmkfs\\b",
@@ -45,11 +41,11 @@
         "reason": "Piping to interpreter (python/perl/ruby/node) is blocked for security"
       },
       {
-        "pattern": "\\bchmod\\s+[0-7]*7[0-7]*\\b",
-        "reason": "World-writable chmod is blocked"
+        "pattern": "\\bchmod\\s+[0-7]{2,3}[2367]\\b",
+        "reason": "World-writable chmod (other has write bit) is blocked"
       },
       {
-        "pattern": "\\bshutdown\\b|\\breboot\\b|\\binit\\s+[06]\\b",
+        "pattern": "(?:^|[|;&]\\s*)(?:shutdown|reboot)\\b|(?:^|[|;&]\\s*)init\\s+[06]\\b",
         "reason": "System shutdown/reboot is blocked"
       },
       {
