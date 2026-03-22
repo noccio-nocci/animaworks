@@ -169,6 +169,72 @@ class TestFluxKontextClient:
             FluxKontextClient()
 
 
+class TestDispatchGenerateIcon:
+    @patch("core.tools.anima_icon_url.persist_anima_icon_path_template")
+    @patch("core.tools.image_gen.FluxKontextClient")
+    @patch("core.config.models.load_config")
+    def test_writes_icon_png_with_square_aspect_ratio(
+        self,
+        mock_load_config: MagicMock,
+        mock_flux_cls: MagicMock,
+        _mock_persist: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ANIMAWORKS_DATA_DIR", str(tmp_path))
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "avatar_bustup.png").write_bytes(b"\x89PNG\r\n\x1a\nx")
+
+        cfg = MagicMock()
+        cfg.image_gen.image_style = "anime"
+        cfg.image_gen.style_prefix = ""
+        cfg.image_gen.style_suffix = ""
+        mock_load_config.return_value = cfg
+
+        mock_flux_cls.return_value.generate_from_reference.return_value = b"CHAT_ICON_BYTES"
+
+        from core.tools.image_gen import dispatch
+
+        result = dispatch("generate_icon", {"anima_dir": str(tmp_path)})
+        assert "error" not in result
+        assert str(result["path"]).endswith("icon.png")
+        assert (assets / "icon.png").read_bytes() == b"CHAT_ICON_BYTES"
+        kw = mock_flux_cls.return_value.generate_from_reference.call_args[1]
+        assert kw["aspect_ratio"] == "1:1"
+
+    @patch("core.tools.anima_icon_url.persist_anima_icon_path_template")
+    @patch("core.tools.image_gen.FluxKontextClient")
+    @patch("core.config.models.load_config")
+    def test_writes_icon_realistic_png_when_realistic_style(
+        self,
+        mock_load_config: MagicMock,
+        mock_flux_cls: MagicMock,
+        _mock_persist: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ANIMAWORKS_DATA_DIR", str(tmp_path))
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "avatar_bustup_realistic.png").write_bytes(b"\x89PNG\r\n\x1a\nx")
+
+        cfg = MagicMock()
+        cfg.image_gen.image_style = "realistic"
+        cfg.image_gen.style_prefix = ""
+        cfg.image_gen.style_suffix = ""
+        mock_load_config.return_value = cfg
+
+        mock_flux_cls.return_value.generate_from_reference.return_value = b"ICON_REALISTIC"
+
+        from core.tools.image_gen import dispatch
+
+        result = dispatch("generate_icon", {"anima_dir": str(tmp_path)})
+        assert "error" not in result
+        assert str(result["path"]).endswith("icon_realistic.png")
+        assert (assets / "icon_realistic.png").read_bytes() == b"ICON_REALISTIC"
+
+
 # ── MeshyClient ───────────────────────────────────────────────────
 
 

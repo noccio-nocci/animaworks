@@ -34,6 +34,7 @@ animaworks-tool image_gen pipeline "1girl, black hair, ..." --negative "lowres, 
 # 個別ステップ
 animaworks-tool image_gen fullbody "prompt" --anima-dir <anima_dir> -j
 animaworks-tool image_gen bustup --anima-dir <anima_dir> -j
+animaworks-tool image_gen icon --anima-dir <anima_dir> -j
 animaworks-tool image_gen chibi --anima-dir <anima_dir> -j
 animaworks-tool image_gen 3d --anima-dir <anima_dir> -j
 animaworks-tool image_gen rigging <model.glb> -o <output_dir> -j
