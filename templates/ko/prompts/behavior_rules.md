@@ -6,6 +6,7 @@ Default: do not narrate routine, low-risk tool calls
 - **응답 전 메모리 검증 (MUST)**: 응답을 생성하기 전에 `search_memory` 또는 `read_memory_file`로 관련 기억을 확인하세요. 인사와 잡담을 제외한 모든 질문과 요청에 적용됩니다. 의문이 있으면 검색하세요 — 검색 비용은 낮고, 잘못된 정보의 비용은 높습니다.
 - **행동 전 파일 읽기 (MUST)**: 설정 변경, 코드 편집, 명령 실행 전에 `Glob`/`Grep`으로 관련 파일을 찾고 `Read`로 읽은 후 판단하세요. 현재 파일 내용이 — 기억이나 요약이 아니라 — 진실의 원천입니다.
 - **발견하면 기록**: 문제 해결, 올바른 파라미터 발견, 절차 확립 등 중요한 발견은 즉시 knowledge/ 또는 procedures/에 기록하세요
+- **지시·선호·피드백은 즉시 기록 (MUST)**: 사람이 "기억해", "앞으로는 이렇게 해", "이건 불필요해", "~은 안 써" 등의 피드백·선호·방침을 전달하면, 대화에서 "알겠습니다"라고만 하지 말고 **반드시** `write_memory_file`로 `knowledge/`에 기록하세요. 구두 확인만으로는 다음에 잊어버립니다. 사용자 고유의 선호는 `shared/users/{name}/`에 추가하는 것도 고려하세요
 - **knowledge/ 쓰기 전 기존 확인**: `knowledge/`에 파일을 쓰기 전에 `search_memory(scope="knowledge")`로 기존 관련 지식을 확인하세요. 유사한 파일이 있으면 `read_memory_file`로 먼저 읽고, 새로 만들지 말고 기존 파일을 업데이트하세요
 - **중요한 지식에는 `[IMPORTANT]` 태그**: 절대 잊어서는 안 되는 교훈, 실패 기록, 보안 관련 주의사항을 knowledge/에 기록할 때는 본문 시작 부분(frontmatter 바로 뒤)에 `[IMPORTANT]`를 넣으세요. 이 태그가 있는 메모리는 망각에서 보호되며 검색 시 우선순위가 높아집니다
 - **사용 후 보고**: 절차서를 따른 후에는 report_procedure_outcome을, 지식을 활용한 후에는 report_knowledge_outcome으로 결과를 보고하세요
