@@ -153,13 +153,35 @@ STRINGS: dict[str, dict[str, str]] = {
             "【重要】直属部下のAnimaにタスクを委譲する（部下のTaskExecが実行する。あなた自身は実行しない）。"
             "部下のタスクキューに追加し、state/pending/ に書き出して即時実行をトリガーする。"
             "同時にDMで指示を送信。自分側にも追跡用エントリが作成される。直属部下のみ操作可能。"
-            "指示内容の書き方は common_knowledge/operations/task-delegation-guide.md を参照（MUST）。"
+            "【instruction必須ルール】TaskExecはMinimalコンテキスト（identity数行+タスク記述のみ）で動作し、"
+            "あなたの会話履歴・DM履歴・短期記憶・Priming結果には一切アクセスできない。"
+            "instructionは完全に自己完結させること。"
+            "禁止: ❌「先ほどの報告内容をベースに」❌「前回の続き」❌「さっきのDMの内容」等の曖昧な参照（実行者はその情報を持たない）。"
+            "必須: ✅具体的データ・本文を直接instructionに埋め込む ✅ファイルパス・完了条件を明記。"
+            "詳細は common_knowledge/operations/task-delegation-guide.md を参照。"
         ),
         "en": (
             "IMPORTANT: Delegate a task to a direct subordinate Anima — the SUBORDINATE executes it via their own TaskExec (not you). "
             "Adds to the subordinate's task queue and writes to state/pending/ to trigger immediate execution. "
-            "Also sends a DM with instructions. A tracking entry is created on your side. Only direct subordinates can be targeted."
-            " For instruction writing guidelines, read common_knowledge/operations/task-delegation-guide.md (MUST)."
+            "Also sends a DM with instructions. A tracking entry is created on your side. Only direct subordinates can be targeted. "
+            "INSTRUCTION RULES: TaskExec runs with Minimal context (identity few lines + task description only) "
+            "and has NO access to your conversation history, DM history, short-term memory, or Priming results. "
+            "The instruction MUST be completely self-contained. "
+            "FORBIDDEN: ❌ 'based on the report you sent earlier' ❌ 'continue from last time' ❌ 'the content from the DM' "
+            "— the executor has NONE of that context. "
+            "REQUIRED: ✅ Embed concrete data/content directly in the instruction ✅ Specify file paths and completion criteria. "
+            "Details: common_knowledge/operations/task-delegation-guide.md."
+        ),
+        "ko": (
+            "【중요】직속 부하 Anima에게 태스크를 위임한다(부하의 TaskExec가 실행. 본인은 실행하지 않음). "
+            "부하의 태스크 큐에 추가하고 state/pending/에 기록하여 즉시 실행을 트리거한다. "
+            "동시에 DM으로 지시를 전송. 본인 측에도 추적용 엔트리가 생성된다. 직속 부하만 대상 가능. "
+            "【instruction 필수 규칙】TaskExec는 Minimal 컨텍스트(identity 수 줄 + 태스크 기술만)로 동작하며, "
+            "대화 이력・DM 이력・단기 기억・Priming 결과에 일절 접근할 수 없다. "
+            "instruction은 완전히 자기 완결적이어야 한다. "
+            "금지: ❌「앞서 보고한 내용을 기반으로」❌「지난번 계속」❌「아까 DM으로 보낸 내용」등 모호한 참조(실행자는 그 정보가 없음). "
+            "필수: ✅구체적 데이터・본문을 직접 instruction에 포함 ✅파일 경로・완료 조건을 명기. "
+            "상세: common_knowledge/operations/task-delegation-guide.md 참조."
         ),
     },
     "schema.submit_tasks.desc": {
@@ -179,8 +201,21 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "schema.delegate_task.instruction": {
-        "ja": "タスクの指示内容",
-        "en": "Task instructions",
+        "ja": (
+            "タスクの指示内容。完全に自己完結させること（TaskExecは会話履歴・DM履歴を持たない。"
+            "「先ほどの内容」等の参照は禁止→データを直接埋め込む）。"
+            "成果物パスは委譲先が書き込み可能な場所のみ。自分のknowledge/は指定不可、共有にはcommon_knowledge/を使う"
+        ),
+        "en": (
+            "Task instructions. MUST be fully self-contained (TaskExec has no conversation/DM history — "
+            "references like 'the earlier report' are forbidden; embed data directly). "
+            "Output paths must be writable by the subordinate — never your own knowledge/; use common_knowledge/ for shared output"
+        ),
+        "ko": (
+            "태스크 지시 내용. 완전히 자기 완결적이어야 함(TaskExec는 대화/DM 이력이 없음. "
+            "「앞서 보고한 내용」등의 참조 금지 → 데이터를 직접 포함). "
+            "산출물 경로는 위임 대상이 기록 가능한 곳만 지정. 자신의 knowledge/는 지정 불가, 공유에는 common_knowledge/를 사용"
+        ),
     },
     "schema.delegate_task.name": {
         "ja": "委譲先の直属部下Anima名",
