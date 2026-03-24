@@ -147,7 +147,7 @@ class ReconcileMixin:
                     logger.debug("Reconciliation: skipping %s (bootstrap in progress)", name)
                     continue
                 if name in governor_suspended:
-                    logger.debug("Reconciliation: skipping %s (governor suspended)", name)
+                    logger.info("Reconciliation: skipping %s (governor suspended)", name)
                     continue
                 logger.info("Reconciliation: starting anima %s", name)
                 try:

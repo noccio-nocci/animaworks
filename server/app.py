@@ -183,8 +183,30 @@ async def _startup_animas_background(app: FastAPI) -> None:
         except Exception:
             logger.exception("Frontmatter migration failed (non-fatal)")
 
-        # Start all anima processes (parallel internally)
-        await app.state.supervisor.start_all(app.state.anima_names)
+        # Exclude governor-suspended animas from startup.
+        # The governor will resume them automatically when usage recovers.
+        _gov_excluded: set[str] = set()
+        try:
+            from core.paths import get_data_dir as _get_dd
+            import json as _json
+
+            _gsp = _get_dd() / "usage_governor_state.json"
+            if _gsp.is_file():
+                _gsd = _json.loads(_gsp.read_text("utf-8"))
+                _gov_excluded = set(_gsd.get("suspended_animas", []))
+                if _gov_excluded:
+                    logger.info(
+                        "Startup: skipping %d governor-suspended animas: %s",
+                        len(_gov_excluded),
+                        ", ".join(sorted(_gov_excluded)),
+                    )
+        except Exception:
+            logger.debug("Failed to read governor state at startup", exc_info=True)
+
+        _names_to_start = [n for n in app.state.anima_names if n not in _gov_excluded]
+
+        # Start anima processes (parallel internally)
+        await app.state.supervisor.start_all(_names_to_start)
 
         # Sync org structure from identity.md/status.json → config.json
         try:
