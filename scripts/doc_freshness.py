@@ -616,8 +616,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--model",
-        default="composer-1.5",
-        help="Model for cursor-agent (default: composer-1.5)",
+        default="composer-2",
+        help="Model for cursor-agent (default: composer-2)",
     )
     p.add_argument(
         "--all",
