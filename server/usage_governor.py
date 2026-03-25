@@ -19,12 +19,11 @@ Credential-to-provider mapping:
   - ``openai``    → ``openai`` rules
   - ``ollama``    → exempt (local)
 
-Rule modes:
-  - **threshold** (list format) — fixed remaining-% cut-offs, ideal for
-    short windows (5 h).
-  - **time_proportional** (dict format) — ``usage_remaining_%`` must stay
-    above ``time_remaining_%``; deficit determines throttle severity.
-    Ideal for weekly windows where pacing matters.
+Rule mode:
+  - **time_proportional** — ``usage_remaining_%`` must stay above
+    ``time_remaining_%``; deficit (in percentage points) determines
+    throttle severity.  Applied uniformly to all windows (5 h and 7 d).
+  - **threshold** (list format, legacy) — fixed remaining-% cut-offs.
 """
 
 import asyncio
@@ -51,13 +50,16 @@ DEFAULT_POLICY: dict[str, Any] = {
     "hard_floor_pct": 15,  # absolute minimum remaining % for any window
     "providers": {
         "claude": {
-            # 5-hour window: fixed thresholds (list = threshold mode)
-            "five_hour": [
-                {"remaining_below": 50, "activity_level": 60},
-                {"remaining_below": 30, "activity_level": 30},
-                {"remaining_below": 15, "activity_level": 10},
-            ],
-            # 7-day window: time-proportional (dict = proportional mode)
+            # All windows use time-proportional mode:
+            # usage_remaining_% must stay above time_remaining_% of the window.
+            "five_hour": {
+                "mode": "time_proportional",
+                "deficit_rules": [
+                    {"deficit_above": 0, "activity_level": 60},
+                    {"deficit_above": 10, "activity_level": 30},
+                    {"deficit_above": 20, "activity_level": 10},
+                ],
+            },
             "seven_day": {
                 "mode": "time_proportional",
                 "deficit_rules": [
@@ -68,11 +70,14 @@ DEFAULT_POLICY: dict[str, Any] = {
             },
         },
         "openai": {
-            "5h": [
-                {"remaining_below": 50, "activity_level": 60},
-                {"remaining_below": 30, "activity_level": 30},
-                {"remaining_below": 15, "activity_level": 10},
-            ],
+            "5h": {
+                "mode": "time_proportional",
+                "deficit_rules": [
+                    {"deficit_above": 0, "activity_level": 60},
+                    {"deficit_above": 10, "activity_level": 30},
+                    {"deficit_above": 20, "activity_level": 10},
+                ],
+            },
             "Week": {
                 "mode": "time_proportional",
                 "deficit_rules": [

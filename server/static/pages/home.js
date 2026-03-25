@@ -175,19 +175,17 @@ function _renderUsageBar(label, utilization, resetAt, windowSeconds) {
   const resetStr = resetAt ? _resetToJst(resetAt) : "";
   const color = _remainingColor(remaining);
 
-  // Time-proportional marker for weekly windows
+  // Time-proportional marker — shown on ALL windows (5h and 7d)
   const timePct = _calcTimePct(resetAt, windowSeconds);
-  const isWeekly = windowSeconds && windowSeconds >= 86400; // >= 1 day
   let markerHtml = "";
-  if (isWeekly && timePct !== null) {
-    const deficit = timePct > remaining;
+  if (timePct !== null && windowSeconds) {
     const markerLabel = `${timePct.toFixed(0)}%`;
     markerHtml = `<div class="usage-bar-time-marker" style="left:${timePct}%" data-label="${markerLabel}"></div>`;
   }
 
   // Deficit warning text
   let deficitHtml = "";
-  if (isWeekly && timePct !== null && timePct > remaining) {
+  if (timePct !== null && windowSeconds && timePct > remaining) {
     const gap = (timePct - remaining).toFixed(0);
     deficitHtml = `<span class="usage-deficit" style="color:var(--aw-color-error,#dc2626);font-size:0.7rem;margin-left:0.5rem;">-${gap}pt</span>`;
   }
