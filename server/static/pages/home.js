@@ -205,6 +205,52 @@ function _renderUsageBar(label, utilization, resetAt, windowSeconds) {
   `;
 }
 
+function _usageCanRelogin(errorCode) {
+  return new Set(["rate_limited", "unauthorized", "no_credentials"]).has(errorCode);
+}
+
+function _renderUsageError(provider, data, msg) {
+  const showButton = _usageCanRelogin(data.error);
+  const buttonLabel = provider === "claude" ? "Claude 再認証" : "Codex ログイン";
+  return `
+    <div class="usage-error">${escapeHtml(msg)}</div>
+    ${showButton ? `
+      <div style="margin-top:0.75rem;">
+        <button class="btn-secondary usage-auth-btn" data-provider="${provider}">${buttonLabel}</button>
+      </div>
+    ` : ""}
+  `;
+}
+
+async function _runUsageRelogin(provider) {
+  const path = provider === "claude" ? "/api/usage/claude/relogin" : "/api/usage/openai/relogin";
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (provider === "openai" && data.login_url) {
+      window.open(data.login_url, "_blank", "noopener,noreferrer");
+    }
+
+    const lines = [];
+    if (data.message) lines.push(data.message);
+    if (data.device_code) lines.push(`Code: ${data.device_code}`);
+    if (data.login_url) lines.push(`URL: ${data.login_url}`);
+    if (!data.success && data.manual_command) {
+      lines.push("");
+      lines.push(`Terminal: ${data.manual_command}`);
+    }
+    alert(lines.join("\n") || (res.ok ? "Done" : "Failed"));
+  } catch (err) {
+    alert(err.message || "Failed");
+  }
+  await _loadUsage();
+}
+
 function _renderClaudeUsage(data) {
   const el = document.getElementById("usageClaudeBody");
   if (!el) return;
@@ -213,7 +259,9 @@ function _renderClaudeUsage(data) {
     const msg = data.error === "no_credentials"
       ? t("home.usage_no_credentials")
       : data.message || data.error;
-    el.innerHTML = `<div class="usage-error">${escapeHtml(msg)}</div>`;
+    el.innerHTML = _renderUsageError("claude", data, msg);
+    const btn = el.querySelector("[data-provider='claude']");
+    btn?.addEventListener("click", () => _runUsageRelogin("claude"));
     return;
   }
 
@@ -243,7 +291,9 @@ function _renderOpenaiUsage(data) {
       : data.error === "not_available"
         ? t("home.usage_not_available")
         : data.message || data.error;
-    el.innerHTML = `<div class="usage-error">${escapeHtml(msg)}</div>`;
+    el.innerHTML = _renderUsageError("openai", data, msg);
+    const btn = el.querySelector("[data-provider='openai']");
+    btn?.addEventListener("click", () => _runUsageRelogin("openai"));
     return;
   }
 

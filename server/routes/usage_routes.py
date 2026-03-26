@@ -22,6 +22,9 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from core.platform.claude_code import get_claude_executable
+from core.platform.codex import get_codex_device_login, is_codex_login_available
+
 logger = logging.getLogger("animaworks.routes.usage")
 
 # ── Cache ────────────────────────────────────────────────────────────────────
@@ -92,6 +95,11 @@ def _find_credential_file(candidates: list[str]) -> Path | None:
     return None
 
 
+def _clear_usage_cache(*keys: str) -> None:
+    for key in keys:
+        _CACHE.pop(key, None)
+
+
 # ── Claude (Anthropic OAuth) ─────────────────────────────────────────────────
 
 _ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -142,8 +150,8 @@ def _refresh_claude_token(cred_path: Path, refresh_token: str) -> str | None:
         return None
 
 
-def _read_claude_token() -> str | None:
-    """Find the best OAuth token; auto-refresh if expired."""
+def _select_best_claude_credential() -> tuple[Path | None, str | None, str | None, int]:
+    """Return (credential_path, access_token, refresh_token, expires_at_ms)."""
     candidates = _discover_claude_cred_paths()
     cred_files: list[Path] = []
     for candidate in candidates:
@@ -158,7 +166,6 @@ def _read_claude_token() -> str | None:
         if p.is_file() and p not in cred_files:
             cred_files.append(p)
 
-    # Pick the credential file with the latest expiresAt
     best_path: Path | None = None
     best_token: str | None = None
     best_refresh: str | None = None
@@ -178,6 +185,12 @@ def _read_claude_token() -> str | None:
         except Exception:
             logger.debug("Failed to read Claude credentials from %s", path, exc_info=True)
 
+    return best_path, best_token, best_refresh, best_expires
+
+
+def _read_claude_token() -> str | None:
+    """Find the best OAuth token; auto-refresh if expired."""
+    best_path, best_token, best_refresh, best_expires = _select_best_claude_credential()
     if not best_token:
         return None
 
@@ -193,10 +206,88 @@ def _read_claude_token() -> str | None:
     return best_token
 
 
-def _fetch_claude_usage() -> dict[str, Any]:
-    cached = _cached("claude")
-    if cached is not None:
-        return cached
+def _relogin_claude() -> tuple[dict[str, Any], int]:
+    """Try token refresh first; fall back to Claude Code CLI login guidance."""
+    _clear_usage_cache("claude")
+    executable = get_claude_executable()
+    if not executable:
+        return ({
+            "success": False,
+            "message": "Claude Code CLI not found. Install it, then run 'claude login' in CMD.",
+            "manual_command": "claude login",
+        }, 400)
+
+    best_path, best_token, best_refresh, best_expires = _select_best_claude_credential()
+    if not best_path or not best_token:
+        return ({
+            "success": False,
+            "message": "No Claude credentials found. Run 'claude login' in CMD.",
+            "manual_command": "claude login",
+            "executable": executable,
+        }, 400)
+
+    now_ms = int(time.time() * 1000)
+    if best_expires > now_ms:
+        mins = max(0, round((best_expires - now_ms) / 1000 / 60))
+        return ({
+            "success": True,
+            "message": f"Claude token is already fresh (expires in ~{mins} min). If usage still fails, it is likely a provider-side rate limit rather than expired auth.",
+            "file": str(best_path),
+            "executable": executable,
+        }, 200)
+
+    if not best_refresh:
+        return ({
+            "success": False,
+            "message": "Claude token is expired and no refresh token is available. Run 'claude login' in CMD.",
+            "manual_command": "claude login",
+            "file": str(best_path),
+            "executable": executable,
+        }, 400)
+
+    refreshed = _refresh_claude_token(best_path, best_refresh)
+    _clear_usage_cache("claude")
+    if refreshed:
+        return ({
+            "success": True,
+            "message": "Claude token refresh succeeded.",
+            "file": str(best_path),
+            "executable": executable,
+        }, 200)
+
+    return ({
+        "success": False,
+        "message": "Claude token refresh failed. Run 'claude login' in CMD.",
+        "manual_command": "claude login",
+        "executable": executable,
+    }, 400)
+
+
+def _relogin_openai() -> tuple[dict[str, Any], int]:
+    """Start Codex browser login when needed, or report active login."""
+    _clear_usage_cache("openai")
+    if is_codex_login_available():
+        return ({
+            "success": True,
+            "already_logged_in": True,
+            "message": "Codex login is already available",
+        }, 200)
+
+    payload = get_codex_device_login()
+    _clear_usage_cache("openai")
+    status_code = 200 if payload.get("ok") else 400
+    return ({
+        "success": bool(payload.get("ok")),
+        **payload,
+        "manual_command": "codex login",
+    }, status_code)
+
+
+def _fetch_claude_usage(skip_cache: bool = False) -> dict[str, Any]:
+    if not skip_cache:
+        cached = _cached("claude")
+        if cached is not None:
+            return cached
 
     token = _read_claude_token()
     if not token:
@@ -294,10 +385,11 @@ def _window_label(seconds: int) -> str:
     return f"{days:.0f}d"
 
 
-def _fetch_openai_usage() -> dict[str, Any]:
-    cached = _cached("openai")
-    if cached is not None:
-        return cached
+def _fetch_openai_usage(skip_cache: bool = False) -> dict[str, Any]:
+    if not skip_cache:
+        cached = _cached("openai")
+        if cached is not None:
+            return cached
 
     token, account_id = _read_codex_credentials()
     if not token:
@@ -360,7 +452,7 @@ def create_usage_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/usage")
-    async def get_usage(request: Request) -> dict[str, Any]:
+    async def get_usage(request: Request, skip_cache: bool = False) -> dict[str, Any]:
         """Return combined Claude + OpenAI usage data + governor status."""
         governor = getattr(request.app.state, "usage_governor", None)
         governor_info: dict[str, Any] = {"active": False}
@@ -374,11 +466,21 @@ def create_usage_router() -> APIRouter:
                 "last_check": st.last_check,
             }
         return {
-            "claude": _fetch_claude_usage(),
-            "openai": _fetch_openai_usage(),
+            "claude": _fetch_claude_usage(skip_cache=skip_cache),
+            "openai": _fetch_openai_usage(skip_cache=skip_cache),
             "cached_at": _CACHE.get("claude", (None, 0))[1],
             "governor": governor_info,
         }
+
+    @router.post("/usage/claude/relogin")
+    async def relogin_claude() -> JSONResponse:
+        payload, status_code = _relogin_claude()
+        return JSONResponse(payload, status_code=status_code)
+
+    @router.post("/usage/openai/relogin")
+    async def relogin_openai() -> JSONResponse:
+        payload, status_code = _relogin_openai()
+        return JSONResponse(payload, status_code=status_code)
 
     @router.get("/usage/policy")
     async def get_policy(request: Request) -> dict[str, Any]:
