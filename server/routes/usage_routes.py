@@ -32,6 +32,7 @@ logger = logging.getLogger("animaworks.routes.usage")
 
 _CACHE: dict[str, tuple[dict[str, Any], float]] = {}
 _CACHE_TTL = 60  # seconds
+_USAGE_SNAPSHOT_NAME = "usage_snapshot.json"
 
 
 def _cached(key: str) -> dict[str, Any] | None:
@@ -43,6 +44,64 @@ def _cached(key: str) -> dict[str, Any] | None:
 
 def _set_cache(key: str, data: dict[str, Any]) -> None:
     _CACHE[key] = (data, time.time())
+
+
+def _usage_snapshot_path() -> Path:
+    from core.paths import get_data_dir
+
+    return get_data_dir() / _USAGE_SNAPSHOT_NAME
+
+
+def _load_usage_snapshot() -> dict[str, Any] | None:
+    path = _usage_snapshot_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except Exception:
+        logger.warning("Failed to read usage snapshot from %s", path, exc_info=True)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _save_usage_snapshot(payload: dict[str, Any]) -> None:
+    path = _usage_snapshot_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.warning("Failed to save usage snapshot to %s", path, exc_info=True)
+
+
+def _provider_has_error(payload: dict[str, Any], key: str) -> bool:
+    provider = payload.get(key)
+    return not isinstance(provider, dict) or bool(provider.get("error"))
+
+
+def _merge_usage_snapshot(live_payload: dict[str, Any]) -> dict[str, Any]:
+    snapshot = _load_usage_snapshot()
+    if not snapshot:
+        return live_payload
+
+    used: list[str] = []
+    merged = dict(live_payload)
+    for provider_key in ("claude", "openai"):
+        if not _provider_has_error(merged, provider_key):
+            continue
+        snapshot_provider = snapshot.get(provider_key)
+        if not isinstance(snapshot_provider, dict) or snapshot_provider.get("error"):
+            continue
+        merged[provider_key] = snapshot_provider
+        used.append(provider_key)
+
+    if used:
+        merged["snapshot_used"] = used
+        merged["snapshot_path"] = str(_usage_snapshot_path())
+        merged["snapshot_cached_at"] = snapshot.get("cached_at")
+    return merged
 
 
 # ── Credential discovery ─────────────────────────────────────────────────────
@@ -506,12 +565,17 @@ def create_usage_router() -> APIRouter:
                 "since": st.since,
                 "last_check": st.last_check,
             }
-        return {
+        payload = {
             "claude": _fetch_claude_usage(skip_cache=skip_cache),
             "openai": _fetch_openai_usage(skip_cache=skip_cache),
-            "cached_at": _CACHE.get("claude", (None, 0))[1],
+            "cached_at": time.time(),
             "governor": governor_info,
         }
+        payload = _merge_usage_snapshot(payload)
+        payload["snapshot_path"] = str(_usage_snapshot_path())
+        if not skip_cache:
+            _save_usage_snapshot(payload)
+        return payload
 
     @router.post("/usage/claude/relogin")
     async def relogin_claude() -> JSONResponse:
