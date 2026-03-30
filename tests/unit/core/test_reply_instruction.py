@@ -35,7 +35,7 @@ class TestBuildReplyInstructionSlack:
     """Slack reply instruction generation."""
 
     def test_full_metadata(self):
-        """Slack message with channel, ts, and user_id produces full command."""
+        """Slack message with channel, ts, and user_id produces tool instruction."""
         msg = _FakeMsg(
             source="slack",
             external_channel_id="C12345",
@@ -44,10 +44,10 @@ class TestBuildReplyInstructionSlack:
         )
         result = _build_reply_instruction(msg)
         assert "[reply_instruction:" in result
-        assert "animaworks-tool slack send" in result
-        assert "'C12345'" in result
-        assert "<@U99999>" in result
-        assert "--thread 1234567890.123456" in result
+        assert "use tool slack_channel_post" in result
+        assert 'channel_id="C12345"' in result
+        assert 'text="<@U99999> {返信内容}"' in result
+        assert 'thread_ts="1234567890.123456"' in result
 
     def test_missing_user_id(self):
         """Slack without external_user_id omits @mention."""
@@ -59,11 +59,11 @@ class TestBuildReplyInstructionSlack:
         )
         result = _build_reply_instruction(msg)
         assert "<@" not in result
-        assert "--thread 1234567890.123456" in result
-        assert "'C12345'" in result
+        assert 'thread_ts="1234567890.123456"' in result
+        assert 'channel_id="C12345"' in result
 
     def test_missing_source_message_id(self):
-        """Slack without source_message_id omits --thread."""
+        """Slack without source_message_id omits thread_ts."""
         msg = _FakeMsg(
             source="slack",
             external_channel_id="C12345",
@@ -71,12 +71,12 @@ class TestBuildReplyInstructionSlack:
             external_user_id="U99999",
         )
         result = _build_reply_instruction(msg)
-        assert "--thread" not in result
-        assert "<@U99999>" in result
-        assert "'C12345'" in result
+        assert "thread_ts=" not in result
+        assert 'text="<@U99999> {返信内容}"' in result
+        assert 'channel_id="C12345"' in result
 
     def test_missing_both_optional_fields(self):
-        """Slack with only channel_id: no @mention and no --thread."""
+        """Slack with only channel_id: no @mention and no thread_ts."""
         msg = _FakeMsg(
             source="slack",
             external_channel_id="C12345",
@@ -85,9 +85,9 @@ class TestBuildReplyInstructionSlack:
         )
         result = _build_reply_instruction(msg)
         assert "[reply_instruction:" in result
-        assert "'C12345'" in result
+        assert 'channel_id="C12345"' in result
         assert "<@" not in result
-        assert "--thread" not in result
+        assert "thread_ts=" not in result
 
 
 class TestBuildReplyInstructionChatwork:
@@ -130,6 +130,7 @@ class TestBuildReplyInstructionEdgeCases:
         )
         result = _build_reply_instruction(msg)
         assert "[reply_instruction:" in result
+        assert "slack_channel_post" in result
 
     def test_reply_instruction_format(self):
         """Verify exact format: '  [reply_instruction: CMD]'."""

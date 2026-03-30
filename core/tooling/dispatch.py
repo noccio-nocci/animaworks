@@ -141,9 +141,12 @@ class ExternalToolDispatcher:
 
         from core.tools import TOOL_MODULES
 
-        for tool_name, module_path in TOOL_MODULES.items():
-            if tool_name not in self._registry:
-                continue
+        tool_names = self._candidate_tool_names(name, TOOL_MODULES, set(self._registry))
+        if not tool_names:
+            return None
+
+        for tool_name in tool_names:
+            module_path = TOOL_MODULES[tool_name]
             try:
                 mod = importlib.import_module(module_path)
                 schemas = mod.get_tool_schemas() if hasattr(mod, "get_tool_schemas") else []
@@ -165,7 +168,12 @@ class ExternalToolDispatcher:
 
         import importlib.util
 
-        for tool_name, file_path in self._personal_tools.items():
+        tool_names = self._candidate_tool_names(name, self._personal_tools, set(self._personal_tools))
+        if not tool_names:
+            return None
+
+        for tool_name in tool_names:
+            file_path = self._personal_tools[tool_name]
             try:
                 spec = importlib.util.spec_from_file_location(
                     f"animaworks_tool_{tool_name}",
@@ -185,6 +193,27 @@ class ExternalToolDispatcher:
                 return f"Error executing {name}: {e}"
 
         return None
+
+    def _candidate_tool_names(
+        self,
+        schema_name: str,
+        mapping: dict[str, str],
+        allowed_tools: set[str],
+    ) -> list[str]:
+        """Return likely tool names for a schema without importing every module.
+
+        Most schemas follow one of these conventions:
+        - exact tool name (e.g. ``web_search``)
+        - ``{tool}_{action}`` (e.g. ``slack_channel_post``)
+        """
+        if schema_name in mapping and schema_name in allowed_tools:
+            return [schema_name]
+
+        tool_name, _ = self._split_schema_name(schema_name)
+        if tool_name and tool_name in mapping and tool_name in allowed_tools:
+            return [tool_name]
+
+        return [tool_name for tool_name in mapping if tool_name in allowed_tools]
 
     # ── Unified module call ──────────────────────────────────
 

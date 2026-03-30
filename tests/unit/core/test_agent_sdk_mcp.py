@@ -172,7 +172,12 @@ class TestMcpServerConfig:
             await executor.execute(prompt="hello", system_prompt="sys")
 
         assert "mcp_servers" in captured_options
-        assert "aw" in captured_options["mcp_servers"]
+        mcp_servers = captured_options["mcp_servers"]
+        if isinstance(mcp_servers, dict):
+            assert "aw" in mcp_servers
+        else:
+            # On Windows, mcp_servers is a temp file path; verify _build_mcp_servers dict
+            assert "aw" in executor._build_mcp_servers()
 
     @pytest.mark.asyncio
     async def test_aw_server_uses_sys_executable(
@@ -193,7 +198,9 @@ class TestMcpServerConfig:
         ):
             await executor.execute(prompt="hello", system_prompt="sys")
 
-        aw_config = captured_options["mcp_servers"]["aw"]
+        # On Windows, mcp_servers is a file path; use _build_mcp_servers for dict access
+        mcp_servers = captured_options["mcp_servers"]
+        aw_config = mcp_servers["aw"] if isinstance(mcp_servers, dict) else executor._build_mcp_servers()["aw"]
         assert aw_config["command"] == sys.executable
 
     @pytest.mark.asyncio
@@ -215,7 +222,8 @@ class TestMcpServerConfig:
         ):
             await executor.execute(prompt="hello", system_prompt="sys")
 
-        aw_config = captured_options["mcp_servers"]["aw"]
+        mcp_servers = captured_options["mcp_servers"]
+        aw_config = mcp_servers["aw"] if isinstance(mcp_servers, dict) else executor._build_mcp_servers()["aw"]
         assert aw_config["args"] == ["-m", "core.mcp.server"]
 
     @pytest.mark.asyncio
@@ -263,12 +271,17 @@ class TestMcpServerConfig:
         ):
             await executor.execute(prompt="hello", system_prompt="sys")
 
+        # On Windows mcp_servers is a file path; verify merge via _build_mcp_servers
         mcp_servers = captured_options["mcp_servers"]
+        if isinstance(mcp_servers, dict):
+            servers = mcp_servers
+        else:
+            servers = executor._build_mcp_servers()
         # Built-in server should still be present
-        assert "aw" in mcp_servers
+        assert "aw" in servers
         # Extra servers should be merged as-is
-        assert mcp_servers["browser"]["command"] == "npx"
-        assert mcp_servers["jira"]["args"] == ["-m", "jira_mcp"]
+        assert servers["browser"]["command"] == "npx"
+        assert servers["jira"]["args"] == ["-m", "jira_mcp"]
 
     @pytest.mark.asyncio
     async def test_extra_mcp_servers_merged_with_bypass_permissions(
@@ -293,7 +306,11 @@ class TestMcpServerConfig:
             await executor.execute(prompt="hello", system_prompt="sys")
 
         assert captured_options["permission_mode"] == "bypassPermissions"
-        assert "browser" in captured_options["mcp_servers"]
+        mcp_servers = captured_options["mcp_servers"]
+        if isinstance(mcp_servers, dict):
+            assert "browser" in mcp_servers
+        else:
+            assert "browser" in executor._build_mcp_servers()
 
     @pytest.mark.asyncio
     async def test_empty_extra_mcp_servers_has_no_effect(
@@ -315,7 +332,10 @@ class TestMcpServerConfig:
             await executor.execute(prompt="hello", system_prompt="sys")
 
         mcp_servers = captured_options["mcp_servers"]
-        assert set(mcp_servers.keys()) == {"aw"}
+        if isinstance(mcp_servers, dict):
+            assert set(mcp_servers.keys()) == {"aw"}
+        else:
+            assert set(executor._build_mcp_servers().keys()) == {"aw"}
 
 
 # ── TestBashSendRemoved ─────────────────────────────────────

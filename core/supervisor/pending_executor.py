@@ -708,6 +708,7 @@ class PendingTaskExecutor:
         self._anima.agent.reset_read_paths()
         accumulated_text = ""
         result_summary = ""
+        task_failed_reason = ""
 
         try:
             async for chunk in self._anima.agent.run_cycle_streaming(
@@ -723,10 +724,15 @@ class PendingTaskExecutor:
                         "summary",
                         accumulated_text[:500],
                     )
+                    if cycle_result.get("action") == "error":
+                        task_failed_reason = result_summary or "task execution failed"
                     journal.finalize(summary=result_summary[:500])
         finally:
             journal.close()
             self._anima.agent.set_task_cwd(None)
+
+        if task_failed_reason:
+            raise RuntimeError(task_failed_reason)
 
         if not result_summary:
             result_summary = accumulated_text[:500] or t("pending_executor.task_completed")

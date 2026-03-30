@@ -85,6 +85,7 @@ def _ensure_tool_prompt_db(data_dir: Path) -> None:
     _migrate_behavior_rules_must_v1(tool_store, prompts_dir)
     _migrate_resync_sections_v1(tool_store, prompts_dir)
     _migrate_comm_rules_compress_v1(tool_store, prompts_dir)
+    _migrate_behavior_rules_external_reply_v1(tool_store, prompts_dir)
 
     logger.info("Tool prompt DB initialised: %s", tool_db_path)
 
@@ -355,6 +356,47 @@ def _migrate_comm_rules_compress_v1(
             len(updated),
             ", ".join(updated),
         )
+    finally:
+        conn.close()
+
+
+def _migrate_behavior_rules_external_reply_v1(
+    tool_store: ToolPromptStore,
+    prompts_dir: Path,
+) -> None:
+    """One-shot migration: allow direct external replies without memory lookup.
+
+    Keeps the general MUST-level memory verification rule, but updates the
+    behavior_rules section so simple external replies with explicit
+    ``[reply_instruction: use tool ...]`` can execute immediately.
+    """
+    from core.tooling.prompt_db import SECTION_CONDITIONS
+
+    conn = tool_store._connect()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS migrations (key TEXT PRIMARY KEY, applied_at TEXT)")
+        row = conn.execute(
+            "SELECT 1 FROM migrations WHERE key = ?",
+            ("behavior_rules_external_reply_v1",),
+        ).fetchone()
+        if row:
+            return
+
+        br_path = prompts_dir / "behavior_rules.md"
+        if br_path.exists():
+            content = br_path.read_text(encoding="utf-8").strip()
+            if content:
+                condition = SECTION_CONDITIONS.get("behavior_rules")
+                tool_store.set_section("behavior_rules", content, condition)
+
+        from core.time_utils import now_local
+
+        conn.execute(
+            "INSERT INTO migrations (key, applied_at) VALUES (?, ?)",
+            ("behavior_rules_external_reply_v1", now_local().isoformat()),
+        )
+        conn.commit()
+        logger.info("Applied migration: behavior_rules_external_reply_v1")
     finally:
         conn.close()
 

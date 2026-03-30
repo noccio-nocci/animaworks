@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import signal as _signal
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,6 +120,7 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
         self._permanently_failed: set[str] = set()
         self._failed_log_times: dict[str, float] = {}
         self._bootstrapping: set[str] = set()
+        self._recently_stopped: dict[str, float] = {}  # anima_name → monotonic timestamp
         self._bootstrap_retry_counts: dict[str, int] = {}
         self._bootstrap_max_retries: int = 3
         self._bootstrap_retries_file = self.animas_dir / ".bootstrap_retries.json"
@@ -222,9 +224,12 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
         """Detect and kill zombie runner processes from a previous server crash.
 
         Reads pidfiles under ``run/animas/{name}.pid`` and sends SIGTERM
-        to any processes that are still alive.  This ensures a clean slate
-        before spawning new runner processes.
+        to any processes that are still alive.  On Windows, waits for each
+        process to actually terminate before continuing (otherwise the old
+        process may still hold file locks when new processes try to start).
         """
+        import psutil as _psutil
+
         pid_dir = self.run_dir / "animas"
         if not pid_dir.exists():
             return
@@ -233,25 +238,65 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
             anima_name = pid_file.stem
             try:
                 pid = int(pid_file.read_text().strip())
-                os.kill(pid, 0)  # check if alive
+                # Use psutil to check process liveness (os.kill(pid, 0)
+                # does NOT work reliably on Windows — raises OSError).
+                try:
+                    proc = _psutil.Process(pid)
+                    if not proc.is_running():
+                        raise _psutil.NoSuchProcess(pid)
+                except _psutil.NoSuchProcess:
+                    logger.debug("Stale pidfile for %s (pid=%d, already dead)", anima_name, pid)
+                    pid_file.unlink(missing_ok=True)
+                    continue
+
                 logger.warning(
                     "Killing zombie runner: %s (pid=%d)",
                     anima_name,
                     pid,
                 )
                 try:
-                    os.kill(pid, _signal.SIGTERM)
-                except OSError:
+                    # Kill entire process tree (runner + CLI subprocesses)
+                    children = proc.children(recursive=True)
+                    proc.kill()
+                    proc.wait(timeout=5)
+                    for child in children:
+                        try:
+                            child.kill()
+                        except _psutil.NoSuchProcess:
+                            pass
+                    logger.info(
+                        "Zombie runner killed and confirmed dead: %s (pid=%d)",
+                        anima_name,
+                        pid,
+                    )
+                except _psutil.NoSuchProcess:
                     pass
+                except _psutil.TimeoutExpired:
+                    logger.error(
+                        "Zombie runner did not die within 5s: %s (pid=%d)",
+                        anima_name,
+                        pid,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to kill zombie runner %s (pid=%d): %s",
+                        anima_name,
+                        pid,
+                        exc,
+                    )
                 pid_file.unlink(missing_ok=True)
-            except (ValueError, ProcessLookupError):
+            except ValueError:
                 pid_file.unlink(missing_ok=True)
-            except OSError:
-                pass
+            except Exception as exc:
+                logger.warning("Unexpected error checking zombie %s: %s", anima_name, exc)
+                pid_file.unlink(missing_ok=True)
 
-        # Also clean up stale lock files
+        # Clean up stale lock files (safe now that processes are dead)
         for lock_file in pid_dir.glob("*.lock"):
-            lock_file.unlink(missing_ok=True)
+            try:
+                lock_file.unlink(missing_ok=True)
+            except OSError:
+                logger.debug("Could not remove lock file %s (may still be held)", lock_file)
 
     async def start_anima(self, anima_name: str) -> None:
         """Start a single Anima process.
@@ -451,6 +496,7 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
 
         await handle.stop(timeout=10.0)
         del self.processes[anima_name]
+        self._recently_stopped[anima_name] = time.monotonic()
         logger.info("Anima process stopped: %s", anima_name)
 
     async def restart_anima(

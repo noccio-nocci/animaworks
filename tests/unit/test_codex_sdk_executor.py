@@ -10,6 +10,7 @@ All tests use mocks — no Codex CLI binary or API key required.
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,12 +22,18 @@ from core.execution.codex_sdk import (
     _codex_item_tool_name,
     _default_path_env,
     _default_home_dir,
+    _event_idle_timeout_seconds,
     _extract_item_text,
     _extract_tool_records,
     _get_thread_id,
     _item_to_tool_record,
     _load_thread_id,
+    _patch_codex_exec_stream_limit,
     _resolve_codex_model,
+    _is_desktop_extension_codex,
+    _stderr_contains_fatal_signal,
+    _should_cli_exec_fallback,
+    _should_prefer_cli_exec,
     _save_thread_id,
     _usage_to_dict,
     clear_codex_thread_ids,
@@ -188,6 +195,107 @@ class TestHelpers:
         assert result["input_tokens"] == 200
         assert result["output_tokens"] == 80
 
+    def test_event_idle_timeout_prefers_background_triggers(self):
+        assert _event_idle_timeout_seconds("heartbeat") < _event_idle_timeout_seconds("chat")
+        assert _event_idle_timeout_seconds("inbox:sakura") == _event_idle_timeout_seconds("heartbeat")
+
+    def test_stderr_contains_fatal_signal_detects_stream_closed(self):
+        assert _stderr_contains_fatal_signal("error: Stream closed")
+        assert not _stderr_contains_fatal_signal("warning: tool unavailable")
+
+    def test_should_cli_exec_fallback_detects_fatal_stderr(self):
+        exc = RuntimeError("Codex Exec aborted after fatal stderr signal: Reading prompt from stdin...")
+        assert _should_cli_exec_fallback(exc)
+
+    def test_is_desktop_extension_codex(self):
+        assert _is_desktop_extension_codex(
+            r"C:\Users\cmnt\.antigravity\extensions\openai.chatgpt-26.313.41514-win32-x64\bin\windows-x86_64\codex.exe"
+        )
+        assert not _is_desktop_extension_codex(r"C:\tools\codex.exe")
+
+    def test_should_prefer_cli_exec_honors_force_flag(self, monkeypatch):
+        monkeypatch.setenv("ANIMAWORKS_CODEX_FORCE_CLI_EXEC", "1")
+        assert _should_prefer_cli_exec("task:demo")
+
+    def test_should_prefer_cli_exec_for_windows_background_desktop_bundle(self, monkeypatch):
+        monkeypatch.delenv("ANIMAWORKS_CODEX_FORCE_CLI_EXEC", raising=False)
+        monkeypatch.setattr("core.execution.codex_sdk.sys.platform", "win32")
+        monkeypatch.setattr(
+            "core.execution.codex_sdk.get_codex_executable",
+            lambda: r"C:\Users\cmnt\.antigravity\extensions\openai.chatgpt-26.313.41514-win32-x64\bin\windows-x86_64\codex.exe",
+        )
+        assert _should_prefer_cli_exec("inbox")
+        assert _should_prefer_cli_exec("task:demo")
+        assert not _should_prefer_cli_exec("manual")
+
+    @pytest.mark.asyncio
+    async def test_patch_codex_exec_stream_limit_fails_fast_on_fatal_stderr(self):
+        from openai_codex_sdk.errors import CodexExecError
+
+        class _FakeStdin:
+            def write(self, _data):
+                return None
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+        class _SleepingStdout:
+            async def readline(self):
+                await asyncio.sleep(3600)
+                return b""
+
+        class _FatalStderr:
+            def __init__(self):
+                self._chunks = [
+                    b"Error in hook callback\nerror: Stream closed\n",
+                    b"",
+                ]
+
+            async def read(self, _size):
+                await asyncio.sleep(0)
+                return self._chunks.pop(0)
+
+        class _FakeProc:
+            def __init__(self):
+                self.stdin = _FakeStdin()
+                self.stdout = _SleepingStdout()
+                self.stderr = _FatalStderr()
+                self.returncode = None
+                self._wait_event = asyncio.Event()
+                self.kill_calls = 0
+
+            def kill(self):
+                self.kill_calls += 1
+                self.returncode = 1
+                self._wait_event.set()
+
+            async def wait(self):
+                await self._wait_event.wait()
+                return self.returncode
+
+        class _FakeExec:
+            executable_path = "codex"
+
+            def _build_command_args(self, _args):
+                return []
+
+            def _build_env(self, _args):
+                return {}
+
+        proc = _FakeProc()
+        exec_ = _FakeExec()
+        _patch_codex_exec_stream_limit(exec_)
+
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            with pytest.raises(CodexExecError, match="fatal stderr signal"):
+                stream = exec_.run(SimpleNamespace(input="hello"))
+                await stream.__anext__()
+
+        assert proc.kill_calls == 1
+
 
 # ── Session persistence tests ────────────────────────────────
 
@@ -242,6 +350,16 @@ class TestExecutorInit:
         ):
             value = _default_path_env()
         assert value.startswith(r"C:\Tools")
+
+    def test_default_path_env_includes_launcher_python_dir(self):
+        with (
+            patch("core.execution.codex_sdk.get_codex_executable", return_value=None),
+            patch("core.execution.codex_sdk.sys.executable", r"E:\OneDriveBiz\Tools\General\animaworks\.venv\Scripts\python.exe"),
+            patch.dict("os.environ", {"PATH": r"C:\Windows\System32"}, clear=True),
+        ):
+            value = _default_path_env()
+        parts = value.split(";")
+        assert r"E:\OneDriveBiz\Tools\General\animaworks\.venv\Scripts" in parts
 
     def test_create_codex_client_passes_executable_override(self, executor):
         fake_client = MagicMock()
@@ -392,7 +510,10 @@ class TestBlockingExecution:
         mock_codex = MagicMock()
         mock_codex.start_thread.return_value = mock_thread
 
-        with patch.object(executor, "_create_codex_client", return_value=mock_codex):
+        with (
+            patch("core.execution.codex_sdk._should_prefer_cli_exec", return_value=False),
+            patch.object(executor, "_create_codex_client", return_value=mock_codex),
+        ):
             result = await executor.execute(
                 prompt="heartbeat check",
                 trigger="heartbeat",
@@ -426,6 +547,39 @@ class TestBlockingExecution:
             result = await executor.execute(prompt="test")
 
         assert "[Codex SDK Error:" in result.text
+
+    @pytest.mark.asyncio
+    async def test_execute_falls_back_to_cli_exec_on_fatal_sdk_error(self, executor):
+        mock_codex = MagicMock()
+        mock_thread = MagicMock()
+        mock_thread.run = AsyncMock(side_effect=RuntimeError("fatal stderr signal: Reading prompt from stdin..."))
+        mock_thread.id = None
+        mock_codex.start_thread.return_value = mock_thread
+        fallback = ExecutionResult(text="fallback ok")
+
+        with (
+            patch.object(executor, "_create_codex_client", return_value=mock_codex),
+            patch.object(executor, "_execute_via_cli_exec", AsyncMock(return_value=fallback)) as mock_fallback,
+        ):
+            result = await executor.execute(prompt="test", system_prompt="sys")
+
+        assert result.text == "fallback ok"
+        mock_fallback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_prefers_cli_exec_for_background_trigger(self, executor):
+        fallback = ExecutionResult(text="cli preferred")
+
+        with (
+            patch("core.execution.codex_sdk._should_prefer_cli_exec", return_value=True),
+            patch.object(executor, "_execute_via_cli_exec", AsyncMock(return_value=fallback)) as mock_fallback,
+            patch.object(executor, "_create_codex_client") as mock_client,
+        ):
+            result = await executor.execute(prompt="test", system_prompt="sys", trigger="task:demo")
+
+        assert result.text == "cli preferred"
+        mock_fallback.assert_awaited_once()
+        mock_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_execute_retry_on_resume_failure(self, executor, anima_dir):
@@ -506,6 +660,74 @@ class TestStreamingExecution:
         done_ev = next(e for e in events if e["type"] == "done")
         assert "Streamed text" in done_ev["full_text"]
         assert tracker.usage_ratio > 0.0, "tracker must be updated from usage"
+
+    @pytest.mark.asyncio
+    async def test_stream_falls_back_to_cli_exec_on_fatal_sdk_error(self, executor):
+        async def broken_events():
+            raise RuntimeError("fatal stderr signal: Reading prompt from stdin...")
+            yield  # pragma: no cover
+
+        mock_streamed = MagicMock()
+        mock_streamed.events = broken_events()
+
+        mock_thread = MagicMock()
+        mock_thread.run_streamed = AsyncMock(return_value=mock_streamed)
+        mock_thread.id = "broken-thread"
+
+        mock_codex = MagicMock()
+        mock_codex.start_thread.return_value = mock_thread
+
+        async def fallback_events(*_args, **_kwargs):
+            yield {"type": "text_delta", "text": "fallback"}
+            yield {
+                "type": "done",
+                "full_text": "fallback",
+                "result_message": None,
+                "replied_to_from_transcript": set(),
+                "tool_call_records": [],
+                "usage": {},
+            }
+
+        with (
+            patch.object(executor, "_create_codex_client", return_value=mock_codex),
+            patch.object(executor, "_execute_streaming_via_cli_exec", side_effect=fallback_events),
+        ):
+            events = []
+            tracker = ContextTracker(model="codex/o4-mini")
+            async for ev in executor.execute_streaming(
+                system_prompt="test",
+                prompt="Hello",
+                tracker=tracker,
+            ):
+                events.append(ev)
+
+        assert [e["type"] for e in events] == ["text_delta", "done"]
+
+    @pytest.mark.asyncio
+    async def test_stream_prefers_cli_exec_for_background_trigger(self, executor):
+        async def cli_events(*_args, **_kwargs):
+            yield {"type": "text_delta", "text": "cli stream"}
+            yield {"type": "done", "full_text": "cli stream", "result_message": None}
+
+        tracker = ContextTracker(model=executor._model_config.model)
+        events = []
+
+        with (
+            patch("core.execution.codex_sdk._should_prefer_cli_exec", return_value=True),
+            patch.object(executor, "_execute_streaming_via_cli_exec", side_effect=cli_events) as mock_fallback,
+            patch.object(executor, "_create_codex_client") as mock_client,
+        ):
+            async for ev in executor.execute_streaming(
+                system_prompt="sys",
+                prompt="Hello",
+                tracker=tracker,
+                trigger="inbox",
+            ):
+                events.append(ev)
+
+        assert [e["type"] for e in events] == ["text_delta", "done"]
+        mock_fallback.assert_called_once()
+        mock_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_stream_tool_events(self, executor, anima_dir):
@@ -887,6 +1109,43 @@ class TestProgressiveStreaming:
         text_deltas = [e for e in events if e["type"] == "text_delta"]
         full_text = "".join(e["text"] for e in text_deltas)
         assert full_text == "Complete text here"
+
+    @pytest.mark.asyncio
+    async def test_stream_idle_timeout_raises_stream_disconnected(self, executor):
+        class NeverEvents:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(3600)
+                raise StopAsyncIteration
+
+        mock_streamed = MagicMock()
+        mock_streamed.events = NeverEvents()
+
+        mock_thread = MagicMock()
+        mock_thread.run_streamed = AsyncMock(return_value=mock_streamed)
+        mock_thread.id = "idle-thread"
+
+        mock_codex = MagicMock()
+        mock_codex.start_thread.return_value = mock_thread
+
+        with (
+            patch("core.execution.codex_sdk._should_prefer_cli_exec", return_value=False),
+            patch.object(executor, "_create_codex_client", return_value=mock_codex),
+            patch("core.execution.codex_sdk._BACKGROUND_EVENT_IDLE_TIMEOUT_SEC", 0.01),
+        ):
+            tracker = ContextTracker(model="codex/o4-mini")
+            with pytest.raises(Exception) as exc_info:
+                async for _ in executor.execute_streaming(
+                    system_prompt="test",
+                    prompt="Hello",
+                    tracker=tracker,
+                    trigger="heartbeat",
+                ):
+                    pass
+
+        assert "idle timeout" in str(exc_info.value)
 
 
 # ── Mode resolution tests ────────────────────────────────────

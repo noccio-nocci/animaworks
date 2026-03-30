@@ -449,8 +449,8 @@ class TestBuildSystemPrompt:
             assert "Bash" in result
             assert "animaworks-tool" in result
 
-    def test_s_mode_injects_external_tools_hint_with_bash(self, tmp_path, data_dir):
-        """S mode injects External Tools hint mentioning Bash."""
+    def test_s_mode_injects_external_tools_hint_with_direct_tool_priority(self, tmp_path, data_dir):
+        """S mode should prefer dedicated MCP tools over Bash CLI."""
         anima_dir = tmp_path / "animas" / "alice"
         anima_dir.mkdir(parents=True)
         (anima_dir / "identity.md").write_text("I am Alice", encoding="utf-8")
@@ -479,12 +479,13 @@ class TestBuildSystemPrompt:
         with patch("core.prompt.builder.load_prompt", return_value="section"):
             result = build_system_prompt(
                 memory,
-                tool_registry=["chatwork"],
+                tool_registry=["chatwork", "slack_channel_post"],
                 execution_mode="s",
             )
             assert "External Tools" in result
-            assert "Bash" in result
-            assert "animaworks-tool" in result
+            assert "call it directly by tool name" in result
+            assert "slack_channel_post" in result
+            assert "Prefer direct tools" in result
 
     def test_b_mode_injects_external_tools_hint_with_bash_cli(self, tmp_path, data_dir):
         """B mode injects External Tools hint mentioning Bash + animaworks-tool."""

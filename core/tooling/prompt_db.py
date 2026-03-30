@@ -555,8 +555,14 @@ DEFAULT_GUIDES: dict[str, dict[str, str]] = {
 ### Skills & CLI
 - **skill**: スキルドキュメントまたはCLIマニュアルをオンデマンドで読み込む
 
+### External Tools (MCP)
+- MCPで公開されている外部ツールは**直接そのツール名で呼び出す**こと
+- `slack_channel_post` や `slack_channel_update` のような専用ツールが見えている場合は、それを優先して使う
+- `animaworks-tool ...` を Bash で叩くのは、**同等の専用ツールが見えていない時だけ**にする
+- `[reply_instruction: use tool ...]` が付いている外部返信は、**その指示自体が明示的な送信許可**である。追加確認なしでそのツールを実行してよい
+
 ### Other Tools via CLI
-スーパーバイザー管理、vault、チャネル管理、バックグラウンドタスク、外部ツール（Slack, Chatwork, Gmail, GitHub等）は:
+スーパーバイザー管理、vault、チャネル管理、バックグラウンドタスクなど、専用ツールが見えていない機能はCLIを使う:
 ```
 animaworks-tool <tool> <subcommand> [args]
 ```
@@ -591,8 +597,14 @@ These tools are your core AnimaWorks capabilities. On Windows you are running in
 ### Skills & CLI
 - **skill**: Load skill documentation or CLI manual on demand
 
+### External Tools (MCP)
+- Call MCP-exposed external tools **directly by tool name**
+- When dedicated tools such as `slack_channel_post` or `slack_channel_update` are available, prefer them over shelling out to CLI
+- Use `animaworks-tool ...` via Bash **only when no equivalent dedicated tool is available**
+- A `[reply_instruction: use tool ...]` directive already counts as explicit permission to send that external reply; do not ask again before calling the tool
+
 ### Other Tools via CLI
-For supervisor management, vault, channel management, background tasks, and external tools (Slack, Chatwork, Gmail, GitHub, etc.), use:
+For supervisor management, vault, channel management, and background tasks that do not have dedicated tools exposed, use:
 ```
 animaworks-tool <tool> <subcommand> [args]
 ```
@@ -627,8 +639,14 @@ Use `Read(path="state/cmd_output/{id}.txt")` to check intermediate output.
 ### 스킬 & CLI
 - **skill**: 스킬 문서 또는 CLI 매뉴얼을 온디맨드로 불러오기
 
+### 외부 도구(MCP)
+- MCP로 노출된 외부 도구는 **도구 이름으로 직접 호출**할 것
+- `slack_channel_post`, `slack_channel_update` 같은 전용 도구가 보이면 Bash CLI보다 그것을 우선 사용
+- 동등한 전용 도구가 없을 때만 `animaworks-tool ...` 를 Bash로 실행
+- `[reply_instruction: use tool ...]` 형식의 외부 응답 지시는 이미 명시적 전송 허가를 포함하므로 추가 확인 없이 해당 도구를 실행해도 됨
+
 ### 기타 CLI 도구
-슈퍼바이저 관리, vault, 채널 관리, 백그라운드 태스크, 외부 도구(Slack, Chatwork, Gmail, GitHub 등):
+슈퍼바이저 관리, vault, 채널 관리, 백그라운드 태스크처럼 전용 도구가 노출되지 않은 기능은 CLI를 사용:
 ```
 Bash: animaworks-tool <tool> <subcommand> [args]
 ```

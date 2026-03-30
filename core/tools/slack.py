@@ -120,6 +120,10 @@ def get_tool_schemas() -> list[dict]:
                         "type": "string",
                         "description": "Message text (Markdown will be converted to Slack mrkdwn)",
                     },
+                    "thread_ts": {
+                        "type": "string",
+                        "description": "Optional parent message ts to reply in-thread",
+                    },
                 },
                 "required": ["channel_id", "text"],
             },
@@ -226,6 +230,7 @@ def dispatch(name: str, args: dict[str, Any]) -> Any:
         resp = client.post_message(
             args["channel_id"],
             slack_text,
+            thread_ts=args.get("thread_ts"),
             username=username,
             icon_url=icon_url,
         )

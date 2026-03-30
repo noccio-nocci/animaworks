@@ -59,6 +59,7 @@ def _cache_user_name(uid: str, name: str) -> None:
     """Thread-safe bounded insert into the user-name cache."""
     with _cache_lock:
         if len(_user_name_cache) >= _USER_NAME_CACHE_MAX and uid not in _user_name_cache:
+            # Evict oldest entry (first inserted)
             try:
                 _user_name_cache.pop(next(iter(_user_name_cache)))
             except StopIteration:
@@ -294,7 +295,7 @@ class SlackSocketModeManager:
         to_add = desired_animas - current_animas
         for name in sorted(to_add):
             try:
-                ok = await self._add_per_anima_handler(name)
+                ok = await self._add_per_anima_handler(name, connect=True)
                 if ok:
                     added.append(name)
             except Exception as exc:
@@ -321,8 +322,16 @@ class SlackSocketModeManager:
             result["errors"] = errors
         return result
 
-    async def _add_per_anima_handler(self, anima_name: str) -> bool:
-        """Create and connect a per-Anima Socket Mode handler.
+    async def _add_per_anima_handler(self, anima_name: str, *, connect: bool = False) -> bool:
+        """Create a per-Anima Socket Mode handler.
+
+        Args:
+            anima_name: Name of the anima.
+            connect: If True, call ``connect_async()`` immediately.
+                During initial ``start()`` this is False because all
+                handlers are connected in one ``asyncio.gather`` batch.
+                During ``reconcile_handlers()`` this is True because the
+                handler is added to an already-running set.
 
         Returns True on success, False if credentials are missing.
         """
@@ -341,7 +350,8 @@ class SlackSocketModeManager:
             handler = AsyncSocketModeHandler(app, app_token)
             self._app_map[anima_name] = app
             self._handler_map[anima_name] = handler
-            await handler.connect_async()
+            if connect:
+                await handler.connect_async()
             logger.info(
                 "Per-Anima Slack bot registered: %s (bot_uid=%s)",
                 anima_name,
@@ -428,6 +438,21 @@ class SlackSocketModeManager:
     def _register_per_anima_handler(self, app: AsyncApp, anima_name: str, bot_user_id: str = "") -> None:
         """Register event handler that routes all messages to a specific Anima."""
 
+        @app.middleware
+        async def _diag_log_all_events(body, next):  # noqa: ANN001
+            """Diagnostic: log every incoming Socket Mode payload."""
+            event_type = (body or {}).get("event", {}).get("type", "?")
+            event_subtype = (body or {}).get("event", {}).get("subtype", "")
+            channel = (body or {}).get("event", {}).get("channel", "")
+            logger.info(
+                "Slack event received for %s: type=%s subtype=%s channel=%s",
+                anima_name,
+                event_type,
+                event_subtype,
+                channel,
+            )
+            await next()
+
         @app.event("message")
         async def handle_message(event: dict, say) -> None:  # noqa: ARG001
             if "subtype" in event:
@@ -460,10 +485,10 @@ class SlackSocketModeManager:
                     text = ctx + text
 
             text = await asyncio.to_thread(_resolve_slack_mentions, text, token)
-            has_mention = bool(mention_intent)
-            annotation = _build_slack_annotation(channel_id, has_mention)
+            # Per-anima bot: every message is directed at this anima
+            annotation = _build_slack_annotation(channel_id, True)
             text = annotation + text
-            intent = mention_intent or _detect_slack_intent(text, channel_id, bot_user_id)
+            intent = "question"
 
             shared_dir = get_data_dir() / "shared"
             messenger = Messenger(shared_dir, anima_name)
@@ -485,7 +510,7 @@ class SlackSocketModeManager:
                 "Per-Anima Socket Mode message routed: channel=%s -> anima=%s (intent=%s)",
                 channel_id,
                 anima_name,
-                intent or "none",
+                intent,
             )
 
         @app.event("app_mention")
@@ -560,8 +585,38 @@ class SlackSocketModeManager:
             channel_id = event.get("channel", "")
             cfg = load_config()
             slack_cfg = cfg.external_messaging.slack
+
+            # ── Board routing: post to AnimaWorks board if mapped ──
+            board_name = slack_cfg.board_mapping.get(channel_id)
+            if board_name:
+                raw_text = event.get("text", "")
+                raw_text = await asyncio.to_thread(_resolve_slack_mentions, raw_text, _shared_token)
+                shared_dir = get_data_dir() / "shared"
+                user_id = event.get("user", "")
+                from_display = _get_cached_user_name(user_id) or user_id
+                try:
+                    messenger = Messenger(shared_dir, slack_cfg.default_anima or "system")
+                    messenger.post_channel(
+                        channel_name=board_name,
+                        content=raw_text,
+                        from_person=from_display,
+                        source="slack",
+                        source_message_id=ts,
+                    )
+                    logger.info(
+                        "Shared Socket Mode board routed: channel=%s -> board=%s",
+                        channel_id,
+                        board_name,
+                    )
+                except Exception:
+                    logger.exception("Failed to post Slack message to board '%s'", board_name)
+                # Also deliver to default_anima inbox for processing
+                # (fall through to standard routing below)
+
             anima_name = slack_cfg.anima_mapping.get(channel_id) or slack_cfg.default_anima
             if not anima_name:
+                if board_name:
+                    return  # Board-only channel, no anima routing needed
                 logger.debug(
                     "No anima mapping for channel %s and no default_anima; ignoring",
                     channel_id,

@@ -9,13 +9,23 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("animaworks.tools")
+
+
+_ABCONFIG_CNCT_ENV_PATH = Path(r"E:\OneDriveBiz\Tools\abconfig\Cnct_Env.py")
+_ABCONFIG_SLACK_KEY_MAP = {
+    "SLACK_BOT_TOKEN": "slack_bot_token",
+    "SLACK_APP_TOKEN": "slack_app_token",
+}
 
 
 from core.exceptions import ToolConfigError  # noqa: F401 – re-export
@@ -95,17 +105,26 @@ def get_credential(
             _log_resolved(credential_name, key_name, "shared/credentials.json", val)
             return val
 
-    # 4. Environment variable fallback
+    # 4. Local abconfig bridge for Slack tokens
+    if env_var:
+        val = _lookup_abconfig_credential(env_var)
+        if val:
+            _log_resolved(credential_name, key_name, str(_ABCONFIG_CNCT_ENV_PATH), val)
+            return val
+
+    # 5. Environment variable fallback
     if env_var:
         val = os.environ.get(env_var)
         if val:
             _log_resolved(credential_name, key_name, f"env:{env_var}", val)
             return val
 
-    # 5. Error with guidance
+    # 6. Error with guidance
     sources = [f"config.json credentials.{credential_name}.{key_name}"]
     if env_var:
         sources.append("vault.json")
+        if env_var in _ABCONFIG_SLACK_KEY_MAP:
+            sources.append(str(_ABCONFIG_CNCT_ENV_PATH))
         sources.append(f"environment variable {env_var}")
     raise ToolConfigError(
         f"Tool '{tool_name}' requires credential '{credential_name}'. Set it in: {' or '.join(sources)}"
@@ -141,6 +160,51 @@ def _lookup_shared_credentials(key: str) -> str | None:
         return None
     val = data.get(key)
     return val if val else None
+
+
+def _lookup_abconfig_credential(key: str) -> str | None:
+    """Look up selected Slack keys from the local abconfig secrets file.
+
+    ``Cnct_Env.py`` imports heavy desktop/database dependencies, so we avoid
+    importing it directly at server startup. Instead we treat its sibling
+    ``secrets_local.py`` as the source of truth for the Slack tokens exposed
+    there.
+    """
+    attr_name = _ABCONFIG_SLACK_KEY_MAP.get(key)
+    if not attr_name:
+        return None
+
+    secrets = _load_abconfig_secrets()
+    if secrets is None:
+        return None
+
+    val = getattr(secrets, attr_name, None)
+    return val if isinstance(val, str) and val else None
+
+
+@lru_cache(maxsize=1)
+def _load_abconfig_secrets() -> Any | None:
+    """Load ``secrets_local.py`` next to the fixed abconfig ``Cnct_Env.py``."""
+    cnct_env_path = _ABCONFIG_CNCT_ENV_PATH
+    if not cnct_env_path.is_file():
+        return None
+
+    secrets_path = cnct_env_path.with_name("secrets_local.py")
+    if not secrets_path.is_file():
+        logger.debug("abconfig secrets file not found: %s", secrets_path)
+        return None
+
+    try:
+        spec = importlib.util.spec_from_file_location("animaworks_abconfig_secrets", secrets_path)
+        if spec is None or spec.loader is None:
+            logger.warning("Failed to create import spec for %s", secrets_path)
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        logger.warning("Failed to load Slack tokens from %s", secrets_path, exc_info=True)
+        return None
 
 
 def _log_resolved(

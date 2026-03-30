@@ -326,3 +326,9 @@ class TestRetryExhausted:
         # The error message should mention retry count
         error_msg = error_events[0].get("message", "")
         assert "1" in error_msg, f"Expected retry count in error message: {error_msg}"
+
+        done_events = [e for e in events if e.get("type") == "cycle_done"]
+        assert len(done_events) == 1
+        cycle_result = done_events[0]["cycle_result"]
+        assert cycle_result["action"] == "error"
+        assert cycle_result["summary"] == error_msg

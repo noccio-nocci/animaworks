@@ -260,7 +260,7 @@ async def _startup_animas_background(app: FastAPI) -> None:
                 await channel_sync.sync(app.state.slack_socket_manager)
                 app.state.slack_channel_sync = channel_sync
             except Exception:
-                logger.debug("Initial Slack channel sync failed", exc_info=True)
+                logger.warning("Initial Slack channel sync failed", exc_info=True)
                 app.state.slack_channel_sync = None
         else:
             app.state.slack_channel_sync = None

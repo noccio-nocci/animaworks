@@ -418,9 +418,15 @@ class ProcessHandle:
             self.stats.missed_pings += 1
             return {"success": False, "is_busy": False} if return_details else False
         except Exception as e:
-            logger.error("Ping error for %s: %s", self.anima_name, e)
+            is_transport_error = "Unix IPC transport is unavailable" in str(e)
+            if not is_transport_error:
+                logger.error("Ping error for %s: %s", self.anima_name, e)
+            else:
+                logger.debug("Ping transport error for %s: %s", self.anima_name, e)
             self.stats.missed_pings += 1
-            return {"success": False, "is_busy": False} if return_details else False
+            if return_details:
+                return {"success": False, "is_busy": False, "transport_error": is_transport_error}
+            return False
 
     async def stop(self, timeout: float = 10.0) -> None:
         """

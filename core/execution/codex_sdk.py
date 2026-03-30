@@ -22,6 +22,7 @@ mechanism with thread IDs persisted to the shortterm directory.
 """
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -49,11 +50,16 @@ logger = logging.getLogger("animaworks.execution.codex_sdk")
 __all__ = ["CodexSDKExecutor", "clear_codex_thread_ids", "is_codex_sdk_available"]
 
 RESUME_TIMEOUT_SEC = 15.0
+_BACKGROUND_EVENT_IDLE_TIMEOUT_SEC = 45.0
+_FOREGROUND_EVENT_IDLE_TIMEOUT_SEC = 120.0
 
 # asyncio.StreamReader default limit is 64 KB.  Codex CLI may echo the full
 # context (including system prompt) in a single JSONL line during thread
 # resume, triggering LimitOverrunError.  Skip resume when close to this limit.
 _RESUME_PROMPT_SIZE_LIMIT = 50_000
+_FATAL_STDERR_PATTERNS = (
+    "error: stream closed",
+)
 
 # Increase the asyncio.StreamReader buffer limit for Codex subprocess pipes.
 # The default 64 KB (2**16) is too small for large prompts that produce JSONL
@@ -104,11 +110,26 @@ def _default_path_env() -> str:
     if executable:
         path_parts.append(str(Path(executable).resolve().parent))
 
+    # Ensure child Codex sessions can resolve helper CLIs installed into the
+    # same Python environment that launched AnimaWorks.
+    python_bin = str(Path(sys.executable).resolve().parent)
+    if python_bin:
+        path_parts.append(python_bin)
+
+    # Editable/dev installs often keep helper entry points in the project venv
+    # even when the parent PATH was started from a different shell profile.
+    try:
+        from core.paths import PROJECT_DIR
+
+        project_venv_bin = PROJECT_DIR / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        if project_venv_bin.is_dir():
+            path_parts.append(str(project_venv_bin))
+    except Exception:
+        logger.debug("Failed to resolve project venv bin for Codex PATH", exc_info=True)
+
     existing = os.environ.get("PATH")
     if existing:
         path_parts.append(existing)
-    else:
-        path_parts.append(str(Path(sys.executable).resolve().parent))
     return os.pathsep.join(dict.fromkeys(part for part in path_parts if part))
 
 
@@ -163,6 +184,41 @@ def _resolve_session_type(trigger: str) -> str:
     if trigger in ("heartbeat",) or (trigger and trigger.startswith("cron:")):
         return "heartbeat"
     return "chat"
+
+
+def _event_idle_timeout_seconds(trigger: str) -> float:
+    """Return max idle time between streamed Codex events before treating it as dead."""
+    if trigger == "heartbeat" or trigger.startswith("inbox") or trigger.startswith("cron:"):
+        return _BACKGROUND_EVENT_IDLE_TIMEOUT_SEC
+    return _FOREGROUND_EVENT_IDLE_TIMEOUT_SEC
+
+
+def _is_desktop_extension_codex(executable: str | None) -> bool:
+    """Return True when the Codex binary comes from a desktop-app extension bundle."""
+    if not executable:
+        return False
+    norm = executable.replace("/", "\\").lower()
+    return (
+        "\\.antigravity\\extensions\\openai.chatgpt-" in norm
+        or "\\windowsapps\\openai.codex_" in norm
+    )
+
+
+def _should_prefer_cli_exec(trigger: str) -> bool:
+    """Prefer direct ``codex exec`` for unstable desktop-bundled background sessions."""
+    forced = os.environ.get("ANIMAWORKS_CODEX_FORCE_CLI_EXEC", "").strip().lower()
+    if forced in {"1", "true", "yes", "on"}:
+        return True
+
+    is_background = (
+        trigger == "heartbeat"
+        or trigger.startswith("cron:")
+        or trigger.startswith("inbox")
+        or trigger.startswith("task:")
+    )
+    if not is_background or sys.platform != "win32":
+        return False
+    return _is_desktop_extension_codex(get_codex_executable())
 
 
 def _extract_item_text(item: Any) -> str:
@@ -275,6 +331,81 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
     return d
 
 
+def _cli_exec_result_text(result: Any) -> str:
+    """Extract text from a Codex CLI exec result payload."""
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(str(part.get("text", "")))
+            if parts:
+                return "".join(parts)
+        if "text" in result:
+            return str(result.get("text", ""))
+    if isinstance(result, str):
+        return result
+    return ""
+
+
+def _cli_exec_item_to_tool_record(item: dict[str, Any]) -> ToolCallRecord | None:
+    """Convert a JSON event item from `codex exec --json` into a ToolCallRecord."""
+    try:
+        item_type = str(item.get("type", ""))
+        tool_id = str(item.get("id", ""))
+        if item_type == "mcp_tool_call":
+            server = str(item.get("server", ""))
+            tool = str(item.get("tool", ""))
+            name = f"{server}/{tool}" if server else tool or "mcp_tool"
+            result_text = _cli_exec_result_text(item.get("result"))
+            return ToolCallRecord(
+                tool_name=name,
+                tool_id=tool_id,
+                input_summary=_truncate_for_record(str(item.get("arguments", {})), 500),
+                result_summary=_truncate_for_record(result_text, 500),
+                is_error=item.get("error") is not None,
+            )
+        if item_type == "command_execution":
+            cmd = str(item.get("command", ""))
+            output = str(item.get("aggregated_output", "") or item.get("output", ""))
+            exit_code = item.get("exit_code")
+            is_error = exit_code is not None and exit_code != 0
+            return ToolCallRecord(
+                tool_name=cmd[:80] if cmd else "command",
+                tool_id=tool_id,
+                input_summary=_truncate_for_record(cmd, 500),
+                result_summary=_truncate_for_record(output, 500),
+                is_error=is_error,
+            )
+    except Exception:
+        return None
+    return None
+
+
+def _stderr_contains_fatal_signal(text: str) -> bool:
+    """Return True when Codex stderr already indicates the stream is unrecoverable."""
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in _FATAL_STDERR_PATTERNS)
+
+
+def _should_cli_exec_fallback(exc: BaseException) -> bool:
+    """Return True when the Codex SDK is failing in a way the CLI exec path can bypass."""
+    cur: BaseException | None = exc
+    while cur is not None:
+        lowered = str(cur).lower()
+        if "fatal stderr signal" in lowered:
+            return True
+        if "stream closed" in lowered:
+            return True
+        if "reading prompt from stdin" in lowered:
+            return True
+        cur = cur.__cause__ or cur.__context__
+        if cur is exc:
+            break
+    return False
+
+
 def _is_limit_overrun(exc: BaseException) -> bool:
     """Check whether *exc* or its cause chain contains a buffer overflow."""
     cur: BaseException | None = exc
@@ -356,18 +487,26 @@ def _patch_codex_exec_stream_limit(exec_: Any) -> None:
             finally:
                 raise CodexExecError("Child process missing stdin/stdout")
 
-        async def _read_all(stream):  # type: ignore[no-untyped-def]
+        async def _read_stderr(stream, fatal_future: asyncio.Future[str]):  # type: ignore[no-untyped-def]
             if stream is None:
                 return b""
             chunks: list[bytes] = []
+            recent_text = ""
             while True:
                 chunk = await stream.read(4096)
                 if not chunk:
                     break
                 chunks.append(chunk)
+                if fatal_future.done():
+                    continue
+                decoded = chunk.decode("utf-8", errors="replace")
+                recent_text = (recent_text + decoded)[-512:]
+                if _stderr_contains_fatal_signal(recent_text):
+                    fatal_future.set_result(recent_text)
             return b"".join(chunks)
 
-        stderr_task = asyncio.create_task(_read_all(proc.stderr))
+        fatal_stderr: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        stderr_task = asyncio.create_task(_read_stderr(proc.stderr, fatal_stderr))
 
         try:
             proc.stdin.write(args.input.encode("utf-8"))
@@ -375,7 +514,30 @@ def _patch_codex_exec_stream_limit(exec_: Any) -> None:
             proc.stdin.close()
 
             while True:
-                line = await proc.stdout.readline()
+                line_task = asyncio.create_task(proc.stdout.readline())
+                done, pending = await asyncio.wait(
+                    {line_task, fatal_stderr},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for pending_task in pending:
+                    pending_task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+                if fatal_stderr in done:
+                    if proc.returncode is None:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                        await proc.wait()
+                    stderr_bytes = await stderr_task
+                    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+                    raise CodexExecError(
+                        "Codex Exec aborted after fatal stderr signal: "
+                        f"{stderr_text or fatal_stderr.result()}"
+                    )
+
+                line = line_task.result()
                 if not line:
                     break
                 yield line.decode("utf-8").rstrip("\n")
@@ -623,6 +785,208 @@ class CodexSDKExecutor(BaseExecutor):
         _patch_codex_exec_stream_limit(client._exec)
         return client
 
+    def _build_cli_exec_command(self) -> list[str]:
+        """Build the `codex exec --json` command used as a runtime fallback."""
+        executable = get_codex_executable()
+        if not executable:
+            raise RuntimeError("Codex CLI executable not available for exec fallback")
+        return [
+            executable,
+            "exec",
+            "-C",
+            str(self._task_cwd or self._anima_dir),
+            "--skip-git-repo-check",
+            "--json",
+            "-",
+        ]
+
+    async def _execute_streaming_via_cli_exec(
+        self,
+        system_prompt: str,
+        prompt: str,
+        tracker: ContextTracker,
+        trigger: str = "",
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Fallback executor using `codex exec --json` when the SDK transport is unstable."""
+        self._write_codex_config(system_prompt)
+        cmd = self._build_cli_exec_command()
+        env = self._build_env()
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            limit=_SUBPROCESS_STREAM_LIMIT,
+        )
+        if proc.stdin is None or proc.stdout is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            raise RuntimeError("Codex CLI exec fallback missing stdin/stdout")
+
+        stderr_chunks: list[bytes] = []
+
+        async def _read_stderr() -> None:
+            if proc.stderr is None:
+                return
+            while True:
+                chunk = await proc.stderr.read(4096)
+                if not chunk:
+                    break
+                stderr_chunks.append(chunk)
+
+        stderr_task = asyncio.create_task(_read_stderr())
+        response_parts: list[str] = []
+        tool_records: list[ToolCallRecord] = []
+        usage_acc = TokenUsage()
+        emitted_tool_starts: set[str] = set()
+        thread_id = ""
+        usage_dict: dict[str, int] | None = None
+
+        try:
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
+
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                raw_line = line.decode("utf-8", errors="replace").rstrip("\n")
+                try:
+                    payload = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    logger.debug("Ignoring non-JSON codex exec output: %s", raw_line[:200])
+                    continue
+
+                ptype = str(payload.get("type", ""))
+                if ptype == "thread.started":
+                    thread_id = str(payload.get("thread_id", ""))
+                    continue
+                if ptype in ("turn.started",):
+                    continue
+
+                if ptype == "item.started":
+                    item = payload.get("item") or {}
+                    item_type = str(item.get("type", ""))
+                    item_id = str(item.get("id", ""))
+                    if item_type in ("command_execution", "mcp_tool_call") and item_id not in emitted_tool_starts:
+                        emitted_tool_starts.add(item_id)
+                        yield {
+                            "type": "tool_start",
+                            "tool_name": _codex_item_tool_name(type("Obj", (), item)(), item_type),
+                            "tool_id": item_id,
+                        }
+                    continue
+
+                if ptype == "item.completed":
+                    item = payload.get("item") or {}
+                    item_type = str(item.get("type", ""))
+                    item_id = str(item.get("id", ""))
+
+                    if item_type == "agent_message":
+                        text = str(item.get("text", ""))
+                        if text:
+                            response_parts.append(text)
+                            yield {"type": "text_delta", "text": text}
+                        continue
+
+                    if item_type in ("command_execution", "mcp_tool_call"):
+                        if item_id not in emitted_tool_starts:
+                            emitted_tool_starts.add(item_id)
+                            yield {
+                                "type": "tool_start",
+                                "tool_name": _codex_item_tool_name(type("Obj", (), item)(), item_type),
+                                "tool_id": item_id,
+                            }
+                        rec = _cli_exec_item_to_tool_record(item)
+                        if rec:
+                            tool_records.append(rec)
+                        yield {
+                            "type": "tool_end",
+                            "tool_name": _codex_item_tool_name(type("Obj", (), item)(), item_type),
+                            "tool_id": item_id,
+                        }
+                        continue
+
+                if ptype == "turn.completed":
+                    usage_dict = _usage_to_dict(payload.get("usage", {}))
+                    usage_acc = TokenUsage(
+                        input_tokens=usage_dict.get("input_tokens", 0) or usage_dict.get("prompt_tokens", 0) or 0,
+                        output_tokens=usage_dict.get("output_tokens", 0) or usage_dict.get("completion_tokens", 0) or 0,
+                    )
+                    tracker.update(usage_dict, include_output_in_ratio=True)
+                    continue
+
+            returncode = await proc.wait()
+            await stderr_task
+            stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace").strip()
+            if returncode != 0:
+                raise RuntimeError(stderr_text or f"codex exec exited with code {returncode}")
+            if stderr_text:
+                logger.debug("Codex CLI exec stderr: %s", stderr_text[:500])
+        finally:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                await proc.wait()
+            stderr_task.cancel()
+            await asyncio.gather(stderr_task, return_exceptions=True)
+
+        full_text = "\n".join(response_parts)
+        if not full_text and tool_records:
+            full_text = _synthesise_fallback(tool_records)
+        replied_to = self._read_replied_to_file()
+        yield {
+            "type": "done",
+            "full_text": full_text,
+            "result_message": CodexResultMessage(
+                num_turns=1 if (full_text or tool_records) else 0,
+                session_id=thread_id,
+                usage=usage_dict,
+            ),
+            "replied_to_from_transcript": replied_to,
+            "tool_call_records": [asdict(r) for r in tool_records],
+            "usage": usage_acc.to_dict(),
+        }
+
+    async def _execute_via_cli_exec(
+        self,
+        prompt: str,
+        system_prompt: str,
+        tracker: ContextTracker | None = None,
+        trigger: str = "",
+    ) -> ExecutionResult:
+        """Blocking wrapper around the CLI exec fallback path."""
+        tracker = tracker or ContextTracker(model=self._model_config.model)
+        final_event: dict[str, Any] | None = None
+        async for ev in self._execute_streaming_via_cli_exec(system_prompt, prompt, tracker, trigger=trigger):
+            if ev.get("type") == "done":
+                final_event = ev
+        if final_event is None:
+            return ExecutionResult(text="[Codex CLI exec fallback returned no result]")
+        usage_raw = final_event.get("usage") or {}
+        usage_acc = None
+        if usage_raw:
+            usage_acc = TokenUsage(
+                input_tokens=usage_raw.get("input_tokens", 0) or usage_raw.get("prompt_tokens", 0) or 0,
+                output_tokens=usage_raw.get("output_tokens", 0) or usage_raw.get("completion_tokens", 0) or 0,
+            )
+        return ExecutionResult(
+            text=str(final_event.get("full_text", "")),
+            result_message=final_event.get("result_message"),
+            replied_to_from_transcript=final_event.get("replied_to_from_transcript", set()),
+            tool_call_records=[
+                ToolCallRecord(**record)
+                for record in (final_event.get("tool_call_records") or [])
+            ],
+            usage=usage_acc,
+        )
+
     def _start_or_resume_thread(
         self,
         codex: Any,
@@ -683,6 +1047,10 @@ class CodexSDKExecutor(BaseExecutor):
         if self._check_interrupted():
             return ExecutionResult(text="[Session interrupted by user]")
 
+        if _should_prefer_cli_exec(trigger):
+            logger.info("Using `codex exec` directly for trigger=%s", trigger)
+            return await self._execute_via_cli_exec(prompt, system_prompt, tracker, trigger=trigger)
+
         session_type = _resolve_session_type(trigger)
         thread_id = _load_thread_id(self._anima_dir, session_type)
 
@@ -718,11 +1086,17 @@ class CodexSDKExecutor(BaseExecutor):
                 try:
                     turn = await thread.run(prompt)
                 except Exception as retry_exc:
+                    if _should_cli_exec_fallback(retry_exc):
+                        logger.warning("Codex SDK execute failed; falling back to `codex exec`")
+                        return await self._execute_via_cli_exec(prompt, system_prompt, tracker, trigger=trigger)
                     logger.exception("Codex SDK execution error (fresh retry)")
                     return ExecutionResult(
                         text=f"[Codex SDK Error: {retry_exc}]",
                     )
             else:
+                if _should_cli_exec_fallback(e):
+                    logger.warning("Codex SDK execute failed; falling back to `codex exec`")
+                    return await self._execute_via_cli_exec(prompt, system_prompt, tracker, trigger=trigger)
                 logger.exception("Codex SDK execution error")
                 return ExecutionResult(text=f"[Codex SDK Error: {e}]")
 
@@ -796,6 +1170,12 @@ class CodexSDKExecutor(BaseExecutor):
             yield {"type": "done", "full_text": "[Session interrupted by user]", "result_message": None}
             return
 
+        if _should_prefer_cli_exec(trigger):
+            logger.info("Using `codex exec` streaming directly for trigger=%s", trigger)
+            async for ev in self._execute_streaming_via_cli_exec(system_prompt, prompt, tracker, trigger=trigger):
+                yield ev
+            return
+
         session_type = _resolve_session_type(trigger)
         thread_id = _load_thread_id(self._anima_dir, session_type)
 
@@ -822,6 +1202,8 @@ class CodexSDKExecutor(BaseExecutor):
             thread = self._start_or_resume_thread(codex, tid, session_type)
             active_thread = thread
             streamed = await thread.run_streamed(prompt)
+            event_iter = streamed.events.__aiter__()
+            idle_timeout = _event_idle_timeout_seconds(trigger)
 
             # Per-item text length tracker for delta computation.
             # item.started/updated carry the full text so far; we yield
@@ -830,7 +1212,21 @@ class CodexSDKExecutor(BaseExecutor):
             # Track which tool items have already emitted tool_start.
             _tool_started: set[str] = set()
 
-            async for event in streamed.events:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        event_iter.__anext__(),
+                        timeout=idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as e:
+                    raise StreamDisconnectedError(
+                        f"Codex SDK stream idle timeout after {idle_timeout:.0f}s",
+                        partial_text="\n".join(response_text_parts),
+                        immediate_retry=True,
+                    ) from e
+
                 if self._check_interrupted():
                     logger.info("Codex SDK streaming interrupted")
                     yield {"type": "text_delta", "text": "[Session interrupted by user]"}
@@ -1054,6 +1450,11 @@ class CodexSDKExecutor(BaseExecutor):
                 async for ev in _stream_turn(None):
                     yield ev
             except Exception as e:
+                if _should_cli_exec_fallback(e):
+                    logger.warning("Codex SDK streaming failed; falling back to `codex exec`")
+                    async for ev in self._execute_streaming_via_cli_exec(system_prompt, prompt, tracker, trigger=trigger):
+                        yield ev
+                    return
                 logger.exception("Codex SDK streaming error")
                 partial = "\n".join(response_text_parts)
                 is_buffer_overflow = _is_limit_overrun(e)

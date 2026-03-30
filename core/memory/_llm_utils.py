@@ -272,11 +272,15 @@ async def _try_agent_sdk(
     sdk_model = _strip_provider_prefix(model)
     env = _build_sdk_env()
 
+    from core.execution._sdk_options import _resolve_sdk_cli_path
+
+    _cli = _resolve_sdk_cli_path()
     options = ClaudeAgentOptions(
         model=sdk_model,
         system_prompt=system_prompt or "",
         allowed_tools=[],
         max_turns=1,
+        **({"cli_path": _cli} if _cli else {}),
     )
 
     chunks: list[str] = []

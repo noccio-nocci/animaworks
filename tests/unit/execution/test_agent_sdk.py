@@ -382,6 +382,79 @@ class TestAgentSDKExecutorStreaming:
                 f"include_partial_messages=True が渡されていない: {call_kwargs}"
             )
 
+    async def test_streaming_falls_back_to_completed_messages_when_stream_events_missing(
+        self, model_config, anima_dir,
+    ):
+        """StreamEvent が一度も来なくても completed AssistantMessage を採用する。"""
+        import sys
+        from contextlib import contextmanager
+        from unittest.mock import MagicMock
+
+        from tests.helpers.mocks import (
+            MockAssistantMessage,
+            MockClaudeSDKClient,
+            MockResultMessage,
+            MockTextBlock,
+        )
+
+        @contextmanager
+        def _patch_without_stream_events():
+            assistant_msg = MockAssistantMessage([MockTextBlock("reply from completed message")])
+            result_msg = MockResultMessage(usage={"input_tokens": 120, "output_tokens": 30})
+            messages = [assistant_msg, result_msg]
+
+            def _client_factory(**kwargs):
+                return MockClaudeSDKClient(messages=messages)
+
+            mock_module = MagicMock()
+            mock_module.ClaudeSDKClient = _client_factory
+            mock_module.AssistantMessage = MockAssistantMessage
+            mock_module.ResultMessage = MockResultMessage
+            mock_module.TextBlock = MockTextBlock
+            mock_module.ToolUseBlock = MagicMock
+            mock_module.ToolResultBlock = MagicMock
+            mock_module.UserMessage = MagicMock
+            mock_module.SystemMessage = MagicMock
+            mock_module.ClaudeAgentOptions = MagicMock
+            mock_module.HookMatcher = MagicMock
+
+            mock_types = MagicMock()
+            mock_types.StreamEvent = MagicMock
+            mock_module.types = mock_types
+
+            saved_modules = {}
+            for key in ["claude_agent_sdk", "claude_agent_sdk.types"]:
+                saved_modules[key] = sys.modules.get(key)
+                sys.modules[key] = mock_types if key == "claude_agent_sdk.types" else mock_module
+            try:
+                yield mock_module
+            finally:
+                for key, saved in saved_modules.items():
+                    if saved is None:
+                        sys.modules.pop(key, None)
+                    else:
+                        sys.modules[key] = saved
+
+        from core.prompt.context import ContextTracker
+
+        tracker = ContextTracker(model="claude-sonnet-4-6")
+
+        with _patch_without_stream_events():
+            from core.execution.agent_sdk import AgentSDKExecutor
+
+            executor = AgentSDKExecutor(model_config=model_config, anima_dir=anima_dir)
+            events = []
+            async for event in executor.execute_streaming(
+                system_prompt="sys",
+                prompt="test",
+                tracker=tracker,
+            ):
+                events.append(event)
+
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 1
+        assert done_events[0]["full_text"] == "reply from completed message"
+
 
 # ── Image input (multimodal) ──────────────────────────────────
 

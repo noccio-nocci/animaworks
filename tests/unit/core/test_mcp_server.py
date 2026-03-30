@@ -684,6 +684,41 @@ class TestExternalToolsInMcpTools:
         finally:
             mcp_mod._EXPOSED_NAMES = original_exposed
 
+    def test_permitted_external_slack_schema_is_exposed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Permitted direct Slack schemas are exposed via MCP."""
+        from core.mcp.server import _build_mcp_tools
+
+        anima_dir = tmp_path / "test-anima"
+        anima_dir.mkdir()
+        monkeypatch.setenv("ANIMAWORKS_ANIMA_DIR", str(anima_dir))
+
+        slack_schema = {
+            "name": "slack_channel_post",
+            "description": "Post to Slack directly",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "required": ["channel_id", "text"],
+            },
+        }
+
+        with (
+            patch("core.mcp.server._load_permitted_categories", return_value={"slack"}),
+            patch("core.tooling.schemas.load_external_schemas_by_category", return_value=[slack_schema]),
+        ):
+            tools, exposed = _build_mcp_tools()
+
+        tool_names = {t.name for t in tools}
+        assert "slack_channel_post" in tool_names
+        assert "slack_channel_post" in exposed
+
 
 # ── TestCallToolTrustWrapping ────────────────────────────────────────
 
@@ -711,6 +746,29 @@ class TestCallToolTrustWrapping:
             assert "</tool_result>" in result[0].text
         finally:
             mcp_mod._EXPOSED_NAMES = original_exposed
+
+
+class TestQuietHandlerCall:
+    """Tests for stdout suppression during MCP tool execution."""
+
+    def test_call_handler_quietly_suppresses_stdout(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Third-party stdout is swallowed so it cannot corrupt MCP JSON-RPC."""
+        from core.mcp.server import _call_handler_quietly
+
+        class _Handler:
+            @staticmethod
+            def handle(name: str, arguments: dict[str, str]) -> str:
+                print(f"noise from {name}")
+                return f"ok:{arguments['query']}"
+
+        result = _call_handler_quietly(_Handler(), "search_memory", {"query": "test"})
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert result == "ok:test"
 
     async def test_trusted_tool_gets_trusted_tag(self) -> None:
         """search_memory results are wrapped with trust='trusted'."""

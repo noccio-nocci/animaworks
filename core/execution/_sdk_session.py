@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import shutil
+import sys
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,13 +36,19 @@ logger = logging.getLogger("animaworks.execution.agent_sdk")
 # comfortable headroom while still catching genuinely broken messages.
 _SDK_MAX_BUFFER_SIZE = 4 * 1024 * 1024  # 4 MB
 
-# Linux MAX_ARG_STRLEN is 128 KiB (131072 bytes) per argument — a kernel
-# compile-time constant that cannot be changed at runtime.  When the
-# system prompt exceeds this limit, `execve` fails with E2BIG ([Errno 7]).
-# We use a conservative threshold (100 KB) to leave headroom for encoding
-# overhead and other arguments.  When exceeded, the prompt is written to a
-# temp file and passed via the CLI's undocumented --system-prompt-file flag.
-_PROMPT_FILE_THRESHOLD = 100_000  # 100 KB
+# When the system prompt is too large for a CLI argument, it is written to a
+# temp file and passed via the CLI's --system-prompt-file flag.
+#
+# Platform limits:
+#   - Linux: MAX_ARG_STRLEN = 128 KiB per argument (kernel compile-time constant).
+#     Exceeding it causes `execve` to fail with E2BIG ([Errno 7]).
+#   - Windows: Always use a file.  The system prompt contains Japanese (and
+#     other non-ASCII) characters that get corrupted when passed through
+#     cmd.exe → Node.js argument parsing.  The original 28 KB threshold
+#     was based on the CreateProcess() 32,767-character limit, but the
+#     encoding corruption issue makes inline prompts unreliable at *any*
+#     size on Windows.
+_PROMPT_FILE_THRESHOLD = 0 if sys.platform == "win32" else 100_000
 
 # SDK Issue #387: invalid session ID causes SDK to hang for ~60s before
 # raising an error.  We wrap the first-event receive in asyncio.wait_for
@@ -289,10 +296,14 @@ async def compact_sdk_session(
     try:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+        from core.execution._sdk_options import _resolve_sdk_cli_path
+
+        _cli = _resolve_sdk_cli_path()
         options = ClaudeAgentOptions(
             system_prompt=f"{anima_dir.name} session compaction",
             max_turns=1,
             resume=session_id,
+            **({"cli_path": _cli} if _cli else {}),
         )
 
         found_session_id = False

@@ -452,11 +452,19 @@ def _build_group4(
     if not is_heartbeat and (tool_registry or personal_tools):
         cats = sorted(set((tool_registry or []) + list((personal_tools or {}).keys())))
         if cats:
-            et = (
-                f"## External Tools\nAvailable categories: {', '.join(cats)}\n"
-                f"Use the `skill` tool to look up CLI usage, "
-                f"then execute via Bash: `animaworks-tool <tool> <subcommand>`."
-            )
+            if _is_mcp_mode(execution_mode):
+                et = (
+                    f"## External Tools\nAvailable categories: {', '.join(cats)}\n"
+                    "When a dedicated external tool is visible in your tool list, call it directly by tool name.\n"
+                    "Prefer direct tools such as `slack_channel_post` over Bash/CLI.\n"
+                    "Use `animaworks-tool <tool> <subcommand>` via Bash only when no equivalent dedicated tool is available."
+                )
+            else:
+                et = (
+                    f"## External Tools\nAvailable categories: {', '.join(cats)}\n"
+                    f"Use the `skill` tool to look up CLI usage, "
+                    f"then execute via Bash: `animaworks-tool <tool> <subcommand>`."
+                )
             if "machine" in cats:
                 et += t("builder.machine_hint")
             _add(et, "external_tools", 2)

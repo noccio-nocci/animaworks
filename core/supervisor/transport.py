@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _TCP_LOOPBACK_HOST = "127.0.0.1"
 _TCP_METADATA_VERSION = 1
 _ALLOWED_LOOPBACK = frozenset({ipaddress.ip_address("127.0.0.1"), ipaddress.ip_address("::1")})
+_tcp_missing_warned: set[str] = set()  # suppress repeated warnings per socket path
 
 
 @dataclass(frozen=True)
@@ -67,10 +68,25 @@ def cleanup_ipc_endpoint(socket_path: Path) -> None:
 
 def _read_tcp_metadata(socket_path: Path) -> IPCTransportEndpoint | None:
     if not socket_path.is_file():
+        if os.name == "nt":
+            logger.debug(
+                "TCP metadata file not found: %s (exists=%s, is_dir=%s)",
+                socket_path,
+                socket_path.exists(),
+                socket_path.is_dir() if socket_path.exists() else False,
+            )
         return None
     try:
-        data = json.loads(socket_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
+        raw = socket_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        if os.name == "nt":
+            logger.debug(
+                "TCP metadata parse failed: %s (%s: %s)",
+                socket_path,
+                type(exc).__name__,
+                exc,
+            )
         return None
 
     if data.get("transport") != "tcp":
@@ -165,6 +181,22 @@ async def open_ipc_connection(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     """Open a client connection to the current IPC endpoint."""
     endpoint = resolve_client_endpoint(socket_path)
+
+    # On Windows, TCP transport is expected.  If metadata read failed,
+    # retry once after a brief pause (filesystem flush delay).
+    if endpoint.transport != "tcp" and os.name == "nt":
+        await asyncio.sleep(0.1)
+        endpoint = resolve_client_endpoint(socket_path)
+        if endpoint.transport != "tcp":
+            key = str(socket_path)
+            if key not in _tcp_missing_warned:
+                _tcp_missing_warned.add(key)
+                logger.warning(
+                    "TCP metadata missing on Windows for %s (file exists=%s)",
+                    socket_path,
+                    socket_path.exists(),
+                )
+
     if endpoint.transport == "tcp":
         if endpoint.port is None:
             raise ConnectionError(f"TCP IPC metadata missing port: {socket_path}")

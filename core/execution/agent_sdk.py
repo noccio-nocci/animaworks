@@ -281,14 +281,14 @@ class AgentSDKExecutor(SDKOptionsMixin, BaseExecutor):
             else None
         )
 
-        options, prompt_file = self._build_sdk_options(
+        options, _temp_files = self._build_sdk_options(
             system_prompt,
             _max_turns,
             _cw,
             session_stats,
             resume=session_id_to_resume,
         )
-        _prompt_files: list[Path] = [prompt_file] if prompt_file else []
+        _prompt_files: list[Path] = list(_temp_files)
         response_text: list[str] = []
         pending_records: dict[str, ToolCallRecord] = {}
         result_message = None
@@ -315,9 +315,8 @@ class AgentSDKExecutor(SDKOptionsMixin, BaseExecutor):
             if session_id_to_resume:
                 logger.warning("SDK session resume failed (session_id=%s): %s", session_id_to_resume, e)
                 _sdk_session._clear_session_id(self._anima_dir, session_type, thread_id=thread_id)
-                options, pf = self._build_sdk_options(system_prompt, _max_turns, _cw, session_stats, resume=None)
-                if pf:
-                    _prompt_files.append(pf)
+                options, tfs = self._build_sdk_options(system_prompt, _max_turns, _cw, session_stats, resume=None)
+                _prompt_files.extend(tfs)
                 try:
                     async with ClaudeSDKClient(options=options) as client:
                         logger.info("ClaudeSDKClient connected (fresh session retry)")
@@ -381,7 +380,7 @@ class AgentSDKExecutor(SDKOptionsMixin, BaseExecutor):
             else None
         )
 
-        options, prompt_file = self._build_sdk_options(
+        options, _temp_files = self._build_sdk_options(
             system_prompt,
             _max_turns,
             _cw,
@@ -389,7 +388,7 @@ class AgentSDKExecutor(SDKOptionsMixin, BaseExecutor):
             resume=session_id_to_resume,
             include_partial_messages=True,
         )
-        _prompt_files: list[Path] = [prompt_file] if prompt_file else []
+        _prompt_files: list[Path] = list(_temp_files)
         state = StreamingState(usage_acc=TokenUsage())
         ctx = StreamingContext(
             prompt=prompt,
@@ -405,7 +404,7 @@ class AgentSDKExecutor(SDKOptionsMixin, BaseExecutor):
         )
 
         async def _fresh_session() -> AsyncGenerator[dict[str, Any], None]:
-            fresh_opts, pf = self._build_sdk_options(
+            fresh_opts, tfs = self._build_sdk_options(
                 system_prompt,
                 _max_turns,
                 _cw,
@@ -413,8 +412,7 @@ class AgentSDKExecutor(SDKOptionsMixin, BaseExecutor):
                 resume=None,
                 include_partial_messages=True,
             )
-            if pf:
-                _prompt_files.append(pf)
+            _prompt_files.extend(tfs)
             try:
                 async with ClaudeSDKClient(options=fresh_opts) as fc:
                     logger.info("ClaudeSDKClient connected (fresh session retry)")
