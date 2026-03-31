@@ -269,6 +269,9 @@ class CommsToolsMixin:
                 self._anima_name,
             )
 
+        # Sync board post to mapped Slack channel (fire-and-forget)
+        self._fire_board_slack_sync(channel, text)
+
         return f"Posted to #{channel}"
 
     def _fanout_board_mentions(self, channel: str, text: str) -> None:
@@ -334,6 +337,31 @@ class CommsToolsMixin:
                     target,
                     exc_info=True,
                 )
+
+    def _fire_board_slack_sync(self, channel: str, text: str) -> None:
+        """Fire-and-forget: sync a board post to the mapped Slack channel."""
+        try:
+            import asyncio
+
+            from core.outbound_auto import BoardSlackSync
+
+            sync = BoardSlackSync()
+            coro = sync.sync_board_post(
+                board_name=channel,
+                text=text,
+                from_person=self._anima_name,
+                source="anima",
+            )
+
+            # Schedule in running event loop if available, else ignore
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(coro)
+            except RuntimeError:
+                # No running loop (sync context) — skip
+                logger.debug("No event loop for board→Slack sync of #%s", channel)
+        except Exception:
+            logger.debug("Board→Slack sync failed for #%s", channel, exc_info=True)
 
     def _handle_read_channel(self, args: dict[str, Any]) -> str:
         if not self._messenger:

@@ -266,11 +266,14 @@ class BoardSlackSync:
         from core.tools._slack_markdown import md_to_slack_mrkdwn
 
         slack_text = md_to_slack_mrkdwn(text)[:_MAX_SLACK_TEXT]
+        icon_url = _resolve_avatar_url(from_person)
         payload: dict[str, Any] = {
             "channel": channel_id,
             "text": slack_text,
             "username": from_person,
         }
+        if icon_url:
+            payload["icon_url"] = icon_url
 
         try:
             async with httpx.AsyncClient(timeout=_SLACK_TIMEOUT) as client:

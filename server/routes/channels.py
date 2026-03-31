@@ -247,6 +247,20 @@ def create_channels_router() -> APIRouter:
         }
         await emit(request, "board.post", event_data)
 
+        # Sync to mapped Slack channel
+        try:
+            from core.outbound_auto import BoardSlackSync
+
+            sync = BoardSlackSync()
+            await sync.sync_board_post(
+                board_name=name,
+                text=body.text,
+                from_person=body.from_name,
+                source="human",
+            )
+        except Exception:
+            logger.debug("Board→Slack sync failed for #%s", name, exc_info=True)
+
         logger.info("Human posted to #%s: %s", name, body.text[:80])
         return {"status": "ok", "channel": name}
 
