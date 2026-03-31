@@ -10,6 +10,7 @@ Fetches subscription rate-limit data from each provider and exposes it
 via ``GET /api/usage``.  Results are cached for 60 seconds.
 """
 
+import base64
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -467,20 +469,145 @@ def _fetch_claude_usage(skip_cache: bool = False) -> dict[str, Any]:
 # ── OpenAI (ChatGPT subscription via Codex auth) ─────────────────────────────
 
 _CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+_OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 
 
-def _read_codex_credentials() -> tuple[str | None, str | None]:
-    """Return (access_token, account_id) from Codex auth file."""
+def _decode_jwt_payload(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    parts = token.split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload.encode("utf-8")).decode("utf-8")
+        data = json.loads(decoded)
+    except Exception:
+        logger.debug("Failed to decode JWT payload", exc_info=True)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _read_codex_auth_data() -> tuple[Path | None, dict[str, Any] | None]:
     path = _find_credential_file(_CODEX_CRED_PATHS)
     if not path:
         return None, None
     try:
         data = json.loads(path.read_text("utf-8"))
-        tokens = data.get("tokens", {})
-        return tokens.get("access_token"), tokens.get("account_id")
     except Exception:
         logger.debug("Failed to read Codex credentials from %s", path, exc_info=True)
+        return path, None
+    return path, data if isinstance(data, dict) else None
+
+
+def _extract_codex_client_id(auth_data: dict[str, Any]) -> str | None:
+    tokens = auth_data.get("tokens", {}) if isinstance(auth_data, dict) else {}
+    for token_name in ("access_token", "id_token"):
+        payload = _decode_jwt_payload(tokens.get(token_name))
+        if not payload:
+            continue
+        client_id = payload.get("client_id")
+        if isinstance(client_id, str) and client_id:
+            return client_id
+        aud = payload.get("aud")
+        if isinstance(aud, list) and aud and isinstance(aud[0], str):
+            return aud[0]
+        if isinstance(aud, str) and aud:
+            return aud
+    return None
+
+
+def _extract_codex_account_id(tokens: dict[str, Any]) -> str | None:
+    for token_name in ("access_token", "id_token"):
+        payload = _decode_jwt_payload(tokens.get(token_name))
+        if not payload:
+            continue
+        auth_claim = payload.get("https://api.openai.com/auth")
+        if not isinstance(auth_claim, dict):
+            continue
+        account_id = auth_claim.get("chatgpt_account_id")
+        if isinstance(account_id, str) and account_id:
+            return account_id
+    account_id = tokens.get("account_id")
+    if isinstance(account_id, str) and account_id:
+        return account_id
+    return None
+
+
+def _persist_codex_auth_data(path: Path, auth_data: dict[str, Any]) -> None:
+    path.write_text(
+        json.dumps(auth_data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _refresh_codex_token(auth_path: Path, auth_data: dict[str, Any]) -> tuple[str | None, str | None]:
+    tokens = auth_data.get("tokens", {}) if isinstance(auth_data, dict) else {}
+    refresh_token = tokens.get("refresh_token")
+    client_id = _extract_codex_client_id(auth_data)
+    if not isinstance(refresh_token, str) or not refresh_token or not client_id:
         return None, None
+
+    body = json.dumps(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        _OPENAI_OAUTH_TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        logger.warning("Failed to refresh Codex token", exc_info=True)
+        return None, None
+
+    access_token = raw.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        return None, None
+
+    if not isinstance(tokens, dict):
+        tokens = {}
+        auth_data["tokens"] = tokens
+    tokens["access_token"] = access_token
+    if isinstance(raw.get("id_token"), str) and raw["id_token"]:
+        tokens["id_token"] = raw["id_token"]
+    if isinstance(raw.get("refresh_token"), str) and raw["refresh_token"]:
+        tokens["refresh_token"] = raw["refresh_token"]
+    account_id = _extract_codex_account_id(tokens)
+    if account_id:
+        tokens["account_id"] = account_id
+    auth_data["last_refresh"] = (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+
+    try:
+        _persist_codex_auth_data(auth_path, auth_data)
+    except Exception:
+        logger.warning("Failed to persist refreshed Codex auth to %s", auth_path, exc_info=True)
+
+    return access_token, account_id
+
+
+def _read_codex_credentials() -> tuple[str | None, str | None]:
+    """Return (access_token, account_id) from Codex auth file."""
+    _path, data = _read_codex_auth_data()
+    if not data:
+        return None, None
+    tokens = data.get("tokens", {})
+    if not isinstance(tokens, dict):
+        return None, None
+    return tokens.get("access_token"), _extract_codex_account_id(tokens)
 
 
 def _window_label(seconds: int) -> str:
@@ -494,7 +621,7 @@ def _window_label(seconds: int) -> str:
     return f"{days:.0f}d"
 
 
-def _fetch_openai_usage(skip_cache: bool = False) -> dict[str, Any]:
+def _fetch_openai_usage(skip_cache: bool = False, allow_refresh: bool = True) -> dict[str, Any]:
     if not skip_cache:
         cached = _cached("openai")
         if cached is not None:
@@ -542,6 +669,13 @@ def _fetch_openai_usage(skip_cache: bool = False) -> dict[str, Any]:
 
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
+            if allow_refresh:
+                auth_path, auth_data = _read_codex_auth_data()
+                if auth_path and auth_data:
+                    refreshed_token, _account_id = _refresh_codex_token(auth_path, auth_data)
+                    if refreshed_token:
+                        logger.info("Codex token refreshed after %s, retrying usage fetch", e.code)
+                        return _fetch_openai_usage(skip_cache=True, allow_refresh=False)
             result = {"error": "unauthorized", "message": "Codex token expired — re-login to Codex"}
         elif e.code == 429:
             return {"error": "rate_limited", "message": "Rate limited — retry shortly"}
