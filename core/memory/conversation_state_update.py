@@ -53,9 +53,7 @@ def _update_state_from_summary(
     for item in parsed.resolved_items:
         for task in active_tasks.values():
             shorter = min(len(item), len(task.summary))
-            if shorter >= _MIN_FUZZY_MATCH_LEN and (
-                item in task.summary or task.summary in item
-            ):
+            if shorter >= _MIN_FUZZY_MATCH_LEN and (item in task.summary or task.summary in item):
                 tqm.update_status(task.task_id, "done", summary=item)
                 logger.info("Task marked done from session summary: %s", task.task_id)
                 break

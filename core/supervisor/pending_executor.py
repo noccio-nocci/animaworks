@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 class TaskExecError(RuntimeError):
     """Raised when a TaskExec LLM session encounters a non-recoverable error."""
 
+
 _PENDING_WATCHER_POLL_INTERVAL = 3.0
 _LLM_TASK_TTL_HOURS = 24
 _PENDING_TASK_SUBPROCESS_TIMEOUT = 1800
@@ -766,9 +767,7 @@ class PendingTaskExecutor:
             self._anima.agent.set_task_cwd(None)
 
         if had_error:
-            raise TaskExecError(
-                f"Task {task_id} encountered streaming error: {error_message}"
-            )
+            raise TaskExecError(f"Task {task_id} encountered streaming error: {error_message}")
 
         if not result_summary:
             result_summary = accumulated_text[:500] or t("pending_executor.task_completed")
