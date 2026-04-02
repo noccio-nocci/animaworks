@@ -132,5 +132,75 @@ When to scale up:
 | Finance full team | `team-design/finance/team.md` | Four roles: Finance Director + Financial Auditor + Data Analyst + Market Data Collector |
 | Trading full team | `team-design/trading/team.md` | Four roles: Strategy Director + Market Analyst + Trading Engineer + Risk Auditor |
 | Sales & Marketing full team | `team-design/sales-marketing/team.md` | Four roles: Director + Marketing Creator + SDR + Market Researcher |
+| Secretary (human-supervised) | `team-design/secretary/team.md` | One role: Secretary (team-of-one). Information triage, proxy sending, document creation (machine) |
+| COO (human-supervised) | `team-design/coo/team.md` | One role: COO (team-of-one). Delegation decisions, department monitoring, KPI aggregation, executive reporting (machine) |
+| CS (Customer Success) full team | `team-design/customer-success/team.md` | Two roles: CS Lead + Support. Onboarding, health analysis, retention, VoC aggregation (4-phase machine usage) |
+| Corporate Planning full team | `team-design/corporate-planning/team.md` | Three roles: Corporate Strategist + Business Analyst + Strategy Coordinator. Strategy formulation, business analysis (machine), independent verification (meta-verification), Strategic Initiative Tracker |
+| Infrastructure/SRE monitoring team | `team-design/infrastructure/team.md` | Two roles: Infra Director + Monitor. Monitoring team pattern (no machine), 3 report templates, 3-level escalation |
+| Organization chart template | `team-design/org-chart-template.md` | Recommended org hierarchy, department placement, handoff map, phased adoption guide |
 
 > To add a template, use the same layout (`team.md` + per-role directories) under `team-design/{team_name}/`.
+
+---
+
+## Monitoring Team Pattern
+
+A design pattern for teams that **do not use machine (external agents)**.
+Assumes operation with local models or lightweight models (`ops` role).
+
+### Differences from Full Team Pattern
+
+| Aspect | Full team pattern | Monitoring team pattern |
+|--------|------------------|----------------------|
+| Quality assurance | Verification of machine output | Checklists + report templates |
+| Handoffs | Document status (reviewed → approved) | Report templates (regular, anomaly, consolidated) |
+| Parallelism | Role independence (e.g. Reviewer and Tester) | Monitor independence (by monitoring target) |
+| Tracker | Domain-specific Tracker (silent drop prevention) | "Previously Unresolved Items" section in report templates |
+| cron/heartbeat | Supplementary (periodic reviews, etc.) | **Primary battlefield** (periodic monitoring checks are core business) |
+| Model requirements | Reasoning capability needed (verification, judgment) | Rule-based assessment is primary (lightweight models sufficient) |
+
+### Design Principles
+
+1. **cron/heartbeat is the primary battlefield**: Periodic execution of monitoring items is the team's main business. The quality of cron configuration determines team quality
+2. **Quality assurance through report templates**: Instead of verifying machine output, quality is structurally ensured through standardized report formats
+3. **Parameterization for multiple instances**: Monitor templates are parameterized with `{monitoring target}`, `{monitoring items table}`, `{escalation thresholds}` to create multiple Monitors from the same template
+4. **3-level escalation**: INFO / WARNING / CRITICAL structure response levels
+5. **Silent drop prevention through reports**: Instead of an independent Tracker, carry forward unresolved items in the "Previously Unresolved Items" section of report templates
+
+### When to Apply
+
+- Infrastructure/SRE monitoring teams
+- Teams whose primary work is periodic checks and reporting
+- Teams where lightweight model operation is preferred
+
+---
+
+## Team-of-one Pattern: Human-Supervised Variant
+
+The secretary and COO templates are special variants of the team-of-one pattern where **the supervisor is a human**, fundamentally different from all other templates.
+
+### Differences from Standard Team Templates
+
+| Aspect | Standard templates | Team-of-one (human-supervised) |
+|--------|-------------------|-------------------------------|
+| Supervisor | Anima (supervisor field) | Human (`supervisor: null`) |
+| Reporting upward | `send_message` (intent: report) | `call_human` |
+| Approval flow | delegate_task + document status | Present via chat → human approves |
+| Communication | Structured (intent required, one-round rule) | Structured + casual conversation |
+
+### Team-of-one Variant Comparison
+
+| Aspect | Secretary | COO |
+|--------|-----------|-----|
+| Primary duty | Information triage, proxy sending, document creation | Delegation decisions, department monitoring, executive reporting |
+| External | External channels (Gmail, Chatwork, etc.) | None in principle (via secretary) |
+| Internal | Information distribution (routing) | Command & control (delegation, audit) |
+| Machine | Document creation, PDF formatting | Org analysis, KPI aggregation, statistics |
+| Decision type | Triage (classification) | Executive judgment (delegate vs self-handle vs escalate) |
+
+### Design Considerations
+
+- **`call_human` as primary channel**: Reports and confirmation requests to the human use `call_human`
+- **Casual communication**: Responsibilities include everyday conversation with the human, not just transactional work
+- **Secretary-specific**: Pre-send approval (external channel sends require human approval), information triage (classify and distribute inbound external messages)
+- **COO-specific**: Routing rules (skip-level instructions prohibited), span of control management, top-level peer collaboration patterns (finance/legal consensus)

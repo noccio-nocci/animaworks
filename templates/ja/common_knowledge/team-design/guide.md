@@ -139,5 +139,75 @@ plan.md (status: approved) → delegate_task で Engineer に渡す
 | 財務フルチーム | `team-design/finance/team.md` | Director + Auditor + Analyst + Collector の4ロール構成 |
 | トレーディングフルチーム | `team-design/trading/team.md` | Director + Analyst + Engineer + Auditor の4ロール構成 |
 | 営業・マーケティングフルチーム | `team-design/sales-marketing/team.md` | Director + Creator + SDR + Researcher の4ロール構成 |
+| 秘書（人間直属） | `team-design/secretary/team.md` | Secretary の1ロール構成（team-of-one）。情報トリアージ・代行送信・書類作成（machine） |
+| COO（事業統括・人間直属） | `team-design/coo/team.md` | COO の1ロール構成（team-of-one）。委任判断・部門監視・KPI集計・経営報告（machine） |
+| CS（カスタマーサクセス）フルチーム | `team-design/customer-success/team.md` | CS Lead + Support の2ロール構成。オンボーディング・ヘルス分析・リテンション・VoC集約（4フェーズ machine 活用） |
+| 経営企画フルチーム | `team-design/corporate-planning/team.md` | Strategist + Analyst + Coordinator の3ロール構成。戦略立案・事業分析（machine）・独立検証（メタ検証）・Strategic Initiative Tracker |
+| インフラ/SRE 監視チーム | `team-design/infrastructure/team.md` | Infra Director + Monitor の2ロール構成。監視チームパターン（machine 不使用）・報告テンプレート3種・3段階エスカレーション |
+| 組織図テンプレート | `team-design/org-chart-template.md` | 推奨組織階層・部門配置・ハンドオフマップ・段階的導入ガイド |
 
 > 新しいチームテンプレートを追加する場合は、同じ構造（`team.md` + ロール別ディレクトリ）で `team-design/{チーム名}/` に配置する。
+
+---
+
+## 監視チームパターン
+
+machine（外部エージェント）を活用しないチーム向けの設計パターン。
+ローカルモデルや軽量モデル（`ops` ロール）での運用を前提とする。
+
+### フルチームパターンとの違い
+
+| 観点 | フルチームパターン | 監視チームパターン |
+|------|-----------------|-----------------|
+| 品質担保の主軸 | machine 出力の検証 | チェックリスト + 報告テンプレート |
+| ハンドオフ | ドキュメントステータス（reviewed → approved） | 報告テンプレート（定期・異常・集約） |
+| 並行実行 | ロール間の独立（例: Reviewer と Tester） | Monitor 間の独立（監視対象別） |
+| Tracker | ドメイン固有 Tracker（silent drop 防止） | 報告テンプレートの「前回未解決項目」で代替 |
+| cron/heartbeat | 補助的（定期レビュー等） | **主戦場**（定期監視チェックが業務の中核） |
+| モデル要件 | 推論力が必要（検証・判断） | ルールベース判定が主体（軽量モデルで十分） |
+
+### 設計原則
+
+1. **cron/heartbeat が主戦場**: 監視項目の定期実行がチームの主要業務。cron 設定の品質がチームの品質を決定する
+2. **報告テンプレートで品質担保**: machine 出力の検証ではなく、標準化された報告フォーマットで品質を構造的に担保する
+3. **パラメータ化で複数インスタンス対応**: Monitor テンプレートを `{監視対象}`, `{監視項目テーブル}`, `{エスカレーション閾値}` でパラメータ化し、同一テンプレートから複数の Monitor を作成する
+4. **3段階エスカレーション**: INFO / WARNING / CRITICAL の3段階で対応レベルを構造化する
+5. **silent drop 防止は報告で担保**: 独立した Tracker ではなく、報告テンプレートの「前回未解決項目」セクションで未解決項目を繰り越す
+
+### 適用場面
+
+- インフラ/SRE 監視チーム
+- 定期的なチェック・報告が主業務のチーム
+- 軽量モデルでの運用が望ましいチーム
+
+---
+
+## team-of-one パターン: 人間直属バリアント
+
+秘書テンプレートと COO テンプレートは team-of-one パターンの特殊なバリアントであり、**上位者が人間である**点が他の全テンプレートと根本的に異なる。
+
+### 通常のチームテンプレートとの違い
+
+| 観点 | 通常テンプレート | team-of-one（人間直属） |
+|------|----------------|----------------------|
+| 上位者 | Anima（supervisor フィールド） | 人間（`supervisor: null`） |
+| 上位への報告 | `send_message`（intent: report） | `call_human` |
+| 承認フロー | delegate_task + ドキュメントステータス | チャットで人間に提示 → 人間が承認 |
+| コミュニケーション | 構造化（intent 必須、1ラウンドルール） | 構造化 + カジュアル会話 |
+
+### team-of-one バリアント比較
+
+| 観点 | Secretary | COO |
+|------|-----------|-----|
+| 主務 | 情報トリアージ・代行送信・書類作成 | 委任判断・部門監視・経営報告 |
+| 対外 | 外部チャネル（Gmail, Chatwork等） | 原則なし（秘書経由） |
+| 対内 | 情報分配（ルーティング） | 指揮命令（委任・監査） |
+| machine | 書類作成・PDF化 | 組織分析・KPI集計・統計情報集約 |
+| 判断の性質 | トリアージ（分類） | 経営判断（委任 vs 自己実行 vs エスカレーション） |
+
+### 設計時の留意点
+
+- **`call_human` が主要通信手段**: 人間への報告・確認依頼は `call_human` を使う
+- **カジュアルコミュニケーション**: 事務処理だけでなく、人間との日常会話も責務に含める
+- **秘書固有**: 送信前承認（外部チャネルへの送信は原則として人間の承認が必要）、情報トリアージ（外部チャネルからの受信メッセージを分類・分配）
+- **COO固有**: ルーティングルール（飛び越え指示禁止）、スパンオブコントロール管理、トップレベル同僚との連携パターン（財務・法務との合意）
