@@ -29,3 +29,4 @@
 - 不明点がある場合でも、記載された情報の範囲で最善を尽くしてください
 - 作業ディレクトリが指定されている場合、そのディレクトリを作業の起点としてください。machineツールのworking_directoryにもそのパスを指定してください
 - 作業ディレクトリが「(指定なし)」の場合、descriptionやcontextから適切なパスを判断してください
+- ネイティブWindowsで shell / command 実行が必要な作業中に `shell_command` / command execution が `policy blocked` になった場合、または `codex exec exited with code 1` が繰り返し発生した場合は、同じローカル実行経路を再試行し続けないでください。`machine` を標準フォールバックとして使い、shell 必須作業では `engine=claude` を優先し、`working_directory` を必ず明示してください

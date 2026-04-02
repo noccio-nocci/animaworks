@@ -9,6 +9,19 @@ Machine runs in an isolated execution environment without access to AnimaWorks i
 It cannot use memory, messaging, or organization information — all necessary context must be
 included in the plan document.
 
+## Standard Fallback Rule (Applies to All Animas)
+
+This rule is **not specific to miyu or kanna**. It applies to every Anima.
+
+- When a task requires shell / command execution on native Windows, do **not** keep retrying the same local execution path if any of the following occurs
+- `shell_command` / command execution becomes `policy blocked`
+- `codex exec exited with code 1` recurs
+- shell-oriented tools are blocked / denied and cannot reach the required CLI, script, or source-of-truth file
+- Once this happens, switch to **machine as the standard execution path**
+- For shell-required work, choose `engine=claude` first and always set `working_directory`
+- The plan MUST include at least the **goal / target paths / completion criteria / prohibitions / source-of-truth file location**
+- Never invoke machine with an ambiguous `working_directory`; resolve the working directory first
+
 ## Meta-Pattern — Common to All Roles
 
 All phases and all roles MUST follow these 4 steps:
