@@ -9,6 +9,19 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 
 ---
 
+## ⭐ 먼저 읽기
+
+AnimaWorks를 처음 사용하거나 전체 그림을 정리하고 싶은 경우, 아래 1개 파일을 먼저 읽으세요.
+Heartbeat / Cron / machine / 팀 설계 / 메모리 / 비용 최적화의 핵심이 한 페이지에 정리되어 있습니다.
+
+| 파일 | 내용 |
+|------|------|
+| **`anatomy/essentials.md`** | **AnimaWorks 에센셜 가이드** — 실행 경로·Heartbeat vs Cron·machine 사용법·팀 설계·태스크 라우팅·기억 시스템·비용 최적화를 한 페이지로 파악 |
+
+읽은 후, 각 주제의 상세 내용은 아래 목차에서 찾으세요.
+
+---
+
 ## 막혔을 때 퀵 가이드
 
 ### 커뮤니케이션
@@ -53,6 +66,12 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 | 재무 팀(분석·감사·데이터·시장 데이터) 역할과 핸드오프를 알고 싶다 | `team-design/finance/team.md` |
 | 트레이딩 팀(전략·분석·엔지니어링·리스크) 역할과 핸드오프를 알고 싶다 | `team-design/trading/team.md` |
 | 영업·마케팅 팀(콘텐츠 제작·리드 개발·파이프라인 관리) 역할과 핸드오프를 알고 싶다 | `team-design/sales-marketing/team.md` |
+| 비서(정보 트리아지·대행 전송·문서 작성·일정 관리) 역할을 알고 싶다 | `team-design/secretary/team.md` |
+| COO(사업 총괄: 위임 판단·부문 감시·KPI 집계·경영 보고·부문 횡단 조율)를 알고 싶다 | `team-design/coo/team.md` |
+| CS(고객 성공) 팀(온보딩·헬스 분석·리텐션·VoC 집약) 역할을 알고 싶다 | `team-design/customer-success/team.md` |
+| 경영기획 팀(전략 수립·사업 분석·독립 검증·KPI 추적)을 알고 싶다 | `team-design/corporate-planning/team.md` |
+| 인프라/SRE 팀(정기 모니터링·이상 감지·에스컬레이션·집약 보고)을 알고 싶다 | `team-design/infrastructure/team.md` |
+| 권장 조직도·부문 배치·도입 순서를 알고 싶다 | `team-design/org-chart-template.md` |
 | 모델 선택이나 변경 방법을 모르겠다 | `reference/operations/model-guide.md` (→ reference) |
 | Mode S의 인증 방식을 변경하고 싶다 | `reference/operations/mode-s-auth-guide.md` (→ reference) |
 | 음성 채팅 설정이나 사용법을 모르겠다 | `reference/operations/voice-chat-guide.md` (→ reference) |
@@ -95,6 +114,7 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 
 | 파일 | 개요 |
 |------|------|
+| ⭐ `essentials.md` | **에센셜 가이드** — AnimaWorks 전체를 한 페이지로 파악 (실행 경로·Heartbeat vs Cron·machine·팀 설계·기억·비용 최적화) |
 | `what-is-anima.md` | Anima란 무엇인가 (개념, 설계 철학, 라이프사이클, 실행 경로) |
 | `anima-anatomy.md` | → `reference/anatomy/anima-anatomy.md`로 이동. 구성 파일 완전 가이드 |
 | `memory-system.md` | 기억 시스템 가이드 (기억의 종류, Priming, Consolidation, Forgetting, 도구 활용) |
@@ -154,6 +174,12 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 | `finance/team.md` | 재무 풀 팀 — 4역할(Finance Director·Financial Auditor·Data Analyst·Market Data Collector)·Variance Tracker·핸드오프 |
 | `trading/team.md` | 트레이딩 풀 팀 — 4역할(Strategy Director·Market Analyst·Trading Engineer·Risk Auditor)·Performance/Ops Tracker·핸드오프 |
 | `sales-marketing/team.md` | 영업·마케팅 풀 팀 — 4역할(Director·Marketing Creator·SDR·Market Researcher)·Campaign Pipeline Tracker·Deal Pipeline Tracker·2실행 모드·스케일링 |
+| `secretary/team.md` | 비서 팀(사람 직속) — 1역할(Secretary)·정보 트리아지·대행 전송·문서 작성(machine)·스케일링 |
+| `coo/team.md` | COO(사업 총괄) 팀(사람 직속) — 1역할(COO)·위임 판단·부문 감시·KPI 집계·경영 보고(machine)·스케일링 |
+| `customer-success/team.md` | CS(고객 성공) 풀 팀 — 2역할(CS Lead·Support)·Customer Health Score Tracker·VoC 리포트·4페이즈 machine 활용·스케일링 |
+| `corporate-planning/team.md` | 경영기획 풀 팀 — 3역할(Corporate Strategist·Business Analyst·Strategy Coordinator)·Strategic Initiative Tracker·독립 검증(메타 검증)·스케일링 |
+| `infrastructure/team.md` | 인프라/SRE 모니터링 팀 — 2역할(Infra Director·Monitor)·모니터링 팀 패턴(machine 미사용)·보고 템플릿 3종·3단계 에스컬레이션·스케일링 |
+| `org-chart-template.md` | 조직도 템플릿 — 권장 계층(스태프/라인 분리)·부문 간 핸드오프 맵·단계적 도입 가이드 |
 
 역할별 템플릿: `team-design/development/{pdm,engineer,reviewer,tester}/` — `injection.template.md`, `machine.md`, `checklist.md`
 
@@ -164,6 +190,16 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 역할별 템플릿: `team-design/trading/{director,analyst,engineer,auditor}/` — `injection.template.md`, `machine.md`, `checklist.md`
 
 역할별 템플릿: `team-design/sales-marketing/{director,creator,sdr,researcher}/` — `injection.template.md`, `machine.md`(researcher 제외), `checklist.md`
+
+역할별 템플릿: `team-design/secretary/secretary/` — `injection.template.md`, `machine.md`, `checklist.md`
+
+역할별 템플릿: `team-design/coo/coo/` — `injection.template.md`, `machine.md`, `checklist.md`
+
+역할별 템플릿: `team-design/customer-success/{cs-lead,support}/` — `injection.template.md`, `machine.md`(CS Lead만), `checklist.md`
+
+역할별 템플릿: `team-design/corporate-planning/{strategist,analyst,coordinator}/` — `injection.template.md`, `machine.md`, `checklist.md`
+
+역할별 템플릿: `team-design/infrastructure/{director,monitor}/` — `injection.template.md`, `checklist.md`(machine.md 없음)
 
 ### security/ — 보안
 
@@ -198,6 +234,7 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 
 | 키워드 | 참조 |
 |--------|------|
+| 기초, 입문, 전체 개요, 에센셜, 시작하기 | `anatomy/essentials.md` |
 | 메시지, send_message, 전송, 답장, 스레드, inbox | `communication/messaging-guide.md` |
 | Board, channel, post_channel, read_channel | `communication/board-guide.md` |
 | DM 이력, read_dm_history, 이전 대화 | `communication/board-guide.md` |
@@ -230,6 +267,12 @@ AnimaWorks의 모든 Anima가 공유하는 레퍼런스 문서 목차입니다.
 | 재무, 분석, Variance Tracker, Data Lineage, silent drop, Financial Auditor, Finance Director, Data Analyst, Market Data Collector | `team-design/finance/team.md` |
 | 트레이딩, 전략, 백테스트, bot, P&L, 드로다운, Performance Tracker, Ops Issue Tracker, Strategy Director, Market Analyst, Trading Engineer, Risk Auditor, carry-forward | `team-design/trading/team.md` |
 | 영업, 마케팅, 콘텐츠, 리드, 너처링, BANT, 파이프라인, campaign tracker, deal tracker, SDR, Brand Voice | `team-design/sales-marketing/team.md` |
+| 비서, secretary, 트리아지, 대행 전송, 문서 작성, 일정, 사람 직속, call_human, 정보 분배 | `team-design/secretary/team.md` |
+| COO, 사업 총괄, 위임 판단, 부문 감시, KPI, 경영 보고, 스팬 오브 컨트롤, 부문 횡단 조율, 조직 분석 | `team-design/coo/team.md` |
+| CS, 고객 성공, 온보딩, 헬스 스코어, 이탈, 리텐션, VoC, NPS, CSAT, cs-handoff, Health Tracker | `team-design/customer-success/team.md` |
+| 경영기획, 전략, OKR, KPI, 사업 분석, 이니셔티브, Strategic Initiative Tracker, SWOT, PEST, 독립 검증, 메타 검증 | `team-design/corporate-planning/team.md` |
+| 인프라, SRE, 모니터링, NOC, 이상 감지, 에스컬레이션, 집약 보고, Infra Director, Monitor, 보고 템플릿, cron, heartbeat | `team-design/infrastructure/team.md` |
+| 조직도, org-chart, 부문 배치, 도입 순서, 핸드오프 맵, 스태프, 라인, 단계적 도입 | `team-design/org-chart-template.md` |
 | 모델, models.json, credential, set-model, 컨텍스트 윈도우 | `reference/operations/model-guide.md` |
 | background_model, 백그라운드 모델, 비용 최적화 | `reference/operations/model-guide.md` |
 | Mode S, 인증, API 직접, Bedrock, Vertex AI, Max plan | `reference/operations/mode-s-auth-guide.md` |

@@ -9,6 +9,19 @@ then read it with `read_memory_file(path="common_knowledge/...")`.
 
 ---
 
+## ⭐ Start Here
+
+If you are new to AnimaWorks or want to organize the big picture, read this one file first.
+It covers the essentials of Heartbeat / Cron / machine / team design / memory / cost optimization in a single page.
+
+| File | Content |
+|------|---------|
+| **`anatomy/essentials.md`** | **AnimaWorks Essential Guide** — Overview of execution paths, Heartbeat vs Cron, machine usage, team design, task routing, memory system, and cost optimization in one page |
+
+After reading, use the index below to find details on each topic.
+
+---
+
 ## Quick Guide — When You Are Stuck
 
 ### Communication
@@ -55,6 +68,12 @@ then read it with `read_memory_file(path="common_knowledge/...")`.
 | Want to set up a finance team (analysis, audit, data extraction, market data) | `team-design/finance/team.md` |
 | Want to set up a trading team (strategy, market analysis, bot execution, risk audit) | `team-design/trading/team.md` |
 | Want to set up a sales & marketing team (content production, lead development, pipeline management) | `team-design/sales-marketing/team.md` |
+| Want to set up a secretary (information triage, proxy sending, document creation, scheduling) | `team-design/secretary/team.md` |
+| Want to set up a COO (delegation decisions, department monitoring, KPI aggregation, executive reporting) | `team-design/coo/team.md` |
+| Want to set up a CS (Customer Success) team (onboarding, health analysis, retention, VoC aggregation) | `team-design/customer-success/team.md` |
+| Want to set up a corporate planning team (strategy, business analysis, independent verification, KPI tracking) | `team-design/corporate-planning/team.md` |
+| Want to set up an infrastructure/SRE team (periodic monitoring, anomaly detection, escalation, consolidated reporting) | `team-design/infrastructure/team.md` |
+| Want to know recommended org chart, department placement, adoption order | `team-design/org-chart-template.md` |
 | Don't know how to choose or change models | `reference/operations/model-guide.md` (→ reference) |
 | Want to change Mode S authentication method | `reference/operations/mode-s-auth-guide.md` (→ reference) |
 | Don't know how to set up or use voice chat | `reference/operations/voice-chat-guide.md` (→ reference) |
@@ -97,6 +116,7 @@ then read it with `read_memory_file(path="common_knowledge/...")`.
 
 | File | Description |
 |------|-------------|
+| ⭐ `essentials.md` | **Essential Guide** — Overview of AnimaWorks in one page (execution paths, Heartbeat vs Cron, machine, team design, memory, cost optimization) |
 | `what-is-anima.md` | What is an Anima (concept, design philosophy, lifecycle, execution paths) |
 | `anima-anatomy.md` | → Moved to `reference/anatomy/anima-anatomy.md`. Complete file reference |
 | `memory-system.md` | Memory system guide (memory types, Priming, Consolidation, Forgetting, tool usage) |
@@ -158,6 +178,12 @@ then read it with `read_memory_file(path="common_knowledge/...")`.
 | `finance/team.md` | Finance full team — four roles (Finance Director, Financial Auditor, Data Analyst, Market Data Collector), handoff chain, Variance Tracker, scaling |
 | `trading/team.md` | Trading full team — four roles (Strategy Director, Market Analyst, Trading Engineer, Risk Auditor), handoff chain, Performance Tracker, Ops Issue Tracker, scaling |
 | `sales-marketing/team.md` | Sales & Marketing full team — four roles (Director, Marketing Creator, SDR, Market Researcher), Campaign Pipeline Tracker, Deal Pipeline Tracker, two execution modes, scaling |
+| `secretary/team.md` | Secretary team (human-supervised) — one role (Secretary), information triage, proxy sending, document creation (machine), scaling |
+| `coo/team.md` | COO team (human-supervised) — one role (COO), delegation decisions, department monitoring, KPI aggregation, executive reporting (machine), scaling |
+| `customer-success/team.md` | CS (Customer Success) full team — two roles (CS Lead, Support), Customer Health Score Tracker, VoC report, 4-phase machine usage, scaling |
+| `corporate-planning/team.md` | Corporate Planning full team — three roles (Corporate Strategist, Business Analyst, Strategy Coordinator), Strategic Initiative Tracker, independent verification (meta-verification), scaling |
+| `infrastructure/team.md` | Infrastructure/SRE monitoring team — two roles (Infra Director, Monitor), monitoring team pattern (no machine), 3 report templates, 3-level escalation, scaling |
+| `org-chart-template.md` | Organization chart template — recommended hierarchy (staff/line separation), cross-department handoff map, phased adoption guide |
 
 Per-role templates under `team-design/development/{pdm,engineer,reviewer,tester}/`: `injection.template.md`, `machine.md`, `checklist.md`.
 
@@ -168,6 +194,16 @@ Per-role templates under `team-design/finance/{director,auditor,analyst,collecto
 Per-role templates under `team-design/trading/{director,analyst,engineer,auditor}/`: `injection.template.md`, `machine.md`, `checklist.md`.
 
 Per-role templates under `team-design/sales-marketing/{director,creator,sdr,researcher}/`: `injection.template.md`, `machine.md` (except researcher), `checklist.md`.
+
+Per-role templates under `team-design/secretary/secretary/`: `injection.template.md`, `machine.md`, `checklist.md`.
+
+Per-role templates under `team-design/coo/coo/`: `injection.template.md`, `machine.md`, `checklist.md`.
+
+Per-role templates under `team-design/customer-success/{cs-lead,support}/`: `injection.template.md`, `machine.md` (CS Lead only), `checklist.md`.
+
+Per-role templates under `team-design/corporate-planning/{strategist,analyst,coordinator}/`: `injection.template.md`, `machine.md`, `checklist.md`.
+
+Per-role templates under `team-design/infrastructure/{director,monitor}/`: `injection.template.md`, `checklist.md` (no machine.md).
 
 ### security/ — Security
 
@@ -202,6 +238,7 @@ Per-role templates under `team-design/sales-marketing/{director,creator,sdr,rese
 
 | Keywords | Reference |
 |----------|-----------|
+| basics, intro, overview, essential, getting started | `anatomy/essentials.md` |
 | message, send_message, reply, thread, inbox | `communication/messaging-guide.md` |
 | Board, channel, post_channel, read_channel | `communication/board-guide.md` |
 | DM history, read_dm_history, past conversation | `communication/board-guide.md` |
@@ -237,6 +274,12 @@ Per-role templates under `team-design/sales-marketing/{director,creator,sdr,rese
 | finance, Variance Tracker, Data Lineage, silent drop, financial analysis, trial balance, consolidated analysis | `team-design/finance/team.md` |
 | trading, trading team, strategy-plan, backtest, Performance Tracker, Ops Issue Tracker, P&L verification, ops health, carry-forward, optimism bias | `team-design/trading/team.md` |
 | sales, marketing, content, lead, nurturing, BANT, pipeline, campaign tracker, deal tracker, SDR, Brand Voice | `team-design/sales-marketing/team.md` |
+| secretary, triage, proxy sending, document creation, schedule, human-supervised, call_human, information distribution | `team-design/secretary/team.md` |
+| COO, chief operating officer, delegation, department monitoring, KPI, executive reporting, span of control, cross-department coordination, org analysis | `team-design/coo/team.md` |
+| CS, customer success, onboarding, health score, churn, retention, VoC, NPS, CSAT, cs-handoff, Health Tracker | `team-design/customer-success/team.md` |
+| corporate planning, strategy, OKR, KPI, business analysis, initiative, Strategic Initiative Tracker, SWOT, PEST, independent verification, meta-verification | `team-design/corporate-planning/team.md` |
+| infrastructure, SRE, monitoring, NOC, anomaly detection, escalation, consolidated report, Infra Director, Monitor, report template, cron, heartbeat | `team-design/infrastructure/team.md` |
+| org chart, organization chart, department placement, adoption order, handoff map, staff, line, phased adoption | `team-design/org-chart-template.md` |
 | model, models.json, credential, set-model, context window | `reference/operations/model-guide.md` |
 | background_model, background model, cost optimization | `reference/operations/model-guide.md` |
 | Mode S, authentication, API direct, Bedrock, Vertex AI, Max plan | `reference/operations/mode-s-auth-guide.md` |
