@@ -201,6 +201,36 @@ def _ensure_board(shared_dir: Path, board_name: str, slack_channel_name: str) ->
     return True
 
 
+def _mark_board_slack_deleted(shared_dir: Path, board_name: str) -> None:
+    """Prevent a Board from being recreated in Slack after channel deletion."""
+    meta = load_channel_meta(shared_dir, board_name)
+    if meta is None:
+        meta = ChannelMeta(members=[])
+    if meta.slack_sync_disabled:
+        return
+    meta.slack_sync_disabled = True
+    meta.slack_deleted_at = datetime.now(UTC).isoformat()
+    save_channel_meta(shared_dir, board_name, meta)
+    logger.info(
+        "Marked board '%s' as Slack-deleted; reverse sync disabled",
+        board_name,
+    )
+
+
+def _clear_board_slack_deleted(shared_dir: Path, board_name: str) -> None:
+    """Re-enable Slack sync when a matching Slack channel becomes visible again."""
+    meta = load_channel_meta(shared_dir, board_name)
+    if meta is None or not meta.slack_sync_disabled:
+        return
+    meta.slack_sync_disabled = False
+    meta.slack_deleted_at = ""
+    save_channel_meta(shared_dir, board_name, meta)
+    logger.info(
+        "Cleared Slack-deleted tombstone for board '%s'",
+        board_name,
+    )
+
+
 def _list_local_boards(shared_dir: Path) -> list[str]:
     """Return names of all AnimaWorks boards (from .jsonl files)."""
     channels_dir = shared_dir / "channels"
@@ -244,6 +274,8 @@ class SlackChannelSync:
         default_anima = cfg.external_messaging.slack.default_anima or "sakura"
 
         shared_dir = get_shared_dir()
+        previous_mapping = dict(self.board_mapping)
+        self.board_mapping = {}
         new_boards = 0
         new_slack_channels = 0
 
@@ -304,16 +336,35 @@ class SlackChannelSync:
                 new_boards += 1
 
             self.board_mapping[ch_id] = board_name
+            _clear_board_slack_deleted(shared_dir, board_name)
             if is_private:
                 private_channel_names.append(ch_name)
             else:
                 channel_ids_to_join.append((ch_id, ch_name))
+
+        current_channel_ids = set(self.board_mapping)
+        for previous_channel_id, board_name in previous_mapping.items():
+            if previous_channel_id in current_channel_ids:
+                continue
+            if board_name in slack_channel_names:
+                continue
+            board_file = shared_dir / "channels" / f"{board_name}.jsonl"
+            if board_file.exists():
+                _mark_board_slack_deleted(shared_dir, board_name)
 
         # ── Phase 2: Reverse sync (AnimaWorks boards -> Slack channels) ──
         local_boards = _list_local_boards(shared_dir)
         for board_name in local_boards:
             if board_name in slack_channel_names:
                 continue  # Already exists in Slack
+
+            meta = load_channel_meta(shared_dir, board_name)
+            if meta is not None and meta.slack_sync_disabled:
+                logger.info(
+                    "Skipping reverse sync for board '%s' (Slack-deleted tombstone)",
+                    board_name,
+                )
+                continue
 
             slack_name = _sanitize_channel_name(board_name)
             if not slack_name:
