@@ -697,8 +697,11 @@ class LocalDiffusersClient:
 
         if face_reference_image is not None:
             # IP-Adapter face reference → text2img + adapter.
-            # IP-Adapter stays loaded across retries to avoid repeated
-            # load/unload cycles that degrade UNet weights.
+            # Retire then reload IP-Adapter on each call to ensure a clean
+            # attention-processor state.  The original concern about load/unload
+            # cycles "degrading UNet weights" was caused by encoder_hid_dim_type
+            # not being restored — that is now fixed in _retire_ip_adapter.
+            self._retire_ip_adapter(text2img_key)
             pipe = self._load_text2img_pipeline()
             self._ensure_ip_adapter(pipe, text2img_key)
 
@@ -715,9 +718,8 @@ class LocalDiffusersClient:
 
                 result = pipe(**common_kwargs, width=width, height=height)
 
-                # Keep IP-Adapter loaded — no unload here.  Invalidate
-                # img2img cache so bustup/expressions get a fresh pipeline
-                # (via _retire_ip_adapter in _load_img2img_pipeline).
+                # Invalidate img2img cache so bustup/expressions get a fresh
+                # pipeline (via _retire_ip_adapter in _load_img2img_pipeline).
                 img2img_key = ("img2img", self._img2img_source, self._device, self._dtype_name)
                 _PIPELINE_CACHE.pop(img2img_key, None)
             else:
