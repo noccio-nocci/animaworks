@@ -105,10 +105,14 @@ def _scrfd_detect_largest(image_rgb: Any) -> tuple[int, int, int, int] | None:
         for idx, stride in enumerate(strides):
             scores = outputs[idx * 3]
             bboxes = outputs[idx * 3 + 1]
+            # Normalise to (1, N, 4) regardless of ONNX output shape variation
+            if bboxes.ndim == 2:
+                bboxes = bboxes.reshape(1, -1, 4)
             feat_w = target // stride
 
-            for i in range(scores.shape[1]):
-                if scores[0, i, 0] < threshold:
+            for i in range(scores.shape[1] if scores.ndim >= 2 else scores.shape[0]):
+                score_val = float(scores[0, i] if scores.ndim == 2 else scores[0, i, 0])
+                if score_val < threshold:
                     continue
                 anchor_y = (i // feat_w) * stride
                 anchor_x = (i % feat_w) * stride
