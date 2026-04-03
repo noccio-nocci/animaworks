@@ -51,6 +51,7 @@ DEFAULT_MODEL_MODE_PATTERNS: dict[str, str] = {
     "xai/*": "A",
     "cohere/*": "A",
     "zai/*": "A",
+    "nanogpt/*": "A",
     "minimax/*": "A",
     "moonshot/*": "A",
     "deepseek/deepseek-chat": "A",

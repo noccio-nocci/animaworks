@@ -135,6 +135,24 @@ def _serialize_anthropic_auth() -> dict[str, object]:
     }
 
 
+def _list_nanogpt_models(base_url: str, api_key: str) -> list[str]:
+    """Fetch available model IDs from a nanoGPT-compatible /models endpoint."""
+    response = httpx.get(
+        f"{base_url}/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=httpx.Timeout(10.0, connect=5.0),
+    )
+    response.raise_for_status()
+    data = response.json()
+    return sorted(
+        {
+            str(item.get("id", "")).strip()
+            for item in data.get("data", [])
+            if item.get("id")
+        }
+    )
+
+
 def _list_ollama_models(base_url: str) -> list[str]:
     response = httpx.get(
         f"{base_url}/api/tags",
@@ -326,6 +344,19 @@ def create_config_router() -> APIRouter:
                 if m not in seen:
                     models.append({"id": m, "label": m, "credential": "codex"})
                     seen.add(m)
+
+        # nanoGPT models (dynamic fetch)
+        nanogpt_cred = config.credentials.get("nanogpt")
+        if nanogpt_cred and nanogpt_cred.api_key:
+            try:
+                ngpt_base = nanogpt_cred.base_url or "https://nano-gpt.com/api/subscription/v1"
+                for m in _list_nanogpt_models(ngpt_base, nanogpt_cred.api_key):
+                    mid = f"nanogpt/{m}"
+                    if mid not in seen:
+                        models.append({"id": mid, "label": f"nanoGPT: {m}", "credential": "nanogpt"})
+                        seen.add(mid)
+            except Exception:
+                pass
 
         # Local Ollama models
         try:

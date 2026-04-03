@@ -35,6 +35,8 @@
   "bedrock/qwen.*":          { "mode": "A", "context_window": 131072 },
   "bedrock/*":               { "mode": "A", "context_window": 200000 },
 
+  "nanogpt/*":                 { "mode": "A", "context_window": 128000 },
+
   "ollama/qwen3:14b":        { "mode": "A", "context_window": 40960 },
   "ollama/qwen3:30b":        { "mode": "A", "context_window": 40960 },
   "ollama/qwen3:32b":        { "mode": "A", "context_window": 40960 },
