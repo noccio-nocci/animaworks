@@ -96,6 +96,12 @@ def _scrfd_detect_largest(image_rgb: Any) -> tuple[int, int, int, int] | None:
 
         outputs = session.run(None, {session.get_inputs()[0].name: blob})
 
+        # Temporary: log actual output shapes so we can verify grouping logic
+        logger.info(
+            "SCRFD raw outputs: %s",
+            [(o.name, outputs[i].shape) for i, o in enumerate(session.get_outputs())],
+        )
+
         # Group SCRFD outputs by type using shape rather than assuming a fixed
         # index order (which varies across InsightFace ONNX exports).
         #   score:  ndim==2  OR  last dim == 1   → confidence per anchor
