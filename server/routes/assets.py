@@ -892,16 +892,20 @@ def create_assets_router() -> APIRouter:
                         pass
 
             async def _emit_ready(source_bytes: bytes) -> None:
-                """Save source_bytes as avatar + preview, then emit ready event."""
-                output_filename = "avatar_fullbody_realistic.png" if is_realistic else "avatar_fullbody.png"
+                """Save source_bytes as a numbered preview only, then emit ready event.
+
+                The canonical avatar file (avatar_fullbody_realistic.png) is NOT
+                updated here — it is only written when the user explicitly confirms
+                via remake-confirm.  Writing it during preview caused a feedback loop:
+                the Face Reference URL could point to the avatar file, so each retry
+                would use the previous generation as input and progressively degrade.
+                """
                 assets_dir.mkdir(parents=True, exist_ok=True)
-                out_path = assets_dir / output_filename
-                out_path.write_bytes(source_bytes)
                 counter = _next_preview_counter(assets_dir, is_realistic)
                 preview_filename = (
                     f"_preview_{counter:03d}_realistic.png" if is_realistic else f"_preview_{counter:03d}.png"
                 )
-                _shutil.copy2(out_path, assets_dir / preview_filename)
+                (assets_dir / preview_filename).write_bytes(source_bytes)
                 preview_url = f"/api/animas/{name}/assets/{preview_filename}?v={int(_time.time())}"
                 await _ws_emit("anima.remake_preview_ready", {
                     "name": name,
