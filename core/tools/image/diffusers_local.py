@@ -89,7 +89,9 @@ def _scrfd_detect_largest(image_rgb: Any) -> tuple[int, int, int, int] | None:
         padded = np.zeros((target, target, 3), dtype=np.uint8)
         padded[:nh, :nw] = resized
 
-        blob = (padded.astype(np.float32) - 127.5) / 128.0
+        # SCRFD (InsightFace) expects BGR; PIL gives RGB — swap channels.
+        padded_bgr = padded[:, :, ::-1].copy()
+        blob = (padded_bgr.astype(np.float32) - 127.5) / 128.0
         blob = blob.transpose(2, 0, 1)[np.newaxis]
 
         outputs = session.run(None, {session.get_inputs()[0].name: blob})
