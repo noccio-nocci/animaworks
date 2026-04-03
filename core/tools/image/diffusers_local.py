@@ -96,31 +96,51 @@ def _scrfd_detect_largest(image_rgb: Any) -> tuple[int, int, int, int] | None:
 
         outputs = session.run(None, {session.get_inputs()[0].name: blob})
 
-        # SCRFD outputs: [scores, bboxes, kps] × 3 strides (8, 16, 32)
+        # Group SCRFD outputs by type using shape rather than assuming a fixed
+        # index order (which varies across InsightFace ONNX exports).
+        #   score:  ndim==2  OR  last dim == 1   → confidence per anchor
+        #   bbox:   last dim == 4                → (l,t,r,b) distances
+        # Sort each group largest-first so index 0 == stride-8 (most anchors).
+        score_outs = sorted(
+            [o for o in outputs if o.ndim == 2 or (o.ndim == 3 and o.shape[-1] == 1)],
+            key=lambda o: -o.size,
+        )
+        bbox_outs = sorted(
+            [o for o in outputs if o.ndim == 3 and o.shape[-1] == 4],
+            key=lambda o: -o.size,
+        )
+
+        if len(score_outs) < 3 or len(bbox_outs) < 3:
+            logger.debug(
+                "SCRFD: unexpected output count — scores=%d bboxes=%d",
+                len(score_outs), len(bbox_outs),
+            )
+            return None
+
+        # SCRFD uses num_anchors=2 per cell.  The flat anchor index i maps to:
+        #   cell = i // num_anchors,  anchor_x = (cell % feat_w) * stride
+        num_anchors = 2
         best_box: tuple[int, int, int, int] | None = None
         best_area = 0
         threshold = 0.5
-        strides = [8, 16, 32]
 
-        for idx, stride in enumerate(strides):
-            scores = outputs[idx * 3]
-            bboxes = outputs[idx * 3 + 1]
-            # Normalise to (1, N, 4) regardless of ONNX output shape variation
-            if bboxes.ndim == 2:
-                bboxes = bboxes.reshape(1, -1, 4)
+        for stride, s_out, b_out in zip([8, 16, 32], score_outs[:3], bbox_outs[:3]):
+            scores_flat = s_out.reshape(-1)          # (H*W*num_anchors,)
+            bboxes_2d   = b_out.reshape(-1, 4)       # (H*W*num_anchors, 4)
             feat_w = target // stride
 
-            for i in range(scores.shape[1] if scores.ndim >= 2 else scores.shape[0]):
-                score_val = float(scores[0, i] if scores.ndim == 2 else scores[0, i, 0])
-                if score_val < threshold:
+            for i, score_val in enumerate(scores_flat):
+                if float(score_val) < threshold:
                     continue
-                anchor_y = (i // feat_w) * stride
-                anchor_x = (i % feat_w) * stride
+                cell = i // num_anchors
+                anchor_x = (cell % feat_w) * stride
+                anchor_y = (cell // feat_w) * stride
 
-                x1 = int((anchor_x - bboxes[0, i, 0] * stride) / scale)
-                y1 = int((anchor_y - bboxes[0, i, 1] * stride) / scale)
-                x2 = int((anchor_x + bboxes[0, i, 2] * stride) / scale)
-                y2 = int((anchor_y + bboxes[0, i, 3] * stride) / scale)
+                l, t, r, b = bboxes_2d[i]
+                x1 = int((anchor_x - l * stride) / scale)
+                y1 = int((anchor_y - t * stride) / scale)
+                x2 = int((anchor_x + r * stride) / scale)
+                y2 = int((anchor_y + b * stride) / scale)
 
                 x1, y1 = max(0, x1), max(0, y1)
                 x2, y2 = min(w0, x2), min(h0, y2)
