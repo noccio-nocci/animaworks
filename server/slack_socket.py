@@ -13,7 +13,9 @@ import asyncio
 import collections
 import json
 import logging
+import os
 import re
+import threading
 import time
 from typing import Any
 
@@ -29,23 +31,54 @@ from core.tools._base import _lookup_shared_credentials, _lookup_vault_credentia
 
 logger = logging.getLogger("animaworks.slack_socket")
 
-# ── Dedup: prevent same Slack message from being delivered twice ──
+# ── Dedup: prevent same Slack message from being processed twice ──
 # When both message and app_mention events fire for a single @-mention,
-# the first handler to process stores the ts; the second skips it.
+# the SAME handler should only process it once.  The key is scoped per
+# handler (anima name) so that different bots receiving the same event
+# in a shared channel each process it independently.
 _DEDUP_TTL_SEC = 10
+_dedup_lock = threading.Lock()
 _recent_ts: collections.OrderedDict[str, float] = collections.OrderedDict()
+
+_USER_NAME_CACHE_MAX = 500
+_cache_lock = threading.Lock()
 _user_name_cache: dict[str, str] = {}
 
 
-def _is_duplicate_ts(ts: str) -> bool:
-    """Return True if *ts* was already processed within the TTL window."""
+def _is_duplicate_ts(ts: str, handler_name: str = "") -> bool:
+    """Return True if *ts* was already processed by *handler_name*.
+
+    The dedup key is ``handler_name:ts`` so that different per-Anima
+    handlers can each process the same Slack event independently.
+    Within a single handler, duplicate ``message`` + ``app_mention``
+    events for the same ts are still suppressed.
+    """
+    key = f"{handler_name}:{ts}" if handler_name else ts
     now = time.monotonic()
-    while _recent_ts and next(iter(_recent_ts.values())) < now - _DEDUP_TTL_SEC:
-        _recent_ts.popitem(last=False)
-    if ts in _recent_ts:
-        return True
-    _recent_ts[ts] = now
-    return False
+    with _dedup_lock:
+        while _recent_ts and next(iter(_recent_ts.values())) < now - _DEDUP_TTL_SEC:
+            _recent_ts.popitem(last=False)
+        if key in _recent_ts:
+            return True
+        _recent_ts[key] = now
+        return False
+
+
+def _cache_user_name(uid: str, name: str) -> None:
+    """Thread-safe bounded insert into the user-name cache."""
+    with _cache_lock:
+        if len(_user_name_cache) >= _USER_NAME_CACHE_MAX and uid not in _user_name_cache:
+            try:
+                _user_name_cache.pop(next(iter(_user_name_cache)))
+            except StopIteration:
+                pass
+        _user_name_cache[uid] = name
+
+
+def _get_cached_user_name(uid: str) -> str | None:
+    """Thread-safe lookup from the user-name cache."""
+    with _cache_lock:
+        return _user_name_cache.get(uid)
 
 
 def _detect_slack_intent(text: str, channel_id: str, bot_user_id: str) -> str:
@@ -66,19 +99,21 @@ def _resolve_slack_mentions(text: str, token: str) -> str:
     if not text:
         return text
     user_ids = set(re.findall(r"<@(U[A-Z0-9]+)>", text))
-    unknown = user_ids - set(_user_name_cache)
+    unknown = {uid for uid in user_ids if _get_cached_user_name(uid) is None}
     if unknown and token:
         try:
             from core.tools.slack import SlackClient
 
             client = SlackClient(token=token)
             for uid in unknown:
-                _user_name_cache[uid] = client.resolve_user_name(uid)
+                _cache_user_name(uid, client.resolve_user_name(uid))
         except Exception:
             logger.debug("Failed to resolve Slack user mentions", exc_info=True)
     from core.tools._slack_markdown import clean_slack_markup
 
-    return clean_slack_markup(text, cache=_user_name_cache)
+    with _cache_lock:
+        snapshot = dict(_user_name_cache)
+    return clean_slack_markup(text, cache=snapshot)
 
 
 def _build_slack_annotation(channel_id: str, has_mention: bool) -> str:
@@ -102,6 +137,23 @@ def _detect_mention_intent(
         if f"<@{uid}>" in (text or ""):
             return "question"
     return ""
+
+
+def _mentions_registered_bot(
+    text: str,
+    bot_user_ids: dict[str, str],
+    *,
+    exclude_names: set[str] | None = None,
+) -> bool:
+    """Return True when text mentions any registered bot user ID."""
+    raw = text or ""
+    excluded = exclude_names or set()
+    for name, uid in bot_user_ids.items():
+        if name in excluded or not uid:
+            continue
+        if f"<@{uid}>" in raw:
+            return True
+    return False
 
 
 def _load_alias_user_ids() -> set[str]:
@@ -137,13 +189,15 @@ def _fetch_thread_context(token: str, channel_id: str, thread_ts: str, *, limit:
         parent_user = parent.get("user", "unknown")
         parent_text = parent.get("text", "").replace("\n", " ")[:_THREAD_CTX_SUMMARY_LIMIT]
         # Resolve parent author display name
-        if parent_user not in _user_name_cache:
+        if _get_cached_user_name(parent_user) is None:
             try:
-                _user_name_cache[parent_user] = client.resolve_user_name(parent_user)
+                _cache_user_name(parent_user, client.resolve_user_name(parent_user))
             except Exception:
                 pass
-        parent_display = _user_name_cache.get(parent_user, parent_user)
-        parent_text = clean_slack_markup(parent_text, cache=_user_name_cache)
+        parent_display = _get_cached_user_name(parent_user) or parent_user
+        with _cache_lock:
+            snapshot = dict(_user_name_cache)
+        parent_text = clean_slack_markup(parent_text, cache=snapshot)
         reply_count = len(replies) - 1
         lines = [
             "[Thread context — this message is a reply in a Slack thread]",
@@ -166,6 +220,46 @@ async def _resolve_bot_user_id(app: AsyncApp) -> str:
     except Exception:
         logger.warning("Failed to resolve bot user ID via auth.test", exc_info=True)
         return ""
+
+
+# ── Board routing dedup: one board post per Slack message ──
+# Multiple handlers (per-anima + shared) receive the same event; only
+# the first one should forward to the AnimaWorks board.
+_board_dedup_lock = threading.Lock()
+_board_dedup_ts: collections.OrderedDict[str, float] = collections.OrderedDict()
+_BOARD_DEDUP_TTL_SEC = 10
+
+
+def _route_to_board(channel_id: str, text: str, user_name: str, *, ts: str = "") -> None:
+    """Post a Slack message to the mapped AnimaWorks board (if any).
+
+    Looks up the board_mapping from config.  If the channel has a
+    corresponding board, the message is posted via Messenger with
+    ``source="slack"`` to prevent echo loops.
+
+    The *ts* parameter is used for global dedup — when multiple handlers
+    receive the same Slack event, only the first call posts to the board.
+    """
+    if ts:
+        now = time.monotonic()
+        with _board_dedup_lock:
+            # Expire old entries
+            while _board_dedup_ts and next(iter(_board_dedup_ts.values())) < now - _BOARD_DEDUP_TTL_SEC:
+                _board_dedup_ts.popitem(last=False)
+            if ts in _board_dedup_ts:
+                return
+            _board_dedup_ts[ts] = now
+
+    try:
+        cfg = load_config()
+        board_name = cfg.external_messaging.slack.board_mapping.get(channel_id)
+        if not board_name:
+            return
+        shared_dir = get_data_dir() / "shared"
+        messenger = Messenger(shared_dir, user_name or "slack")
+        messenger.post_channel(board_name, text, source="slack", from_name=user_name or "slack")
+    except Exception:
+        logger.debug("Board routing failed for channel %s", channel_id, exc_info=True)
 
 
 class SlackSocketModeManager:
@@ -199,9 +293,11 @@ class SlackSocketModeManager:
             logger.info("Slack Socket Mode is disabled")
             return
 
+        # Register all per-Anima handlers without connecting yet
         for anima_name in self._discover_per_anima_bots():
-            await self._add_per_anima_handler(anima_name)
+            await self._add_per_anima_handler(anima_name, connect=False)
 
+        # Shared bot (optional fallback for unmapped channels)
         try:
             shared_bot = get_credential("slack", "slack_socket", env_var="SLACK_BOT_TOKEN")
             shared_app_token = get_credential("slack_app", "slack_socket", env_var="SLACK_APP_TOKEN")
@@ -219,12 +315,34 @@ class SlackSocketModeManager:
                 raise
             logger.info("Shared Slack bot not configured; per-Anima bots only")
 
+        # Connect all handlers in a single batch to avoid double-connect
         if self._handler_map:
             await asyncio.gather(*(h.connect_async() for h in self._handler_map.values()))
             logger.info(
                 "Slack Socket Mode connected (%d handler(s))",
                 len(self._handler_map),
             )
+
+            # Post-connect health check: verify WebSocket sessions
+            await asyncio.sleep(2)
+            dead: list[str] = []
+            for name, handler in self._handler_map.items():
+                client = handler.client
+                session = getattr(client, "current_session", None)
+                receiver = getattr(client, "message_receiver", None)
+                alive = (
+                    session is not None
+                    and not getattr(session, "closed", True)
+                    and receiver is not None
+                    and not receiver.done()
+                )
+                if not alive:
+                    dead.append(name)
+            if dead:
+                logger.warning(
+                    "Socket Mode: %d handler(s) NOT alive after connect: %s",
+                    len(dead), dead,
+                )
 
     async def reload(self) -> dict[str, Any]:
         """Diff-based handler reload: add new, remove deleted, keep existing."""
@@ -273,8 +391,11 @@ class SlackSocketModeManager:
             result["errors"] = errors
         return result
 
-    async def _add_per_anima_handler(self, anima_name: str) -> bool:
-        """Create and connect a per-Anima Socket Mode handler.
+    async def _add_per_anima_handler(self, anima_name: str, *, connect: bool = True) -> bool:
+        """Create a per-Anima Socket Mode handler.
+
+        When *connect* is False the handler is registered but not connected
+        (caller is responsible for calling ``connect_async`` later).
 
         Returns True on success, False if credentials are missing.
         """
@@ -293,7 +414,8 @@ class SlackSocketModeManager:
             handler = AsyncSocketModeHandler(app, app_token)
             self._app_map[anima_name] = app
             self._handler_map[anima_name] = handler
-            await handler.connect_async()
+            if connect:
+                await handler.connect_async()
             logger.info(
                 "Per-Anima Slack bot registered: %s (bot_uid=%s)",
                 anima_name,
@@ -328,7 +450,7 @@ class SlackSocketModeManager:
 
     @staticmethod
     def _discover_per_anima_bots() -> list[str]:
-        """Scan vault/shared credentials for SLACK_BOT_TOKEN__* keys."""
+        """Scan vault/shared credentials/env for SLACK_BOT_TOKEN__* keys."""
         found: set[str] = set()
         prefix = "SLACK_BOT_TOKEN__"
 
@@ -354,27 +476,72 @@ class SlackSocketModeManager:
         except Exception:
             pass
 
+        # Also scan environment variables (populated from .env via dotenv).
+        # On Windows os.environ uppercases keys, so normalise to lowercase.
+        for key, val in os.environ.items():
+            if key.startswith(prefix) and val:
+                found.add(key[len(prefix) :].lower())
+
         return sorted(found)
 
     @staticmethod
     def _get_per_anima_credential(base_key: str, anima_name: str) -> str | None:
-        """Resolve a per-Anima credential (e.g. SLACK_BOT_TOKEN__sumire)."""
+        """Resolve a per-Anima credential (e.g. SLACK_BOT_TOKEN__sumire).
+
+        Cascade: vault → shared/credentials.json → environment variable.
+        """
         key = f"{base_key}__{anima_name}"
         token = _lookup_vault_credential(key)
         if token:
             return token
-        return _lookup_shared_credentials(key)
+        token = _lookup_shared_credentials(key)
+        if token:
+            return token
+        return os.environ.get(key) or None
 
     def _register_per_anima_handler(self, app: AsyncApp, anima_name: str, bot_user_id: str = "") -> None:
-        """Register event handler that routes all messages to a specific Anima."""
+        """Register event handler that routes messages to a specific Anima.
+
+        Routing rules:
+        - **Self-posted messages** (from any registered bot): Ignored to
+          prevent infinite response loops.
+        - **DM** (channel starts with ``D``): Always deliver to inbox.
+        - **Channel message with @mention of this bot**: Deliver to inbox.
+        - **Channel message without @mention**:
+          - If this Anima is the ``default_anima`` (e.g. sakura/COO):
+            deliver to inbox (she responds as the channel's primary contact).
+          - Otherwise: board routing only (no inbox delivery).
+        """
+
+        # Reference to all known bot UIDs (shared dict, updated at runtime)
+        all_bot_uids = self._bot_user_ids
 
         @app.event("message")
         async def handle_message(event: dict, say) -> None:  # noqa: ARG001
             if "subtype" in event:
                 return
 
+            sender = event.get("user", "")
+            is_own_bot = sender and sender in all_bot_uids.values()
+
             ts = event.get("ts", "")
-            if _is_duplicate_ts(ts):
+            channel_id = event.get("channel", "")
+
+            # ── Own bot messages: forward to board only (no inbox) ──
+            if is_own_bot:
+                if not channel_id.startswith("D"):
+                    # Resolve the anima name from the bot UID for the board post
+                    bot_name = next(
+                        (n for n, uid in all_bot_uids.items() if uid == sender),
+                        "anima",
+                    )
+                    token_for_resolve = self._get_per_anima_credential("SLACK_BOT_TOKEN", anima_name) or ""
+                    raw_text = event.get("text", "")
+                    text = await asyncio.to_thread(_resolve_slack_mentions, raw_text, token_for_resolve)
+                    _route_to_board(channel_id, text, bot_name, ts=ts)
+                return
+
+            if _is_duplicate_ts(ts, anima_name):
                 return
 
             token = self._get_per_anima_credential("SLACK_BOT_TOKEN", anima_name) or ""
@@ -390,6 +557,12 @@ class SlackSocketModeManager:
             text = event.get("text", "")
             channel_id = event.get("channel", "")
             thread_ts = event.get("thread_ts", "")
+            is_dm = channel_id.startswith("D")
+            mentioned_other_registered_bot = _mentions_registered_bot(
+                text,
+                all_bot_uids,
+                exclude_names={anima_name, "__shared__"},
+            )
 
             alias_ids = _load_alias_user_ids()
             mention_intent = _detect_mention_intent(text, bot_user_id, alias_ids)
@@ -400,33 +573,72 @@ class SlackSocketModeManager:
                     text = ctx + text
 
             text = await asyncio.to_thread(_resolve_slack_mentions, text, token)
-            has_mention = bool(mention_intent)
-            annotation = _build_slack_annotation(channel_id, has_mention)
-            text = annotation + text
-            intent = mention_intent or _detect_slack_intent(text, channel_id, bot_user_id)
 
-            shared_dir = get_data_dir() / "shared"
-            messenger = Messenger(shared_dir, anima_name)
-            messenger.receive_external(
-                content=text,
-                source="slack",
-                source_message_id=ts,
-                external_user_id=event.get("user", ""),
-                external_channel_id=channel_id,
-                external_thread_ts=thread_ts,
-                intent=intent,
-            )
-            logger.info(
-                "Per-Anima Socket Mode message routed: channel=%s -> anima=%s (intent=%s)",
-                channel_id,
-                anima_name,
-                intent or "none",
-            )
+            # ── Decide whether to deliver to inbox ──
+            # DM: always.  @mention: always.
+            # Channel without mention: only if this anima is the default_anima
+            # (e.g. sakura as COO — the primary responder for all channels).
+            is_default = False
+            if not is_dm and not mention_intent and not mentioned_other_registered_bot:
+                try:
+                    cfg = load_config()
+                    is_default = (anima_name == cfg.external_messaging.slack.default_anima)
+                except Exception:
+                    pass
+
+            should_deliver = is_dm or bool(mention_intent) or is_default
+
+            # ── Board routing: forward channel message to board exactly once ──
+            # Only the handler that "owns" this message forwards to the board:
+            #   - @mention present → the mentioned bot's handler
+            #   - no mention → default_anima's handler
+            # This prevents N handlers from each posting the same message.
+            if not is_dm and (bool(mention_intent) or is_default):
+                user_name = _get_cached_user_name(sender) or sender
+                _route_to_board(channel_id, text, user_name, ts=ts)
+
+            if should_deliver:
+                has_mention = bool(mention_intent)
+                annotation = _build_slack_annotation(channel_id, has_mention)
+                annotated = annotation + text
+                intent = mention_intent if mention_intent else "question"
+
+                shared_dir = get_data_dir() / "shared"
+                messenger = Messenger(shared_dir, anima_name)
+                messenger.receive_external(
+                    content=annotated,
+                    source="slack",
+                    source_message_id=ts,
+                    external_user_id=sender,
+                    external_channel_id=channel_id,
+                    external_thread_ts=thread_ts,
+                    intent=intent,
+                )
+
+                logger.info(
+                    "Per-Anima Socket Mode message routed: channel=%s -> anima=%s (intent=%s, dm=%s, default=%s)",
+                    channel_id,
+                    anima_name,
+                    intent,
+                    is_dm,
+                    is_default,
+                )
+            else:
+                logger.debug(
+                    "Per-Anima %s: channel msg without mention, board-only: channel=%s",
+                    anima_name,
+                    channel_id,
+                )
 
         @app.event("app_mention")
         async def handle_app_mention(event: dict, say) -> None:  # noqa: ARG001
+            # Ignore self-posted mentions (prevent loops)
+            sender = event.get("user", "")
+            if sender and sender in all_bot_uids.values():
+                return
+
             ts = event.get("ts", "")
-            if _is_duplicate_ts(ts):
+            if _is_duplicate_ts(ts, anima_name):
                 return
 
             text = event.get("text", "")
@@ -473,13 +685,21 @@ class SlackSocketModeManager:
         reconnecting the Socket Mode handler.
         """
 
+        # Reference to all known bot UIDs for self-message filtering
+        all_bot_uids = self._bot_user_ids
+
         @app.event("message")
         async def handle_message(event: dict, say) -> None:  # noqa: ARG001
             if "subtype" in event:
                 return
 
+            # Ignore messages from any of our own bots (prevent loops)
+            sender = event.get("user", "")
+            if sender and sender in all_bot_uids.values():
+                return
+
             ts = event.get("ts", "")
-            if _is_duplicate_ts(ts):
+            if _is_duplicate_ts(ts, "__shared__"):
                 return
 
             _shared_token = get_credential("slack", "slack_webhook", env_var="SLACK_BOT_TOKEN") or ""
@@ -505,6 +725,20 @@ class SlackSocketModeManager:
 
             text = event.get("text", "")
             thread_ts = event.get("thread_ts", "")
+            mentioned_per_anima_bot = _mentions_registered_bot(
+                text,
+                all_bot_uids,
+                exclude_names={"__shared__"},
+            )
+
+            # Let the explicitly mentioned per-Anima bot handle this channel
+            # message so the shared default route does not steal it.
+            if channel_id and not channel_id.startswith("D") and mentioned_per_anima_bot:
+                logger.debug(
+                    "Shared Slack handler skipped due to per-Anima bot mention: channel=%s",
+                    channel_id,
+                )
+                return
 
             alias_ids = _load_alias_user_ids()
             mention_intent = _detect_mention_intent(text, bot_user_id, alias_ids)
@@ -515,15 +749,23 @@ class SlackSocketModeManager:
                     text = ctx + text
 
             text = await asyncio.to_thread(_resolve_slack_mentions, text, _shared_token)
+
+            # Route to AnimaWorks board BEFORE adding inbox annotations
+            user_name = _get_cached_user_name(event.get("user", "")) or event.get("user", "")
+            _route_to_board(channel_id, text, user_name, ts=ts)
+
             has_mention = bool(mention_intent)
             annotation = _build_slack_annotation(channel_id, has_mention)
-            text = annotation + text
-            intent = mention_intent or _detect_slack_intent(text, channel_id, bot_user_id)
+            annotated = annotation + text
+            # Shared-handler delivery already means this message was targeted by
+            # channel mapping or default_anima selection, so treat it as
+            # actionable even when it is not an explicit @mention/DM.
+            intent = mention_intent or _detect_slack_intent(annotated, channel_id, bot_user_id) or "question"
 
             shared_dir = get_data_dir() / "shared"
             messenger = Messenger(shared_dir, anima_name)
             messenger.receive_external(
-                content=text,
+                content=annotated,
                 source="slack",
                 source_message_id=ts,
                 external_user_id=event.get("user", ""),
@@ -531,6 +773,7 @@ class SlackSocketModeManager:
                 external_thread_ts=thread_ts,
                 intent=intent,
             )
+
             logger.info(
                 "Shared Socket Mode message routed: channel=%s -> anima=%s (intent=%s)",
                 channel_id,
@@ -541,7 +784,7 @@ class SlackSocketModeManager:
         @app.event("app_mention")
         async def handle_app_mention(event: dict, say) -> None:  # noqa: ARG001
             ts = event.get("ts", "")
-            if _is_duplicate_ts(ts):
+            if _is_duplicate_ts(ts, "__shared__"):
                 return
 
             channel_id = event.get("channel", "")
@@ -611,6 +854,21 @@ class SlackSocketModeManager:
         self._app_map.clear()
         self._bot_user_ids.clear()
         logger.info("Slack Socket Mode disconnected")
+
+    async def health_check(self) -> dict[str, Any]:
+        """Call ``auth.test`` on each active handler and return connection status."""
+        results: dict[str, Any] = {}
+        for name, app in self._app_map.items():
+            try:
+                resp = await asyncio.wait_for(app.client.auth_test(), timeout=10)
+                results[name] = {
+                    "ok": True,
+                    "bot_user_id": self._bot_user_ids.get(name, ""),
+                    "team": resp.get("team", ""),
+                }
+            except Exception as exc:
+                results[name] = {"ok": False, "error": str(exc)}
+        return results
 
     @property
     def is_connected(self) -> bool:

@@ -523,6 +523,7 @@ class CursorAgentExecutor(BaseExecutor):
         session_id: str | None = None
         failed = False
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -622,6 +623,19 @@ class CursorAgentExecutor(BaseExecutor):
         except Exception as e:
             logger.exception("Cursor agent execution error")
             return (ExecutionResult(text=f"[Cursor Agent Error: {e}]"), None, True)
+        finally:
+            # Ensure the subprocess is killed on CancelledError or any
+            # other exception that bypasses the normal exit path.
+            if proc is not None and proc.returncode is None:
+                logger.warning("Killing orphaned cursor-agent subprocess (PID %s)", proc.pid)
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:  # noqa: BLE001
+                    pass
 
         replied_to = self._read_replied_to_file()
         return (

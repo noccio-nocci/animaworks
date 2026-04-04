@@ -167,6 +167,28 @@ class HealthMixin:
         success = bool(ping_result.get("success"))
         is_busy = bool(ping_result.get("is_busy"))
 
+        # Transport error fallback (Windows IPC): don't count as missed ping
+        if not success and ping_result.get("transport_error"):
+            if handle.is_alive():
+                handle.stats.missed_pings = 0
+                if not getattr(handle, "_transport_error_logged", False):
+                    logger.warning(
+                        "IPC transport unavailable for %s — falling back to liveness check only",
+                        anima_name,
+                    )
+                    handle._transport_error_logged = True  # type: ignore[attr-defined]
+                return
+            # Process dead despite transport error
+            actual_rc = handle.process.returncode if handle.process else None
+            handle.stats.exit_code = actual_rc
+            logger.error(
+                "Process dead with transport error: %s (exit_code=%s)",
+                anima_name,
+                actual_rc,
+            )
+            asyncio.create_task(self._handle_process_failure(anima_name, handle))
+            return
+
         if success:
             if is_busy:
                 handle.stats.missed_pings = 0

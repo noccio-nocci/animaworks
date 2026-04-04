@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import ASGITransport, AsyncClient
 
+from core.config.models import ImageGenConfig
 from core.tools.image_gen import PipelineResult
 
 
@@ -280,6 +281,39 @@ class TestGenerateAssets:
         assert resp.status_code == 200
         assert resp.json()["status"] == "done"
 
+    @patch("core.tools.image_gen.ImageGenPipeline")
+    @patch("core.config.load_config")
+    async def test_generate_uses_global_image_backend(self, mock_load_config, mock_pipeline_cls, tmp_path):
+        anima_dir = tmp_path / "alice"
+        anima_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.fullbody_path = None
+        mock_result.bustup_path = None
+        mock_result.chibi_path = None
+        mock_result.model_path = None
+        mock_result.rigged_model_path = None
+        mock_result.animation_paths = {}
+        mock_result.errors = []
+        mock_result.to_dict.return_value = {"status": "done"}
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.generate_all.return_value = mock_result
+        mock_pipeline_cls.return_value = mock_pipeline
+
+        mock_load_config.return_value = MagicMock(image_gen=ImageGenConfig(backend="diffusers", image_style="anime"))
+        app = _make_test_app(animas_dir=tmp_path)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/animas/alice/assets/generate",
+                json={"prompt": "anime girl", "image_style": "realistic"},
+            )
+
+        assert resp.status_code == 200
+        config = mock_pipeline_cls.call_args.kwargs["config"]
+        assert config.backend == "diffusers"
+        assert config.image_style == "realistic"
 
 # ── GET /animas/{name}/assets/metadata (icon cross-mode fallback) ──
 
@@ -371,7 +405,6 @@ class TestRegenerateAssetStep:
             errors=[],
         )
         mock_pipeline_cls.return_value = mock_pipeline
-
         app = _make_test_app(animas_dir=tmp_path)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -393,6 +426,61 @@ class TestRegenerateAssetStep:
         ga_kw = mock_pipeline.generate_all.call_args[1]
         assert ga_kw["steps"] == ["icon"]
         assert ga_kw["skip_existing"] is False
+
+
+# ── POST /animas/{name}/assets/remake-preview ───────────
+
+
+class TestRemakePreview:
+    @patch("core.tools.image_gen.ImageGenPipeline")
+    @patch("core.config.models.load_config")
+    async def test_without_style_from_ignores_global_style_reference(
+        self,
+        mock_load_config,
+        mock_pipeline_cls,
+        tmp_path,
+    ):
+        import asyncio
+
+        animas_dir = tmp_path / "animas"
+        anima_dir = animas_dir / "alice"
+        assets_dir = anima_dir / "assets"
+        assets_dir.mkdir(parents=True)
+        (anima_dir / "identity.md").write_text("# Alice\n", encoding="utf-8")
+        (assets_dir / "avatar_fullbody_realistic.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        global_style_ref = tmp_path / "global-style.png"
+        global_style_ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+        mock_load_config.return_value = MagicMock(
+            image_gen=ImageGenConfig(
+                backend="diffusers",
+                image_style="anime",
+                style_reference=str(global_style_ref),
+            ),
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.generate_all.return_value = MagicMock(errors=[])
+        mock_pipeline_cls.return_value = mock_pipeline
+
+        app = _make_test_app(animas_dir=animas_dir)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/animas/alice/assets/remake-preview",
+                json={"image_style": "realistic", "prompt": "portrait"},
+            )
+
+        assert resp.status_code == 202
+
+        config = mock_pipeline_cls.call_args.kwargs["config"]
+        assert config.image_style == "realistic"
+        assert config.style_reference is None
+
+        await asyncio.sleep(0.05)
+        mock_pipeline.generate_all.assert_called_once()
+        ga_kw = mock_pipeline.generate_all.call_args.kwargs
+        assert "vibe_image" not in ga_kw
 
 
 # ── POST /animas/{name}/assets/upload-fullbody ──────────

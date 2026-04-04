@@ -189,3 +189,41 @@ class TestMachineDirectiveInjection:
             prompt += "\n\n" + t("pending_executor.machine_directive")
 
         assert prompt == base_prompt
+
+
+class TestLlmTaskFailurePropagation:
+    @pytest.mark.asyncio
+    async def test_run_llm_task_raises_when_cycle_done_action_is_error(self, tmp_path):
+        executor = _make_executor(tmp_path)
+        bg_event = asyncio.Event()
+        executor._anima._get_interrupt_event = lambda _name: bg_event
+
+        async def _failing_stream(*args, **kwargs):
+            yield {
+                "type": "cycle_done",
+                "cycle_result": {
+                    "action": "error",
+                    "summary": "stream retry exhausted",
+                },
+            }
+
+        executor._anima.agent.run_cycle_streaming = _failing_stream
+        executor._anima.agent.reset_reply_tracking = MagicMock()
+        executor._anima.agent.reset_read_paths = MagicMock()
+        executor._anima.agent.set_task_cwd = MagicMock()
+        executor._anima.messenger.send = MagicMock()
+
+        task_desc = {
+            "task_id": "llm-fail-1",
+            "title": "Broken task",
+            "description": "Investigate failure",
+        }
+
+        with (
+            patch("core.paths.load_prompt", return_value="test prompt"),
+            patch("core.memory.activity.ActivityLogger") as mock_activity,
+            patch("core.supervisor.pending_executor._resolve_default_workspace", return_value=""),
+        ):
+            mock_activity.return_value.log = MagicMock()
+            with pytest.raises(RuntimeError, match="stream retry exhausted"):
+                await executor._run_llm_task(task_desc)

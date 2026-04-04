@@ -7,6 +7,7 @@ import { getIcon, getDisplaySummary } from "../shared/activity-types.js";
 import { bustupCandidates, resolveAvatar } from "../modules/avatar-resolver.js";
 
 let _refreshInterval = null;
+let _usageInterval = null;
 
 // ── Render ─────────────────────────────────
 
@@ -15,6 +16,43 @@ export function render(container) {
     <div class="page-header">
       <h2>${t("home.dashboard")}</h2>
     </div>
+
+    <div class="usage-panel-header">
+      <div class="usage-panel-actions">
+        <button class="btn-secondary usage-refresh-btn" id="usageRefreshBtn">&#x21BB; Refresh</button>
+        <span class="usage-last-updated" id="usageLastUpdated">${t("home.ext_last_updated")}: --:--:--</span>
+      </div>
+    </div>
+    <div class="usage-panel" id="homeUsagePanel">
+      <div class="usage-card" id="usageCardClaude">
+        <div class="usage-card-header">
+          <span class="usage-provider-name">Claude</span>
+          <span class="usage-sub-type" id="usageClaudeSub"></span>
+        </div>
+        <div class="usage-card-body" id="usageClaudeBody">
+          <div class="usage-loading">${t("common.loading")}</div>
+        </div>
+      </div>
+      <div class="usage-card" id="usageCardOpenai">
+        <div class="usage-card-header">
+          <span class="usage-provider-name">OpenAI</span>
+          <span class="usage-sub-type" id="usageOpenaiSub"></span>
+        </div>
+        <div class="usage-card-body" id="usageOpenaiBody">
+          <div class="usage-loading">${t("common.loading")}</div>
+        </div>
+      </div>
+      <div class="usage-card" id="usageCardNanogpt">
+        <div class="usage-card-header">
+          <span class="usage-provider-name">nanoGPT</span>
+          <span class="usage-sub-type" id="usageNanogptSub"></span>
+        </div>
+        <div class="usage-card-body" id="usageNanogptBody">
+          <div class="usage-loading">${t("common.loading")}</div>
+        </div>
+      </div>
+    </div>
+    <div id="usageGovernorBar" style="display:none;"></div>
 
     <div class="card-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
       <div class="stat-card" id="homeStatAnimas">
@@ -77,14 +115,25 @@ export function render(container) {
   `;
 
   _loadAll();
+  _loadUsage();
   _initExternalTasksWidget();
   _refreshInterval = setInterval(_loadAll, 30000);
+  _usageInterval = setInterval(_loadUsage, 60000);
+
+  const refreshBtn = document.getElementById("usageRefreshBtn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => _loadUsage(true));
+  }
 }
 
 export function destroy() {
   if (_refreshInterval) {
     clearInterval(_refreshInterval);
     _refreshInterval = null;
+  }
+  if (_usageInterval) {
+    clearInterval(_usageInterval);
+    _usageInterval = null;
   }
 }
 
@@ -96,6 +145,410 @@ async function _loadAll() {
   _loadActivity();
   _loadExternalTasks();
 }
+
+// ── Usage Panel ────────────────────────────
+
+function _formatUsageFetchTime(value) {
+  if (value === null || value === undefined || value === "") return "--:--:--";
+  let ms;
+  if (typeof value === "number") {
+    ms = value < 1e12 ? value * 1000 : value;
+  } else {
+    ms = new Date(value).getTime();
+  }
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return "--:--:--";
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function _updateUsageLastUpdated(value, serverValue = null) {
+  const el = document.getElementById("usageLastUpdated");
+  if (!el) return;
+  el.textContent = `${t("home.ext_last_updated")}: ${_formatUsageFetchTime(value)}`;
+  if (serverValue !== null && serverValue !== undefined && serverValue !== "") {
+    el.title = `server: ${_formatUsageFetchTime(serverValue)}`;
+  } else {
+    el.removeAttribute("title");
+  }
+}
+
+function _resetToJst(value) {
+  if (!value) return "";
+  try {
+    // Accept ISO string or unix seconds (number < 1e12 → seconds, else ms)
+    let ms;
+    if (typeof value === "number") {
+      ms = value < 1e12 ? value * 1000 : value;
+    } else {
+      ms = new Date(value).getTime();
+    }
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return String(value);
+    const jst = new Date(d.getTime() + 9 * 3600000);
+    const days = ["日","月","火","水","木","金","土"];
+    const day = days[jst.getUTCDay()];
+    const yyyy = jst.getUTCFullYear();
+    const mm = String(jst.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(jst.getUTCDate()).padStart(2, "0");
+    const hh = String(jst.getUTCHours()).padStart(2, "0");
+    const mi = String(jst.getUTCMinutes()).padStart(2, "0");
+    const ss = String(jst.getUTCSeconds()).padStart(2, "0");
+    return `${yyyy}/${mm}/${dd}(${day}) ${hh}:${mi}:${ss}`;
+  } catch { return String(value); }
+}
+
+function _remainingColor(remaining) {
+  if (remaining <= 10) return "var(--aw-color-error, #dc2626)";
+  if (remaining <= 30) return "var(--aw-color-warning, #d97706)";
+  return "var(--aw-color-success, #16a34a)";
+}
+
+function _calcTimePct(resetAt, windowSeconds) {
+  // Calculate time_remaining_pct for the time-proportional marker
+  if (!resetAt || !windowSeconds) return null;
+  const resetMs = (typeof resetAt === "number")
+    ? (resetAt < 1e12 ? resetAt * 1000 : resetAt)
+    : new Date(resetAt).getTime();
+  if (isNaN(resetMs)) return null;
+  const remainingSec = (resetMs - Date.now()) / 1000;
+  if (remainingSec <= 0) return 100;
+  const pct = (remainingSec / windowSeconds) * 100;
+  return Math.min(pct, 100);
+}
+
+function _usageForecast(utilization, resetAt, windowSeconds) {
+  if (!resetAt || !windowSeconds) return null;
+  const resetMs = (typeof resetAt === "number")
+    ? (resetAt < 1e12 ? resetAt * 1000 : resetAt)
+    : new Date(resetAt).getTime();
+  if (isNaN(resetMs)) return null;
+
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+  const windowStartMs = resetMs - windowMs;
+  const elapsedMs = now - windowStartMs;
+  if (elapsedMs <= 0) return null;
+
+  const msToReset = resetMs - now;
+  if (msToReset <= 0) return { runway: "-", landing: "-", label: "" };
+
+  const used = utilization;
+  const remain = Math.max(0, 100 - used);
+  const elapsedDays = elapsedMs / 86400000;
+  const daysToReset = msToReset / 86400000;
+  const burnPerDay = used / elapsedDays;
+
+  if (burnPerDay <= 0.01) {
+    return { runway: "\u221E", daysToReset, landing: `${remain.toFixed(1)}%`, label: "" };
+  }
+
+  const runwayDays = remain / burnPerDay;
+  const projectedRemain = remain - (burnPerDay * daysToReset);
+
+  // Format runway
+  let runwayStr, daysToResetStr;
+  if (windowSeconds <= 86400) {
+    // sub-day windows: show in hours
+    runwayStr = `${(runwayDays * 24).toFixed(1)}h`;
+    daysToResetStr = `${(daysToReset * 24).toFixed(1)}h`;
+  } else {
+    runwayStr = `${runwayDays.toFixed(1)}d`;
+    daysToResetStr = `${daysToReset.toFixed(1)}d`;
+  }
+
+  const delta = runwayDays - daysToReset;
+  let deltaLabel = "";
+  if (delta >= 0) {
+    const deltaStr = windowSeconds <= 86400 ? `${(delta * 24).toFixed(1)}h` : `${delta.toFixed(1)}d`;
+    deltaLabel = `<span style="color:var(--aw-color-success,#16a34a);">+${deltaStr}</span>`;
+  } else {
+    const deltaStr = windowSeconds <= 86400 ? `${(Math.abs(delta) * 24).toFixed(1)}h` : `${Math.abs(delta).toFixed(1)}d`;
+    deltaLabel = `<span style="color:var(--aw-color-error,#dc2626);">\u25B2${deltaStr}</span>`;
+  }
+
+  const landingStr = `${projectedRemain.toFixed(1)}%`;
+  const landingColor = projectedRemain < 0
+    ? "var(--aw-color-error,#dc2626)"
+    : projectedRemain < 10
+      ? "var(--aw-color-warning,#d97706)"
+      : "var(--aw-color-text-secondary,#666)";
+
+  return { runway: runwayStr, daysToReset: daysToResetStr, deltaLabel, landing: landingStr, landingColor };
+}
+
+function _renderUsageBar(label, utilization, resetAt, windowSeconds) {
+  const resetMs = resetAt
+    ? (typeof resetAt === "number" ? (resetAt < 1e12 ? resetAt * 1000 : resetAt) : new Date(resetAt).getTime())
+    : 0;
+  const resetInPast = resetMs > 0 && resetMs <= Date.now();
+  // Window already reset — treat as fully available
+  const effectiveUtil = resetInPast ? 0 : utilization;
+  const remaining = Math.max(0, 100 - effectiveUtil);
+  const resetStr = resetInPast ? "" : (resetAt ? _resetToJst(resetAt) : "");
+  const color = _remainingColor(remaining);
+
+  // Time-proportional marker — shown on ALL windows (5h and 7d)
+  const timePct = _calcTimePct(resetAt, windowSeconds);
+  let markerHtml = "";
+  if (timePct !== null && windowSeconds) {
+    const markerLabel = `${timePct.toFixed(0)}%`;
+    markerHtml = `<div class="usage-bar-time-marker" style="left:${timePct}%" data-label="${markerLabel}"></div>`;
+  }
+
+  // Deficit warning text
+  let deficitHtml = "";
+  if (timePct !== null && windowSeconds && timePct > remaining) {
+    const gap = (timePct - remaining).toFixed(0);
+    deficitHtml = `<span class="usage-deficit" style="color:var(--aw-color-error,#dc2626);font-size:0.7rem;margin-left:0.5rem;">-${gap}pt</span>`;
+  }
+
+  // Forecast: Runway + 着地予測
+  let forecastHtml = "";
+  const fc = resetInPast ? null : _usageForecast(utilization, resetAt, windowSeconds);
+  if (fc) {
+    forecastHtml = `<div class="usage-forecast">`;
+    forecastHtml += `<span class="usage-forecast-item"><span class="usage-forecast-label">Runway</span> ${fc.runway}`;
+    if (fc.daysToReset) forecastHtml += ` / ${fc.daysToReset}`;
+    if (fc.deltaLabel) forecastHtml += ` ${fc.deltaLabel}`;
+    forecastHtml += `</span>`;
+    forecastHtml += `<span class="usage-forecast-item"><span class="usage-forecast-label">着地</span> <span style="color:${fc.landingColor || "inherit"}">${fc.landing}</span></span>`;
+    forecastHtml += `</div>`;
+  }
+
+  return `
+    <div class="usage-row">
+      <div class="usage-row-header">
+        <span class="usage-label">${escapeHtml(label)}</span>
+        <span class="usage-pct" style="color:${color}">${remaining.toFixed(0)}%${deficitHtml}</span>
+      </div>
+      <div class="usage-bar-track">
+        <div class="usage-bar-fill" style="width:${remaining}%;background:${color}"></div>
+        ${markerHtml}
+      </div>
+      ${forecastHtml || `<div class="usage-forecast">&nbsp;</div>`}
+      ${resetStr ? `<div class="usage-reset">${t("home.usage_reset")}: ${escapeHtml(resetStr)}</div>` : `<div class="usage-reset">&nbsp;</div>`}
+    </div>
+  `;
+}
+
+function _usageCanRelogin(errorCode) {
+  return new Set(["rate_limited", "unauthorized", "no_credentials"]).has(errorCode);
+}
+
+function _renderUsageError(provider, data, msg) {
+  const showButton = _usageCanRelogin(data.error);
+  const buttonLabel = provider === "claude" ? "Claude 再認証" : "Codex ログイン";
+  return `
+    <div class="usage-error">${escapeHtml(msg)}</div>
+    ${showButton ? `
+      <div style="margin-top:0.75rem;">
+        <button class="btn-secondary usage-auth-btn" data-provider="${provider}">${buttonLabel}</button>
+      </div>
+    ` : ""}
+  `;
+}
+
+async function _runUsageRelogin(provider) {
+  const path = provider === "claude" ? "/api/usage/claude/relogin" : "/api/usage/openai/relogin";
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (provider === "openai" && data.login_url) {
+      window.open(data.login_url, "_blank", "noopener,noreferrer");
+    }
+
+    const lines = [];
+    if (data.message) lines.push(data.message);
+    if (data.device_code) lines.push(`Code: ${data.device_code}`);
+    if (data.login_url) lines.push(`URL: ${data.login_url}`);
+    if (!data.success && data.manual_command) {
+      lines.push("");
+      lines.push(`Terminal: ${data.manual_command}`);
+    }
+    alert(lines.join("\n") || (res.ok ? "Done" : "Failed"));
+  } catch (err) {
+    alert(err.message || "Failed");
+  }
+  await _loadUsage();
+}
+
+function _renderClaudeUsage(data) {
+  const el = document.getElementById("usageClaudeBody");
+  if (!el) return;
+
+  if (data.error) {
+    if (data.error === "rate_limited" && data._show_relogin) {
+      // Auto token refresh succeeded but still rate-limited → show relogin button
+      const msg = data._relogin_message || "Token refreshed but still rate-limited — try re-login";
+      el.innerHTML = _renderUsageError("claude", data, msg);
+      const btn = el.querySelector("[data-provider='claude']");
+      btn?.addEventListener("click", () => _runUsageRelogin("claude"));
+      return;
+    }
+    const msg = data.error === "no_credentials"
+      ? t("home.usage_no_credentials")
+      : data.message || data.error;
+    el.innerHTML = _renderUsageError("claude", data, msg);
+    const btn = el.querySelector("[data-provider='claude']");
+    btn?.addEventListener("click", () => _runUsageRelogin("claude"));
+    return;
+  }
+
+  let html = "";
+  if (data.five_hour) {
+    html += _renderUsageBar("5h", data.five_hour.utilization, data.five_hour.resets_at, data.five_hour.window_seconds);
+  }
+  if (data.seven_day) {
+    html += _renderUsageBar("7d", data.seven_day.utilization, data.seven_day.resets_at, data.seven_day.window_seconds);
+  }
+  if (data.additional_capacity) {
+    const ac = data.additional_capacity;
+    const usedM = (ac.used_tokens / 1_000_000).toFixed(2);
+    const limitM = (ac.limit_tokens / 1_000_000).toFixed(2);
+    html += _renderUsageBar(`Add (${usedM}M/${limitM}M)`, ac.utilization, null, null);
+  }
+  el.innerHTML = html || `<div class="usage-ok">${t("home.usage_within_limit")}</div>`;
+}
+
+function _renderOpenaiUsage(data) {
+  const el = document.getElementById("usageOpenaiBody");
+  if (!el) return;
+
+  if (data.error) {
+    const msg = data.error === "no_credentials"
+      ? t("home.usage_no_credentials")
+      : data.error === "not_available"
+        ? t("home.usage_not_available")
+        : data.message || data.error;
+    el.innerHTML = _renderUsageError("openai", data, msg);
+    const btn = el.querySelector("[data-provider='openai']");
+    btn?.addEventListener("click", () => _runUsageRelogin("openai"));
+    return;
+  }
+
+  // Render usage windows (keys like "5h", "Week", etc.)
+  const skip = new Set(["provider"]);
+  let html = "";
+  for (const [key, win] of Object.entries(data)) {
+    if (skip.has(key) || !win || typeof win !== "object" || win.utilization === undefined) continue;
+    html += _renderUsageBar(key, win.utilization, win.resets_at, win.window_seconds);
+  }
+  el.innerHTML = html || `<div class="usage-ok">${t("home.usage_within_limit")}</div>`;
+}
+
+function _renderNanogptUsage(data) {
+  const el = document.getElementById("usageNanogptBody");
+  if (!el) return;
+
+  if (data.error) {
+    const msg = data.error === "no_credentials"
+      ? t("home.usage_no_credentials")
+      : data.message || data.error;
+    el.innerHTML = _renderUsageError("nanogpt", data, msg);
+    return;
+  }
+
+  // Render usage windows (keys like "Week", "Images", etc.)
+  const skip = new Set(["provider", "state"]);
+  let html = "";
+  for (const [key, win] of Object.entries(data)) {
+    if (skip.has(key) || !win || typeof win !== "object" || win.utilization === undefined) continue;
+    html += _renderUsageBar(key, win.utilization, win.resets_at, win.window_seconds);
+  }
+  el.innerHTML = html || `<div class="usage-ok">${t("home.usage_within_limit")}</div>`;
+}
+
+function _renderGovernor(gov) {
+  const el = document.getElementById("usageGovernorBar");
+  if (!el) return;
+  if (!gov || !gov.active) {
+    el.style.display = "none";
+    return;
+  }
+  const suspended = (gov.suspended_animas || []).join(", ") || "none";
+  const reason = gov.reason || "throttling";
+  const needsRelogin = /rate_limited|unauthorized|no_credentials/.test(reason);
+  el.style.display = "block";
+  el.innerHTML = `
+    <div class="governor-bar governor-bar--active">
+      <span class="governor-icon">&#x26A0;</span>
+      <span class="governor-text">
+        <strong>Usage Governor</strong>: ${escapeHtml(reason)}
+      </span>
+      <span class="governor-suspended">${escapeHtml(suspended)}</span>
+      ${needsRelogin ? `<button class="btn-secondary governor-relogin-btn" id="govReloginBtn" style="margin-left:0.75rem;font-size:0.78rem;padding:3px 10px;">Claude 再認証</button>` : ""}
+    </div>
+  `;
+  if (needsRelogin) {
+    const btn = document.getElementById("govReloginBtn");
+    btn?.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "...";
+      await _runUsageRelogin("claude");
+      btn.disabled = false;
+      btn.textContent = "Claude 再認証";
+    });
+  }
+}
+
+async function _loadUsage(forceRefresh = false) {
+  try {
+    const url = forceRefresh ? "/api/usage?skip_cache=true" : "/api/usage";
+    const data = await api(url);
+
+    // Auto-refresh: if Claude returns rate_limited, try relogin (token refresh)
+    // then retry once before showing the error
+    if (data.claude?.error === "rate_limited") {
+      try {
+        const reloginRes = await fetch("/api/usage/claude/relogin", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+        });
+        const reloginData = await reloginRes.json().catch(() => ({}));
+        if (reloginData.success) {
+          // Token refreshed — retry usage fetch (skip_cache)
+          const retry = await api("/api/usage?skip_cache=true");
+          if (retry.claude && !retry.claude.error) {
+            data.claude = retry.claude;
+          } else if (retry.claude?.error === "rate_limited") {
+            // Still rate-limited after refresh — show relogin button
+            data.claude = {
+              ...retry.claude,
+              _show_relogin: true,
+              _relogin_message: reloginData.message,
+            };
+          }
+        } else {
+          // Refresh failed — show relogin button
+          data.claude._show_relogin = true;
+        }
+      } catch { /* ignore — will render original error */ }
+    }
+
+    if (data.claude) _renderClaudeUsage(data.claude);
+    if (data.openai) _renderOpenaiUsage(data.openai);
+    if (data.nanogpt) _renderNanogptUsage(data.nanogpt);
+    _renderGovernor(data.governor);
+    const serverFetchedAt = data.snapshot_cached_at ?? data.cached_at ?? null;
+    _updateUsageLastUpdated(Date.now(), serverFetchedAt);
+  } catch (err) {
+    const claudeEl = document.getElementById("usageClaudeBody");
+    const openaiEl = document.getElementById("usageOpenaiBody");
+    const nanogptEl = document.getElementById("usageNanogptBody");
+    const msg = `<div class="usage-error">${escapeHtml(err.message)}</div>`;
+    if (claudeEl) claudeEl.innerHTML = msg;
+    if (openaiEl) openaiEl.innerHTML = msg;
+    if (nanogptEl) nanogptEl.innerHTML = msg;
+  }
+}
+
+// ── System Status ──────────────────────────
 
 async function _loadSystemStatus() {
   try {
@@ -203,7 +656,11 @@ function _buildCard(node, isRoot = false) {
   if (isRoot) cls += " org-tree-card--root";
   if (disabled) cls += " org-tree-card--disabled";
   card.className = cls;
+  const department = node.department || "";
+  const title = node.title || "";
   const metaParts = [];
+  if (department) metaParts.push(`<span class="org-tree-dept">${escapeHtml(department)}</span>`);
+  if (title) metaParts.push(`<span class="org-tree-title">${escapeHtml(title)}</span>`);
   if (role) metaParts.push(`<span class="org-tree-role">${escapeHtml(role)}</span>`);
   if (model) metaParts.push(`<span class="org-tree-model">${escapeHtml(model)}</span>`);
 
@@ -219,7 +676,7 @@ function _buildCard(node, isRoot = false) {
       ${metaParts.length ? `<div class="org-tree-meta">${metaParts.join("")}</div>` : ""}
     </div>
   `;
-  card.addEventListener("click", () => { location.hash = "#/animas"; });
+  card.addEventListener("click", () => { location.hash = `#/animas/${encodeURIComponent(node.name)}`; });
   return card;
 }
 

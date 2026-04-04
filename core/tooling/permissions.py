@@ -45,11 +45,34 @@ _PERMISSION_DENY_RE = re.compile(
 # ── Public API ────────────────────────────────────────────
 
 
+def _disabled_service_tools() -> set[str]:
+    """Return tool module names whose backing service is disabled in config.json.
+
+    Prevents e.g. ``slack_channel_post`` appearing in an anima's tool list
+    when ``external_messaging.slack.enabled`` is false.  Only modules that
+    are registered in ``TOOL_MODULES`` AND whose service is explicitly
+    disabled are excluded; unconfigured services are left as-is.
+    """
+    disabled: set[str] = set()
+    try:
+        from core.config.models import load_config
+
+        cfg = load_config()
+        em = cfg.external_messaging
+        if not em.slack.enabled:
+            disabled.add("slack")
+        if not em.chatwork.enabled:
+            disabled.add("chatwork")
+    except Exception:
+        pass  # config unavailable at import time — skip filtering
+    return disabled
+
+
 def get_permitted_tools(config: PermissionsConfig) -> set[str]:
     """Get permitted tool names from structured permissions config."""
     from core.tools import TOOL_MODULES
 
-    all_tools = set(TOOL_MODULES.keys())
+    all_tools = set(TOOL_MODULES.keys()) - _disabled_service_tools()
 
     if config.external_tools.allow_all:
         base = all_tools - set(config.external_tools.deny)

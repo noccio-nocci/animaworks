@@ -22,6 +22,7 @@ from core.tools._image_clients import (
     _DEFAULT_ANIMATIONS,
     _EXPRESSION_GUIDANCE,
     _EXPRESSION_PROMPTS,
+    LocalDiffusersClient,
     _REALISTIC_CHAT_ICON_PROMPT,
     _REALISTIC_EXPRESSION_GUIDANCE,
     _REALISTIC_EXPRESSION_PROMPTS,
@@ -127,6 +128,10 @@ class ImageGenPipeline:
             return self.REALISTIC_ASSET_NAMES[key]
         return self.ASSET_NAMES[key]
 
+    @property
+    def _use_diffusers(self) -> bool:
+        return getattr(self._config, "backend", "api") == "diffusers"
+
     def _bustup_filename(self, expression: str) -> str:
         """Return bustup expression filename based on current style."""
         suffix = "_realistic" if self._is_realistic else ""
@@ -134,11 +139,88 @@ class ImageGenPipeline:
             return f"avatar_bustup{suffix}.png"
         return f"avatar_bustup_{expression}{suffix}.png"
 
+    def _resolve_character_prompt(self) -> str:
+        """Load the cached character appearance prompt for the current style.
+
+        Returns the prompt text or empty string if unavailable.
+        This allows expression/bustup generation to include the character's
+        appearance (ethnicity, hair, features) so the model preserves identity.
+        """
+        style = "realistic" if self._is_realistic else "anime"
+        from core.asset_reconciler import _resolve_prompt
+        try:
+            return _resolve_prompt(self._anima_dir, style) or ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _append_prompt_clause(prompt: str, clause: str) -> str:
+        prompt = prompt.strip()
+        clause = clause.strip()
+        if not prompt:
+            return clause
+        if clause.lower() in prompt.lower():
+            return prompt
+        return f"{prompt}, {clause}"
+
+    def _boost_prompt_quality(self, prompt: str, negative_prompt: str) -> tuple[str, str]:
+        """Add model/style-specific quality tags for Diffusers generation."""
+        if not self._use_diffusers:
+            return prompt, negative_prompt
+
+        if self._is_realistic:
+            quality_prefix = (
+                "RAW photo, 8k uhd, high quality, sharp focus, photorealistic, "
+                "professional portrait photography, DSLR, 85mm lens, studio lighting, "
+                "film grain, Fujifilm XT3"
+            )
+            quality_negative = (
+                "deformed, bad anatomy, bad hands, missing fingers, extra fingers, "
+                "mutated hands, poorly drawn face, mutation, extra limbs, "
+                "ugly, worst quality, low quality, blurry, watermark, text, signature, "
+                "anime, cartoon, illustration, drawing, comic, manga, "
+                "cel shading, flat colors, stylized, 2d, sketch, painting"
+            )
+        else:
+            quality_prefix = (
+                "masterpiece, best quality, very aesthetic, absurdres, highres"
+            )
+            quality_negative = (
+                "lowres, bad anatomy, bad hands, missing fingers, extra fingers, "
+                "mutated hands, poorly drawn face, mutation, extra limbs, "
+                "ugly, worst quality, low quality, normal quality, blurry, "
+                "watermark, text, signature, jpeg artifacts"
+            )
+
+        prompt = quality_prefix + ", " + prompt
+        negative_prompt = self._append_prompt_clause(negative_prompt, quality_negative)
+        return prompt, negative_prompt
+
+    def _enforce_single_subject(self, prompt: str, negative_prompt: str) -> tuple[str, str]:
+        """Bias realistic local generation toward one clearly isolated subject."""
+        if not self._use_diffusers or not self._is_realistic:
+            return prompt, negative_prompt
+
+        single_subject_clause = (
+            "solo, single subject, exactly one young woman, one person only, "
+            "subject alone, centered composition, no other people"
+        )
+        multi_person_negative = (
+            "multiple people, two women, two people, group photo, crowd, background people, "
+            "extra person, extra people, duplicate person, cloned person, side character, "
+            "background character, mirrored person, duplicate body, extra body, split image, "
+            "collage, double exposure, floating person, distant person"
+        )
+        prompt = self._append_prompt_clause(prompt, single_subject_clause)
+        negative_prompt = self._append_prompt_clause(negative_prompt, multi_person_negative)
+        return prompt, negative_prompt
+
     def generate_bustup_expression(
         self,
         reference_image: bytes,
         expression: str,
         skip_existing: bool = True,
+        is_from_fullbody: bool = False,
     ) -> Path | None:
         """Generate a single expression variant of the bustup image.
 
@@ -146,6 +228,10 @@ class ImageGenPipeline:
             reference_image: Full-body reference image bytes.
             expression: Expression name (e.g. "smile", "troubled").
             skip_existing: Skip if output file already exists.
+            is_from_fullbody: True when the reference is a fullbody image
+                (needs higher strength for composition change).
+                False when the reference is another bustup expression
+                (needs lower strength to preserve identity).
 
         Returns:
             Path to generated image, or None on failure.
@@ -166,25 +252,47 @@ class ImageGenPipeline:
         else:
             prompt = _EXPRESSION_PROMPTS[expression]
 
+        # Prepend character appearance so the model preserves ethnicity/features
+        char_prompt = self._resolve_character_prompt()
+        if char_prompt:
+            prompt = char_prompt + ", " + prompt
+
         if self._config.style_prefix:
             prompt = self._config.style_prefix + prompt
         if self._config.style_suffix:
             prompt = prompt + self._config.style_suffix
 
+        # Apply quality boost (adds quality tags + negative prompt)
+        negative_prompt = ""
+        prompt, negative_prompt = self._boost_prompt_quality(prompt, negative_prompt)
+
         self._assets_dir.mkdir(parents=True, exist_ok=True)
 
-        from core.tools.image_gen import FluxKontextClient
+        if self._use_diffusers:
+            kontext = LocalDiffusersClient(self._config)
+        else:
+            from core.tools.image_gen import FluxKontextClient
 
-        kontext = FluxKontextClient()
+            kontext = FluxKontextClient()
         if self._is_realistic:
             guidance = _REALISTIC_EXPRESSION_GUIDANCE.get(expression, 4.5)
         else:
             guidance = _EXPRESSION_GUIDANCE.get(expression, 5.0)
+
+        extra_kwargs: dict = {}
+        if self._use_diffusers and negative_prompt:
+            extra_kwargs["negative_prompt"] = negative_prompt
+        # Use higher strength when transforming fullbody → bustup (composition change),
+        # lower strength for expression variants to preserve character identity.
+        if self._use_diffusers:
+            extra_kwargs["strength"] = 0.50 if is_from_fullbody else 0.20
+
         result_bytes = kontext.generate_from_reference(
             reference_image=reference_image,
             prompt=prompt,
             aspect_ratio="3:4",
             guidance_scale=guidance,
+            **extra_kwargs,
         )
 
         output_path.write_bytes(result_bytes)
@@ -204,6 +312,9 @@ class ImageGenPipeline:
         vibe_info_extracted: float | None = None,
         seed: int | None = None,
         progress_callback: Callable[[str, str, int], None] | None = None,
+        face_reference_image: bytes | None = None,
+        fullbody_step_callback: Callable[[int, int], None] | None = None,
+        num_inference_steps: int | None = None,
     ) -> PipelineResult:
         """Run the 7-step pipeline synchronously.
 
@@ -224,16 +335,13 @@ class ImageGenPipeline:
             seed: Seed for reproducibility (fullbody generation only).
             progress_callback: Optional callback ``(step, status, pct)`` for
                 real-time progress reporting.
+            face_reference_image: Optional face photo bytes for IP-Adapter.
+                Injects facial features from the reference into fullbody generation.
 
         Returns:
             PipelineResult with paths and error info.
         """
-        from core.tools.image_gen import (
-            FalTextToImageClient,
-            FluxKontextClient,
-            MeshyClient,
-            NovelAIClient,
-        )
+        from core.tools.image_gen import FalTextToImageClient, FluxKontextClient, MeshyClient, NovelAIClient
 
         self._assets_dir.mkdir(parents=True, exist_ok=True)
         if steps:
@@ -255,6 +363,7 @@ class ImageGenPipeline:
         # ── Step 1: Full-body ──
         fullbody_bytes: bytes | None = None
         fullbody_path = self._assets_dir / self._asset_name("fullbody")
+        fullbody_freshly_generated = False  # Track for cascade invalidation
 
         if "fullbody" in enabled:
             if skip_existing and fullbody_path.exists():
@@ -264,7 +373,12 @@ class ImageGenPipeline:
             else:
                 try:
                     _notify("fullbody", "generating", 0)
-                    if self._is_realistic:
+                    if self._use_diffusers:
+                        logger.info("Step 1: Generating full-body with local Diffusers …")
+                        client: NovelAIClient | FalTextToImageClient | LocalDiffusersClient = LocalDiffusersClient(
+                            self._config,
+                        )
+                    elif self._is_realistic:
                         if not os.environ.get("FAL_KEY"):
                             raise RuntimeError("FAL_KEY required for realistic image generation.")
                         logger.info("Step 1: Generating realistic full-body with Fal Flux Pro …")
@@ -281,15 +395,22 @@ class ImageGenPipeline:
                         raise RuntimeError("No image generation API key configured. Set NOVELAI_TOKEN or FAL_KEY.")
 
                     # ── A: Load style reference for Vibe Transfer ──
-                    # Direct vibe_image parameter takes precedence over config
-                    effective_vibe: bytes | None = vibe_image
-                    if effective_vibe is None and self._config.style_reference:
-                        style_path = Path(self._config.style_reference).expanduser()
-                        if style_path.exists():
-                            effective_vibe = style_path.read_bytes()
-                            logger.debug("Loaded style reference: %s", style_path)
-                        else:
-                            logger.warning("Style reference not found: %s", style_path)
+                    # Direct vibe_image parameter takes precedence over config.
+                    # When face_reference_image is provided, skip vibe transfer
+                    # entirely to avoid existing style (clothing/background)
+                    # bleeding into the face-referenced generation.
+                    effective_vibe: bytes | None = None
+                    if face_reference_image is not None:
+                        logger.debug("Skipping vibe transfer — face reference takes priority")
+                    else:
+                        effective_vibe = vibe_image
+                        if effective_vibe is None and self._config.style_reference:
+                            style_path = Path(self._config.style_reference).expanduser()
+                            if style_path.exists():
+                                effective_vibe = style_path.read_bytes()
+                                logger.debug("Loaded style reference: %s", style_path)
+                            else:
+                                logger.warning("Style reference not found: %s", style_path)
 
                     effective_vibe_strength = vibe_strength if vibe_strength is not None else self._config.vibe_strength
                     effective_vibe_info = (
@@ -310,16 +431,32 @@ class ImageGenPipeline:
                         else:
                             styled_negative = self._config.negative_prompt_extra
 
-                    fullbody_bytes = client.generate_fullbody(
-                        prompt=styled_prompt,
-                        negative_prompt=styled_negative,
-                        seed=seed,
-                        vibe_image=effective_vibe,
-                        vibe_strength=effective_vibe_strength,
-                        vibe_info_extracted=effective_vibe_info,
+                    styled_prompt, styled_negative = self._enforce_single_subject(
+                        styled_prompt,
+                        styled_negative,
                     )
+                    styled_prompt, styled_negative = self._boost_prompt_quality(
+                        styled_prompt,
+                        styled_negative,
+                    )
+
+                    _fb_kwargs: dict[str, Any] = {
+                        "prompt": styled_prompt,
+                        "negative_prompt": styled_negative,
+                        "seed": seed,
+                        "vibe_image": effective_vibe,
+                        "vibe_strength": effective_vibe_strength,
+                        "vibe_info_extracted": effective_vibe_info,
+                        "face_reference_image": face_reference_image,
+                    }
+                    if self._use_diffusers:
+                        _fb_kwargs["step_callback"] = fullbody_step_callback
+                    if num_inference_steps is not None:
+                        _fb_kwargs["steps"] = num_inference_steps
+                    fullbody_bytes = client.generate_fullbody(**_fb_kwargs)
                     fullbody_path.write_bytes(fullbody_bytes)
                     result.fullbody_path = fullbody_path
+                    fullbody_freshly_generated = True
                     logger.info("Step 1 complete: %s", fullbody_path)
                     _notify("fullbody", "completed", 100)
                 except Exception as exc:
@@ -342,6 +479,10 @@ class ImageGenPipeline:
                     result.errors.append("icon: neutral bustup image required")
                 return result
 
+        # ── Step 2 & 3: Bust-up and Chibi (sequential, same client) ──
+        # When fullbody was freshly generated, derived assets are stale
+        # and must be regenerated regardless of skip_existing.
+        skip_derived = skip_existing and not fullbody_freshly_generated
         # ── Step 2: Bust-up (expressions) ──
         chibi_bytes: bytes | None = None
 
@@ -362,7 +503,8 @@ class ImageGenPipeline:
                     path = self.generate_bustup_expression(
                         reference_image=fullbody_bytes,
                         expression="neutral",
-                        skip_existing=skip_existing,
+                        skip_existing=skip_derived,
+                        is_from_fullbody=True,
                     )
                     if path and path.exists():
                         bustup_ref_bytes = path.read_bytes()
@@ -390,7 +532,7 @@ class ImageGenPipeline:
                     path = self.generate_bustup_expression(
                         reference_image=ref_for_expressions,
                         expression=expr,
-                        skip_existing=skip_existing,
+                        skip_existing=skip_derived,
                     )
                     if path:
                         result.bustup_paths[expr] = path
@@ -449,15 +591,19 @@ class ImageGenPipeline:
 
         if "chibi" in enabled:
             chibi_path = self._assets_dir / self._asset_name("chibi")
-            if skip_existing and chibi_path.exists():
+            if skip_derived and chibi_path.exists():
                 result.skipped.append("chibi")
                 chibi_bytes = chibi_path.read_bytes()
                 result.chibi_path = chibi_path
             else:
                 try:
                     _notify("chibi", "generating", 0)
-                    logger.info("Step 4: Generating chibi with Flux Kontext …")
-                    kontext = FluxKontextClient()
+                    if self._use_diffusers:
+                        logger.info("Step 4: Generating chibi with local Diffusers …")
+                        kontext = LocalDiffusersClient(self._config)
+                    else:
+                        logger.info("Step 4: Generating chibi with Flux Kontext …")
+                        kontext = FluxKontextClient()
                     chibi_bytes = kontext.generate_from_reference(
                         reference_image=fullbody_bytes,
                         prompt=_CHIBI_PROMPT,

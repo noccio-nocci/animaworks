@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,27 @@ class ReconcileMixin:
         # Update running set after restart_requested handling
         running = set(self.processes.keys())
 
+        # Governor-suspended animas — must not be auto-restarted by reconciliation.
+        # Read directly from the persisted state file (no app coupling).
+        governor_suspended: set[str] = set()
+        try:
+            from core.paths import get_data_dir
+
+            _gov_state_path = get_data_dir() / "usage_governor_state.json"
+            if _gov_state_path.is_file():
+                import json as _json
+
+                _gov_data = _json.loads(_gov_state_path.read_text("utf-8"))
+                governor_suspended = set(_gov_data.get("suspended_animas", []))
+        except Exception:
+            pass
+
+        # Evict stale entries from _recently_stopped (older than 30s)
+        _now = time.monotonic()
+        for _rs_name in list(getattr(self, "_recently_stopped", {})):
+            if _now - self._recently_stopped[_rs_name] > 30.0:
+                del self._recently_stopped[_rs_name]
+
         # enabled + not running → start
         for name, enabled in on_disk.items():
             if enabled and name not in running:
@@ -130,6 +152,17 @@ class ReconcileMixin:
                     continue
                 if name in self._bootstrapping:
                     logger.debug("Reconciliation: skipping %s (bootstrap in progress)", name)
+                    continue
+                # Safety margin: avoid spawning a process right after it was
+                # stopped — the health-check restart path may already be
+                # starting a new instance, and a race here causes DUPLICATE
+                # PROCESS errors.
+                _stopped_at = getattr(self, "_recently_stopped", {}).get(name)
+                if _stopped_at is not None and (time.monotonic() - _stopped_at) < 5.0:
+                    logger.debug("Reconciliation: skipping %s (recently stopped, safety margin)", name)
+                    continue
+                if name in governor_suspended:
+                    logger.info("Reconciliation: skipping %s (governor suspended)", name)
                     continue
                 logger.info("Reconciliation: starting anima %s", name)
                 try:

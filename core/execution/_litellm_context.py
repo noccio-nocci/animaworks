@@ -70,8 +70,13 @@ class ContextMixin:
             self._model_config.max_tokens,
             _thinking,
         )
+        _model_name = self._model_config.model
+        # nanoGPT: rewrite nanogpt/ prefix to openai/ for LiteLLM routing
+        # (nanoGPT is an OpenAI-compatible API aggregator)
+        if _model_name.startswith("nanogpt/"):
+            _model_name = "openai/" + _model_name[len("nanogpt/"):]
         kwargs: dict[str, Any] = {
-            "model": self._model_config.model,
+            "model": _model_name,
             "max_tokens": _eff_max,
             "timeout": self._resolve_llm_timeout(),
             "num_retries": self._resolve_num_retries(),
@@ -133,8 +138,18 @@ class ContextMixin:
         elif self._model_config.model.startswith("ollama/"):
             kwargs["think"] = False
         # Ollama num_ctx: explicitly set context window to prevent silent truncation
+        # Also set keep_alive so the model does not monopolise VRAM indefinitely between
+        # requests on shared hardware (multiple animas using different models).
         if self._model_config.model.startswith("ollama/"):
             kwargs["num_ctx"] = self._resolve_cw()
+            try:
+                from core.config import load_config as _lc
+
+                _keep = _lc().server.ollama_keep_alive
+            except Exception:
+                _keep = "5m"
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"]["keep_alive"] = _keep
         # ── Repetition penalty parameters ──
         from core.config.models import resolve_penalties
 

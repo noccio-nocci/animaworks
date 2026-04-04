@@ -45,6 +45,10 @@ _RE_THREAD_CTX = re.compile(
     r"(\[Thread context[^\]]*\].*?\[/Thread context\]\s*)",
     re.DOTALL,
 )
+_RE_FAST_SLACK_PROBE = re.compile(
+    r"^\s*(?:test(?:\s+from\s+slack)?|テスト|ping|疎通(?:確認)?|届いた[？?]?|反応(?:ある)?[？?]?|応答(?:ある)?[？?]?|確認(?:ですか)?[？?]?|見えてる[？?]?)\s*$",
+    re.IGNORECASE,
+)
 _THREAD_CTX_BUDGET = 300
 _MSG_BODY_BUDGET = 2000
 
@@ -72,19 +76,75 @@ def _truncate_with_thread_ctx(
     return ctx_part + body_part[:body_budget]
 
 
+def _extract_user_body(content: str) -> str:
+    """Return message body without leading thread-context wrapper."""
+    m = _RE_THREAD_CTX.match(content)
+    if not m:
+        return content.strip()
+    return content[m.end() :].strip()
+
+
+def _is_self_task_completion_notice(msg: Any, anima_name: str) -> bool:
+    """True for self-authored task completion chatter that can be deferred."""
+    if getattr(msg, "source", "") != "anima":
+        return False
+    if getattr(msg, "from_person", "") != anima_name:
+        return False
+    body = _extract_user_body(getattr(msg, "content", ""))
+    return body.startswith("タスク「") and "が完了しました" in body
+
+
+def _is_fast_slack_probe(msg: Any) -> bool:
+    """True for short Slack connectivity checks that can skip the LLM."""
+    if getattr(msg, "source", "") != "slack":
+        return False
+    if not getattr(msg, "external_channel_id", ""):
+        return False
+    body = _extract_user_body(getattr(msg, "content", ""))
+    return bool(body) and len(body) <= 40 and bool(_RE_FAST_SLACK_PROBE.fullmatch(body))
+
+
+def _build_fast_slack_reply(msg: Any) -> str:
+    """Small canned reply for Slack probe messages."""
+    mention = f"<@{msg.external_user_id}> " if getattr(msg, "external_user_id", "") else ""
+    return f"{mention}受信しました。"
+
+
+def _is_auto_response_enabled() -> bool:
+    """Check if Slack auto-response is enabled in config."""
+    try:
+        from core.config.models import load_config
+
+        cfg = load_config()
+        return cfg.external_messaging.slack.auto_response
+    except Exception:
+        return False
+
+
 def _build_reply_instruction(m: Any) -> str:
     """Build platform-specific reply instruction metadata for external messages.
 
     Returns a formatted ``[reply_instruction: ...]`` line that the LLM can
     copy-paste to reply via the correct platform, channel, and thread.
+
+    When Slack ``auto_response`` is enabled, returns an ``[auto_reply: ...]``
+    annotation instead, telling the LLM that the reply will be sent
+    automatically and it should NOT call ``slack_channel_post``.
     """
     if m.source == "slack":
+        if _is_auto_response_enabled():
+            return "  [auto_reply: Slack返信は自動送信されます。slack_channel_postを呼ぶ必要はありません]"
+
         mention = f"<@{m.external_user_id}> " if m.external_user_id else ""
-        cmd = f"animaworks-tool slack send '{m.external_channel_id}' '{mention}{{返信内容}}'"
         thread_id = m.external_thread_ts or m.source_message_id
+        parts = [
+            "use tool slack_channel_post with",
+            f'channel_id="{m.external_channel_id}"',
+            f'text="{mention}{{返信内容}}"',
+        ]
         if thread_id:
-            cmd += f" --thread {thread_id}"
-        return f"  [reply_instruction: {cmd}]"
+            parts.append(f'thread_ts="{thread_id}"')
+        return f"  [reply_instruction: {', '.join(parts)}]"
 
     if m.source == "chatwork":
         cmd = f"animaworks-tool chatwork send {m.external_channel_id} '{{返信内容}}'"
@@ -304,6 +364,7 @@ class InboxMixin:
         self._get_interrupt_event("_inbox").clear()
         self.agent.set_interrupt_event(self._get_interrupt_event("_inbox"))
         logger.info("[%s] process_inbox_message START", self.name)
+        started_at = now_local()
         try:
             # Wait for any running cron task to finish before processing inbox.
             # Prevents LLM context confusion when inbox arrives mid-cron.
@@ -338,6 +399,10 @@ class InboxMixin:
 
                     senders_str = ", ".join(inbox_result.senders)
                     trigger = f"inbox:{senders_str}"
+
+                    fast_result = self._maybe_fast_reply_external_probe(inbox_result, started_at=started_at)
+                    if fast_result is not None:
+                        return fast_result
 
                     messages_text = "\n\n".join(inbox_result.prompt_parts)
                     prompt = load_prompt(
@@ -433,6 +498,29 @@ class InboxMixin:
                             meta={"trigger": "inbox"},
                         )
 
+                    # ── Slack auto-response: post LLM reply back to Slack ──
+                    if accumulated_text.strip() and _is_auto_response_enabled():
+                        try:
+                            from core.outbound_auto import SlackAutoResponder
+
+                            _auto = SlackAutoResponder()
+                            # Build set of channels the LLM already posted to
+                            _already = set()
+                            for ch in self.agent._tool_handler.posted_channels_for("inbox"):
+                                _already.add(ch)
+                            await _auto.on_inbox_response(
+                                anima_name=self.name,
+                                response_text=accumulated_text,
+                                inbox_items=inbox_result.inbox_items,
+                                already_posted=_already,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "[%s] Slack auto-response failed",
+                                self.name,
+                                exc_info=True,
+                            )
+
                     # Archive processed messages — but NOT when the LLM
                     # returned nothing (e.g. SDK empty response due to API
                     # outage / rate limit).  Keeping them lets the next
@@ -486,7 +574,80 @@ class InboxMixin:
                     self._status_slots["inbox"] = "idle"
                     self._task_slots["inbox"] = ""
         finally:
-            self._notify_lock_released()
+                    self._notify_lock_released()
+
+    def _maybe_fast_reply_external_probe(
+        self,
+        inbox_result: InboxResult,
+        *,
+        started_at: datetime,
+    ) -> CycleResult | None:
+        """Reply to simple Slack connectivity probes without invoking the LLM."""
+        if inbox_result.unread_count != 1 or len(inbox_result.inbox_items) != 1:
+            return None
+
+        item = inbox_result.inbox_items[0]
+        msg = item.msg
+        if not _is_fast_slack_probe(msg):
+            return None
+
+        from core.tooling.dispatch import ExternalToolDispatcher
+
+        dispatcher = ExternalToolDispatcher(
+            getattr(self.agent, "_tool_registry", []) or [],
+            getattr(self.agent, "_personal_tools", {}) or {},
+        )
+        reply_text = _build_fast_slack_reply(msg)
+        thread_id = msg.external_thread_ts or msg.source_message_id
+        args: dict[str, Any] = {
+            "anima_dir": str(self.anima_dir),
+            "channel_id": msg.external_channel_id,
+            "text": reply_text,
+        }
+        if thread_id:
+            args["thread_ts"] = thread_id
+
+        raw = dispatcher.dispatch("slack_channel_post", args)
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            logger.info("[%s] Fast Slack probe fallback to LLM (raw=%r)", self.name, raw[:200])
+            return None
+        if parsed.get("status") != "ok":
+            logger.info("[%s] Fast Slack probe fallback to LLM (result=%s)", self.name, parsed)
+            return None
+
+        self._last_activity = now_local()
+        self._activity.log(
+            "response_sent",
+            content=reply_text,
+            to_person=msg.from_person,
+            channel="inbox",
+            summary=reply_text,
+            meta={"trigger": "inbox_fast_probe"},
+        )
+        self._activity.log(
+            "inbox_processing_end",
+            summary=reply_text,
+            meta={"senders": list(inbox_result.senders), "count": inbox_result.unread_count},
+        )
+        self.messenger.archive_paths(inbox_result.inbox_items)
+        duration_ms = max(1, int((now_local() - started_at).total_seconds() * 1000))
+        logger.info("[%s] Fast Slack probe reply sent in %dms", self.name, duration_ms)
+        logger.info(
+            "[%s] process_inbox_message END duration_ms=%d unread=%d",
+            self.name,
+            duration_ms,
+            inbox_result.unread_count,
+        )
+        return CycleResult(
+            trigger=f"inbox:{msg.from_person}",
+            action="responded",
+            summary=reply_text,
+            duration_ms=duration_ms,
+        )
 
     async def _process_inbox_messages(
         self,
@@ -556,6 +717,27 @@ class InboxMixin:
             _handle_delegation_dms(self, delegation_items)
             inbox_items = non_delegation_items
             messages = [item.msg for item in non_delegation_items]
+            unread_count = len(messages)
+            senders = {m.from_person for m in messages}
+
+        # When a human/external DM is waiting, self-generated task completion
+        # notices add latency without helping the reply. Defer them here.
+        external_items = [item for item in inbox_items if getattr(item.msg, "source", "") in {"slack", "chatwork"}]
+        deferred_internal = [
+            item for item in inbox_items if _is_self_task_completion_notice(item.msg, self.name)
+        ]
+        if external_items and deferred_internal and len(deferred_internal) < len(inbox_items):
+            try:
+                archived = self.messenger.archive_paths(deferred_internal)
+                logger.info(
+                    "[%s] Deferred %d self task notices while prioritizing external inbox",
+                    self.name,
+                    archived,
+                )
+            except Exception:
+                logger.debug("[%s] Failed to defer self task notices", self.name, exc_info=True)
+            inbox_items = [item for item in inbox_items if item not in deferred_internal]
+            messages = [item.msg for item in inbox_items]
             unread_count = len(messages)
             senders = {m.from_person for m in messages}
 

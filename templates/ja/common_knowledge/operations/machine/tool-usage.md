@@ -8,6 +8,19 @@
 machine は AnimaWorks インフラにアクセスできない独立した実行環境で動作する。
 記憶・メッセージ・組織情報は利用できないため、必要な情報はすべて計画書に含めること。
 
+## 標準フォールバックルール（全Anima共通）
+
+このルールは `miyu` や `kanna` 固有ではなく、**全Anima共通**で適用する。
+
+- ネイティブWindows環境で shell / command 実行が必要なタスクを処理するとき、以下のどれかが起きたら**同じローカル実行経路を再試行し続けない**
+- `shell_command` / command execution が `policy blocked` になる
+- `codex exec exited with code 1` が繰り返し発生する
+- shell 系ツールが blocked / denied で、既存 CLI・スクリプト・接続情報ファイルに到達できない
+- 上記に該当した時点で、**machine を標準実行経路に切り替える**
+- shell 必須作業では、まず `engine=claude` を選び、`working_directory` を必ず明示する
+- 指示書には少なくとも **目的 / 対象パス / 完了条件 / 禁止事項 / 正本ファイルの場所** を含める
+- `working_directory` が曖昧なまま machine を呼ばない。作業ディレクトリを先に確定する
+
 ## メタパターン — 全ロール共通
 
 全フェーズ・全ロールで以下の4ステップを徹底する:

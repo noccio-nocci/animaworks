@@ -88,13 +88,24 @@ class PermissionsMixin:
 
         if config.file_roots and config.file_roots != ["/"]:
             for root in config.file_roots:
-                if root.startswith("/"):
+                if Path(root).is_absolute():
                     file_read.append(root)
                     file_write.append(root)
 
         restrictions: list[str] = []
         for cmd in config.commands.deny:
             restrictions.append(t("handler.cmd_denied", cmd=cmd))
+
+        # Command execution permissions
+        commands_info: dict[str, Any] = {}
+        if config.commands.allow_all:
+            commands_info["policy"] = "allow_all"
+            commands_info["note"] = "All commands are allowed (except those in deny list and built-in security blocks)"
+        else:
+            commands_info["policy"] = "allowlist"
+            commands_info["allowed"] = config.commands.allow
+        if config.commands.deny:
+            commands_info["denied"] = config.commands.deny
 
         result = {
             "internal_tools": internal_tools,
@@ -106,6 +117,7 @@ class PermissionsMixin:
                 "read": file_read,
                 "write": file_write,
             },
+            "commands": commands_info,
             "restrictions": restrictions,
         }
 
@@ -243,17 +255,33 @@ class PermissionsMixin:
                 context={"allowed_dirs": []},
             )
 
-        # Otherwise: check if path is under any of the file_roots
-        allowed_dirs = [Path(r).resolve() for r in config.file_roots if r.startswith("/")]
+        # Otherwise: check if path is under any of the file_roots (read-write)
+        allowed_dirs = [Path(r).resolve() for r in config.file_roots if Path(r).is_absolute()]
         for allowed in allowed_dirs:
             if resolved.is_relative_to(allowed):
                 return None
 
+        # Check file_roots_readonly — read allowed, write denied
+        readonly_dirs = [Path(r).resolve() for r in config.file_roots_readonly if Path(r).is_absolute()]
+        for readonly in readonly_dirs:
+            if resolved.is_relative_to(readonly):
+                if write:
+                    logger.warning(
+                        "permission_denied anima=%s path=%s reason=readonly_dir", self._anima_name, path
+                    )
+                    return _error_result(
+                        "PermissionDenied",
+                        f"'{path}' is in a read-only directory (write not allowed)",
+                        context={"readonly_dir": str(readonly)},
+                    )
+                return None
+
+        all_allowed = allowed_dirs + readonly_dirs
         logger.warning("permission_denied anima=%s path=%s reason=outside_allowed_dirs", self._anima_name, path)
         return _error_result(
             "PermissionDenied",
             f"'{path}' is not under any allowed directory",
-            context={"allowed_dirs": [str(d) for d in allowed_dirs]},
+            context={"allowed_dirs": [str(d) for d in all_allowed]},
         )
 
     def _check_command_permission(self, command: str) -> str | None:

@@ -15,6 +15,8 @@ from core.tools._base import (
     ToolResult,
     auto_cli_guide,
     get_env_or_fail,
+    get_credential,
+    resolve_env_style_credential,
 )
 
 
@@ -179,3 +181,47 @@ class TestAutoCliGuide:
         ]
         guide = auto_cli_guide("tool", schemas)
         assert '"<query>"' in guide
+
+
+class TestAbconfigSlackCredentialFallback:
+    def test_reads_slack_bot_token_from_abconfig_secrets(self):
+        fake_module = type("FakeSecrets", (), {"slack_bot_token": "xoxb-abconfig-test"})()
+        with patch("core.tools._base._lookup_vault_credential", return_value=None), \
+             patch("core.tools._base._lookup_shared_credentials", return_value=None), \
+             patch("core.tools._base._load_abconfig_secrets", return_value=fake_module):
+            result = get_credential("slack", "slack", env_var="SLACK_BOT_TOKEN")
+        assert result == "xoxb-abconfig-test"
+
+    def test_reads_slack_app_token_from_abconfig_secrets(self):
+        fake_module = type("FakeSecrets", (), {"slack_app_token": "xapp-abconfig-test"})()
+        with patch("core.tools._base._lookup_vault_credential", return_value=None), \
+             patch("core.tools._base._lookup_shared_credentials", return_value=None), \
+             patch("core.tools._base._load_abconfig_secrets", return_value=fake_module):
+            result = get_credential("slack_app", "slack_socket", env_var="SLACK_APP_TOKEN")
+        assert result == "xapp-abconfig-test"
+
+    def test_environment_still_wins_when_abconfig_missing(self):
+        with patch("core.tools._base._lookup_vault_credential", return_value=None), \
+             patch("core.tools._base._lookup_shared_credentials", return_value=None), \
+             patch("core.tools._base._load_abconfig_secrets", return_value=None), \
+             patch.dict(os.environ, {"SLACK_BOT_TOKEN": "xoxb-env-test"}, clear=True):
+            result = get_credential("slack", "slack", env_var="SLACK_BOT_TOKEN")
+        assert result == "xoxb-env-test"
+
+
+class TestResolveEnvStyleCredential:
+    def test_returns_vault_first(self):
+        with patch("core.tools._base._lookup_vault_credential", return_value="vault-token"), \
+             patch("core.tools._base._lookup_shared_credentials", return_value="shared-token"), \
+             patch("core.tools._base._lookup_abconfig_credential", return_value="abconfig-token"), \
+             patch.dict(os.environ, {"SLACK_BOT_TOKEN__kanna": "env-token"}, clear=True):
+            result = resolve_env_style_credential("SLACK_BOT_TOKEN__kanna")
+        assert result == "vault-token"
+
+    def test_returns_environment_when_other_sources_missing(self):
+        with patch("core.tools._base._lookup_vault_credential", return_value=None), \
+             patch("core.tools._base._lookup_shared_credentials", return_value=None), \
+             patch("core.tools._base._lookup_abconfig_credential", return_value=None), \
+             patch.dict(os.environ, {"SLACK_BOT_TOKEN__kanna": "env-token"}, clear=True):
+            result = resolve_env_style_credential("SLACK_BOT_TOKEN__kanna")
+        assert result == "env-token"

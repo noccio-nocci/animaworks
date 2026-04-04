@@ -80,6 +80,21 @@ class TestLoadChannelMeta:
         assert result is not None
         assert result.description == "Team discussion"
 
+    def test_loads_slack_sync_tombstone_fields(self, shared_dir: Path):
+        meta_path = shared_dir / "channels" / "team.meta.json"
+        meta_path.write_text(
+            json.dumps({
+                "members": ["alice"],
+                "slack_sync_disabled": True,
+                "slack_deleted_at": "2026-04-02T01:02:03+00:00",
+            }),
+            encoding="utf-8",
+        )
+        result = load_channel_meta(shared_dir, "team")
+        assert result is not None
+        assert result.slack_sync_disabled is True
+        assert result.slack_deleted_at == "2026-04-02T01:02:03+00:00"
+
 
 # ── save_channel_meta ────────────────────────────────────
 
@@ -91,6 +106,8 @@ class TestSaveChannelMeta:
             created_by="alice",
             created_at="2026-03-03T00:00:00+09:00",
             description="test",
+            slack_sync_disabled=True,
+            slack_deleted_at="2026-04-02T01:02:03+00:00",
         )
         save_channel_meta(shared_dir, "new-ch", meta)
         meta_path = shared_dir / "channels" / "new-ch.meta.json"
@@ -98,6 +115,8 @@ class TestSaveChannelMeta:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
         assert data["members"] == ["alice", "bob"]
         assert data["created_by"] == "alice"
+        assert data["slack_sync_disabled"] is True
+        assert data["slack_deleted_at"] == "2026-04-02T01:02:03+00:00"
 
     def test_overwrites_existing_meta(self, shared_dir: Path):
         meta1 = ChannelMeta(members=["alice"])

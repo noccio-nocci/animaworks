@@ -160,6 +160,38 @@ class TestDispatchFromRegistry:
         assert "Error executing" in result
         assert "no module" in result
 
+    def test_skips_unrelated_import_failure_when_target_tool_is_known(self):
+        mock_slack = MagicMock()
+        mock_slack.get_tool_schemas.return_value = [{"name": "slack_channel_post"}]
+        mock_slack.dispatch.return_value = '{"status":"ok"}'
+
+        d = ExternalToolDispatcher(tool_registry=["gmail", "slack"])
+        with patch(
+            "core.tools.TOOL_MODULES",
+            {
+                "gmail": "core.tools.gmail",
+                "slack": "core.tools.slack",
+            },
+        ), patch("importlib.import_module", return_value=mock_slack) as mock_import:
+            result = d._dispatch_from_registry("slack_channel_post", {"text": "hi"})
+
+        assert result == '{"status":"ok"}'
+        mock_import.assert_called_once_with("core.tools.slack")
+
+    def test_returns_error_when_targeted_tool_import_fails(self):
+        d = ExternalToolDispatcher(tool_registry=["gmail", "slack"])
+        with patch(
+            "core.tools.TOOL_MODULES",
+            {
+                "gmail": "core.tools.gmail",
+                "slack": "core.tools.slack",
+            },
+        ), patch("importlib.import_module", side_effect=ImportError("missing slack deps")):
+            result = d._dispatch_from_registry("slack_channel_post", {})
+
+        assert "Error executing" in result
+        assert "missing slack deps" in result
+
 
 # ── _dispatch_from_files() ────────────────────────────────────
 
@@ -269,6 +301,29 @@ class TestDispatchFromFiles:
 
         assert "Error executing" in result
         assert "fail" in result
+
+    def test_targets_matching_personal_tool_only(self):
+        mock_spec = MagicMock()
+        mock_mod = MagicMock()
+        mock_mod.get_tool_schemas.return_value = [{"name": "slack_channel_post"}]
+        mock_mod.dispatch.return_value = "ok"
+
+        d = ExternalToolDispatcher(
+            tool_registry=[],
+            personal_tools={
+                "gmail": "/path/to/gmail.py",
+                "slack": "/path/to/slack.py",
+            },
+        )
+        with patch("importlib.util.spec_from_file_location", return_value=mock_spec) as mock_spec_from_file, \
+             patch("importlib.util.module_from_spec", return_value=mock_mod):
+            result = d._dispatch_from_files("slack_channel_post", {})
+
+        assert result == "ok"
+        mock_spec_from_file.assert_called_once_with(
+            "animaworks_tool_slack",
+            "/path/to/slack.py",
+        )
 
 
 # ── _call_module() ────────────────────────────────────────────

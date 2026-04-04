@@ -29,3 +29,4 @@ You are a task execution agent. Execute the following task.
 - If anything is unclear, do your best within the information provided
 - If a working directory is specified, use it as your base for all operations. Also pass it as working_directory to the machine tool
 - If the working directory shows "(not specified)", determine the appropriate path from the description and context
+- If shell / command execution is required on native Windows and `shell_command` / command execution becomes `policy blocked`, or `codex exec exited with code 1` keeps recurring, do not keep retrying the same local path. Use `machine` as the standard fallback, prefer `engine=claude` for shell-heavy work, and always pass an explicit `working_directory`

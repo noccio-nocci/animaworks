@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from core.tooling.prompt_db import SECTION_CONDITIONS, ToolPromptStore
+from core.tooling.prompt_db import get_default_guide
 
 
 @pytest.fixture
@@ -217,3 +218,14 @@ class TestSectionConditions:
         assert SECTION_CONDITIONS["messaging_s"] == "mode:s"
         assert SECTION_CONDITIONS["messaging"] == "mode:non_s"
         assert SECTION_CONDITIONS["a_reflection"] == "mode:a"
+
+
+class TestDefaultGuides:
+    """Prompt DB default guide content stays aligned with MCP behavior."""
+
+    def test_s_mcp_guide_prefers_direct_tools(self) -> None:
+        guide = get_default_guide("s_mcp")
+        assert "slack_channel_post" in guide
+        assert "directly" in guide
+        assert "animaworks-tool" in guide
+        assert "only when no equivalent dedicated tool is available" in guide

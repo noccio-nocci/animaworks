@@ -12,7 +12,9 @@ You have messages in your inbox. Review the following and reply appropriately.
 
 ### Replying to External Platform Messages
 When a message has `[reply_instruction: ...]` metadata:
-- **Always follow the instruction** to reply (execute via `Bash`)
+- **Always follow the instruction** to reply
+- If the instruction is in `use tool ...` form, call that tool directly
+- If the instruction is a shell command, execute it via `Bash`
 - Replace `{reply_content}` with your actual reply text
 - Do NOT use `send_message` (it sends DMs, not thread replies)
 

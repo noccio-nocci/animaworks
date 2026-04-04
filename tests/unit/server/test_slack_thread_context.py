@@ -330,8 +330,8 @@ class TestBuildReplyInstruction:
             external_thread_ts="1.0",
         )
         result = _build_reply_instruction(m)
-        assert "--thread 1.0" in result
-        assert "--thread 2.0" not in result
+        assert 'thread_ts="1.0"' in result
+        assert 'thread_ts="2.0"' not in result
 
     def test_falls_back_to_source_message_id(self):
         from core._anima_inbox import _build_reply_instruction
@@ -348,7 +348,7 @@ class TestBuildReplyInstruction:
             external_thread_ts="",
         )
         result = _build_reply_instruction(m)
-        assert "--thread 1.0" in result
+        assert 'thread_ts="1.0"' in result
 
     def test_no_thread_when_both_empty(self):
         from core._anima_inbox import _build_reply_instruction
@@ -365,7 +365,7 @@ class TestBuildReplyInstruction:
             external_thread_ts="",
         )
         result = _build_reply_instruction(m)
-        assert "--thread" not in result
+        assert "thread_ts=" not in result
 
     def test_chatwork_unaffected(self):
         from core._anima_inbox import _build_reply_instruction

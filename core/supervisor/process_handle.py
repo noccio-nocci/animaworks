@@ -21,6 +21,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from core.exceptions import AnimaNotRunningError, IPCConnectionError, ProcessError
 from core.platform.process import subprocess_session_kwargs, terminate_subprocess
 from core.supervisor.ipc import IPCClient, IPCRequest, IPCResponse
@@ -416,9 +418,15 @@ class ProcessHandle:
             self.stats.missed_pings += 1
             return {"success": False, "is_busy": False} if return_details else False
         except Exception as e:
-            logger.error("Ping error for %s: %s", self.anima_name, e)
+            is_transport_error = "Unix IPC transport is unavailable" in str(e)
+            if not is_transport_error:
+                logger.error("Ping error for %s: %s", self.anima_name, e)
+            else:
+                logger.debug("Ping transport error for %s: %s", self.anima_name, e)
             self.stats.missed_pings += 1
-            return {"success": False, "is_busy": False} if return_details else False
+            if return_details:
+                return {"success": False, "is_busy": False, "transport_error": is_transport_error}
+            return False
 
     async def stop(self, timeout: float = 10.0) -> None:
         """
@@ -452,7 +460,17 @@ class ProcessHandle:
             await self._cleanup()
             return
 
-        # Step 1: Send IPC shutdown request BEFORE changing state
+        # Step 1: Snapshot descendant PIDs BEFORE sending shutdown.
+        # If the runner exits quickly, we can still find and kill its
+        # children (CLI subprocesses like claude, codex, cursor-agent).
+        child_pids: list[int] = []
+        try:
+            parent = psutil.Process(self.process.pid)
+            child_pids = [c.pid for c in parent.children(recursive=True)]
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        # Step 2: Send IPC shutdown request BEFORE changing state
         # (send_request requires state == RUNNING)
         if self.state == ProcessState.RUNNING:
             try:
@@ -464,7 +482,7 @@ class ProcessHandle:
         self.state = ProcessState.STOPPING
         self.stopping_since = now_local()
 
-        # Step 2: Wait for graceful exit
+        # Step 3: Wait for graceful exit
         try:
             grace_period = min(timeout / 2, 5.0)
             async with asyncio.timeout(grace_period):
@@ -474,8 +492,12 @@ class ProcessHandle:
             self.stats.exit_code = self.process.returncode
             logger.info("Process exited gracefully: %s (code=%s)", self.anima_name, self.stats.exit_code)
 
+            # Step 3b: Runner exited but children may still be alive.
+            # Kill any orphaned descendants (CLI subprocesses).
+            self._kill_orphaned_children(child_pids)
+
         except TimeoutError:
-            # Step 3: Send SIGTERM to process session group
+            # Step 4: Send SIGTERM to process session group
             logger.warning("Process did not exit gracefully, sending SIGTERM: %s", self.anima_name)
             try:
                 terminate_subprocess(self.process, force=False)
@@ -487,13 +509,51 @@ class ProcessHandle:
                 logger.info("Process terminated: %s (code=%s)", self.anima_name, self.stats.exit_code)
 
             except TimeoutError:
-                # Step 4: Force SIGKILL
+                # Step 5: Force SIGKILL
                 logger.error("Process did not respond to SIGTERM, sending SIGKILL: %s", self.anima_name)
                 await self.kill()
 
         self.state = ProcessState.STOPPED
         self.stats.stopped_at = now_local()
         await self._cleanup()
+
+    def _kill_orphaned_children(self, child_pids: list[int]) -> None:
+        """Kill previously-snapshotted children that are still alive.
+
+        After the runner process exits, its CLI subprocesses (claude, codex,
+        cursor-agent, gemini) may still be running because:
+        - On Windows ``CREATE_NEW_PROCESS_GROUP`` does not auto-kill children
+        - The runner's asyncio task cancellation may not reach the executor
+          subprocess in time
+
+        This method ensures those orphans are cleaned up.
+        """
+        if not child_pids:
+            return
+
+        for pid in child_pids:
+            try:
+                proc = psutil.Process(pid)
+                if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+                    continue
+                # Also kill any grandchildren this process spawned
+                for grandchild in proc.children(recursive=True):
+                    try:
+                        logger.info(
+                            "Killing orphaned grandchild of %s: PID %d (%s)",
+                            self.anima_name, grandchild.pid,
+                            grandchild.name(),
+                        )
+                        grandchild.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                logger.info(
+                    "Killing orphaned child of %s: PID %d (%s)",
+                    self.anima_name, pid, proc.name(),
+                )
+                proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
     async def kill(self) -> None:
         """Force kill the process with SIGKILL."""

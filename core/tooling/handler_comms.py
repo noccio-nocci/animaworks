@@ -48,7 +48,8 @@ class CommsToolsMixin:
         if not self._messenger:
             return "Error: messenger not configured"
 
-        to = args["to"]
+        from core.tooling.org_helpers import resolve_anima_name
+        to = resolve_anima_name(args["to"]) if args.get("to") else args.get("to", "")
         content = args["content"]
         intent = args.get("intent", "")
 
@@ -268,6 +269,9 @@ class CommsToolsMixin:
                 self._anima_name,
             )
 
+        # Sync board post to mapped Slack channel (fire-and-forget)
+        self._fire_board_slack_sync(channel, text)
+
         return f"Posted to #{channel}"
 
     def _fanout_board_mentions(self, channel: str, text: str) -> None:
@@ -333,6 +337,44 @@ class CommsToolsMixin:
                     target,
                     exc_info=True,
                 )
+
+    def _fire_board_slack_sync(self, channel: str, text: str) -> None:
+        """Sync a board post to the mapped Slack channel.
+
+        The MCP tool handler dispatches ``handle()`` via
+        ``asyncio.to_thread()``, so this method runs in a thread-pool
+        worker with no running event loop.  We therefore create a
+        short-lived loop via ``asyncio.run()`` to execute the async
+        HTTP call.  The ~1 s blocking is acceptable because we are
+        already off the main event loop.
+        """
+        try:
+            import asyncio
+
+            from core.outbound_auto import BoardSlackSync
+
+            sync = BoardSlackSync()
+            coro = sync.sync_board_post(
+                board_name=channel,
+                text=text,
+                from_person=self._anima_name,
+                source="anima",
+            )
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                # Inside an async context — schedule as task
+                loop.create_task(coro)
+            else:
+                # Sync context (MCP tool handler thread pool) —
+                # create a short-lived event loop to run the coroutine.
+                asyncio.run(coro)
+        except Exception:
+            logger.warning("Board→Slack sync failed for #%s", channel, exc_info=True)
 
     def _handle_read_channel(self, args: dict[str, Any]) -> str:
         if not self._messenger:

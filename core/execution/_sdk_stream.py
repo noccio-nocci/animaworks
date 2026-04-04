@@ -18,6 +18,7 @@ Also provides ``StreamingContext`` / ``StreamingState`` and the
 ``AgentSDKExecutor.execute_streaming``.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -33,6 +34,15 @@ from core.execution.base import (
 from core.prompt.context import resolve_context_window
 
 logger = logging.getLogger("animaworks.execution.agent_sdk")
+
+# Maximum seconds to wait between consecutive SDK messages.  When the CLI
+# subprocess dies or hangs (e.g. after a broken hook callback), the message
+# stream stops producing events.  Without this timeout the Python side would
+# wait indefinitely, holding the per-anima processing lock and blocking all
+# subsequent messages.  45 s is long enough for any legitimate API response
+# or tool execution, but short enough to detect a dead CLI promptly and
+# give the user a timely error instead of a 2+ minute frozen UI.
+_SDK_MESSAGE_TIMEOUT_SEC: float = 120.0
 
 
 # ── Tool logging helpers ─────────────────────────────────────
@@ -276,6 +286,63 @@ class StreamingState:
     usage_acc: Any = None
 
 
+def _append_assistant_blocks_to_state(
+    content_blocks: list[Any],
+    state: StreamingState,
+    ctx: StreamingContext,
+) -> list[dict[str, Any]]:
+    """Apply assistant blocks to streaming state and return emitted events.
+
+    Agent SDK normally emits ``StreamEvent`` objects before the final
+    ``AssistantMessage``. Some SDK paths can skip those partial events and
+    only deliver the completed assistant/user messages. In that case we still
+    need to harvest text and tool calls from the buffered message objects.
+    """
+    events: list[dict[str, Any]] = []
+    for block in content_blocks:
+        from claude_agent_sdk import TextBlock, ToolUseBlock
+        from core.execution._tool_summary import make_tool_detail_chunk
+
+        if isinstance(block, TextBlock):
+            state.response_text.append(block.text)
+        elif isinstance(block, ToolUseBlock):
+            _handle_tool_use_block(
+                block,
+                state.pending_records,
+                None,
+                ctx.model,
+                cw_overrides=ctx.cw_overrides,
+            )
+            detail_chunk = make_tool_detail_chunk(block.name, block.id, block.input or {})
+            if detail_chunk:
+                events.append(detail_chunk)
+            if block.id in state.active_tool_ids:
+                state.active_tool_ids.discard(block.id)
+                events.append({"type": "tool_end", "tool_id": block.id, "tool_name": block.name})
+    return events
+
+
+def _apply_user_tool_results_to_state(
+    content_blocks: list[Any],
+    state: StreamingState,
+    ctx: StreamingContext,
+) -> None:
+    """Apply buffered ``ToolResultBlock`` objects to the streaming state."""
+    for block in content_blocks:
+        from claude_agent_sdk import ToolResultBlock
+
+        if isinstance(block, ToolResultBlock):
+            ctx.session_stats["total_result_bytes"] += _tool_result_content_len(block)
+            _handle_tool_result_block(
+                block,
+                state.pending_records,
+                None,
+                ctx.model,
+                anima_dir=ctx.anima_dir,
+                cw_overrides=ctx.cw_overrides,
+            )
+
+
 async def process_stream_messages(
     client: Any,
     ctx: StreamingContext,
@@ -293,9 +360,29 @@ async def process_stream_messages(
     got_stream_event = False
     _in_thinking_block = False
     _captured_session_id: str | None = None
+    buffered_assistant_messages: list[Any] = []
+    buffered_user_messages: list[Any] = []
 
     await client.query(_build_sdk_query_input(ctx.prompt, ctx.images))
-    async for message in client.receive_messages():
+    _msg_aiter = client.receive_messages().__aiter__()
+    while True:
+        try:
+            message = await asyncio.wait_for(
+                _msg_aiter.__anext__(),
+                timeout=_SDK_MESSAGE_TIMEOUT_SEC,
+            )
+        except StopAsyncIteration:
+            break
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.error(
+                "SDK message stream timed out — no message received for %.0fs; "
+                "CLI subprocess may have died or become unresponsive",
+                _SDK_MESSAGE_TIMEOUT_SEC,
+            )
+            raise TimeoutError(
+                f"SDK stream timed out (no message for {_SDK_MESSAGE_TIMEOUT_SEC:.0f}s)"
+            )
+
         if ctx.check_interrupted():
             logger.info("Agent SDK streaming interrupted — sending graceful interrupt")
             yield {"type": "text_delta", "text": "[Session interrupted by user]"}
@@ -322,6 +409,9 @@ async def process_stream_messages(
 
         if isinstance(message, StreamEvent):
             _captured_session_id = message.session_id
+            if not got_stream_event:
+                buffered_assistant_messages.clear()
+                buffered_user_messages.clear()
             got_stream_event = True
             event = message.event
             event_type = event.get("type", "")
@@ -369,43 +459,28 @@ async def process_stream_messages(
 
         elif isinstance(message, AssistantMessage):
             if not got_stream_event:
+                buffered_assistant_messages.append(message)
                 continue
             state.message_count += 1
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    state.response_text.append(block.text)
-                elif isinstance(block, ToolUseBlock):
-                    _handle_tool_use_block(
-                        block,
-                        state.pending_records,
-                        None,
-                        ctx.model,
-                        cw_overrides=ctx.cw_overrides,
-                    )
-                    detail_chunk = make_tool_detail_chunk(block.name, block.id, block.input or {})
-                    if detail_chunk:
-                        yield detail_chunk
-                    if block.id in state.active_tool_ids:
-                        state.active_tool_ids.discard(block.id)
-                        yield {"type": "tool_end", "tool_id": block.id, "tool_name": block.name}
+            for event in _append_assistant_blocks_to_state(message.content, state, ctx):
+                yield event
 
         elif isinstance(message, UserMessage):
             if not got_stream_event:
+                buffered_user_messages.append(message)
                 continue
             if isinstance(message.content, list):
-                for block in message.content:
-                    if isinstance(block, ToolResultBlock):
-                        ctx.session_stats["total_result_bytes"] += _tool_result_content_len(block)
-                        _handle_tool_result_block(
-                            block,
-                            state.pending_records,
-                            None,
-                            ctx.model,
-                            anima_dir=ctx.anima_dir,
-                            cw_overrides=ctx.cw_overrides,
-                        )
+                _apply_user_tool_results_to_state(message.content, state, ctx)
 
         elif isinstance(message, ResultMessage):
+            if not got_stream_event:
+                for buffered in buffered_assistant_messages:
+                    state.message_count += 1
+                    for event in _append_assistant_blocks_to_state(buffered.content, state, ctx):
+                        yield event
+                for buffered in buffered_user_messages:
+                    if isinstance(buffered.content, list):
+                        _apply_user_tool_results_to_state(buffered.content, state, ctx)
             state.result_message = message
             if message.session_id and ctx.session_type in _RESUMABLE_SESSION_TYPES:
                 _save_session_id(ctx.anima_dir, message.session_id, ctx.session_type, thread_id=ctx.thread_id)

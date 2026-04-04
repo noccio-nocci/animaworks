@@ -1,7 +1,13 @@
 // ── Setup Status ────────────────────────────
 import { api } from "../modules/api.js";
 import { escapeHtml } from "../modules/state.js";
-import { t } from "/shared/i18n.js";
+import { getLocale, t } from "/shared/i18n.js";
+
+function tl(key, ja, en) {
+  const value = t(key);
+  if (value !== key) return value;
+  return getLocale().startsWith("ja") ? ja : en;
+}
 
 export function render(container) {
   container.innerHTML = `
@@ -31,6 +37,13 @@ export function render(container) {
     </div>
 
     <div class="card" style="margin-bottom: 1.5rem;">
+      <div class="card-header">${tl("setup.anthropic_auth", "Anthropic 認証", "Anthropic Auth")}</div>
+      <div class="card-body" id="anthropicAuthSettings">
+        <div class="loading-placeholder">${t("common.loading")}</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 1.5rem;">
       <div class="card-header">${t("setup.openai_auth")}</div>
       <div class="card-body" id="openaiAuthSettings">
         <div class="loading-placeholder">${t("common.loading")}</div>
@@ -54,6 +67,7 @@ export function render(container) {
 
   _loadChecklist();
   _loadConfig();
+  _loadAnthropicAuthSettings();
   _loadOpenAIAuthSettings();
   _loadCliToolsAuth();
   _loadAuthSettings();
@@ -372,6 +386,126 @@ async function _loadAuthSettings() {
   }
 }
 
+// ── Anthropic Auth Settings ─────────────────
+
+async function _loadAnthropicAuthSettings() {
+  const el = document.getElementById("anthropicAuthSettings");
+  if (!el) return;
+
+  try {
+    const state = await api("/api/settings/anthropic-auth");
+    const modeLabel = state.auth_mode === "claude_code_login"
+      ? tl("setup.anthropic_auth_mode_subscription", "サブスクリプション認証", "Subscription Auth")
+      : tl("setup.anthropic_auth_mode_api", "APIキー", "API Key");
+
+    const runtimeBadges = [
+      {
+        label: tl("setup.anthropic_auth_env_key", "環境変数 ANTHROPIC_API_KEY", "Env ANTHROPIC_API_KEY"),
+        ok: !!state.env_api_key_configured,
+      },
+      {
+        label: tl("setup.anthropic_auth_config_key", "設定ファイル APIキー", "Config API Key"),
+        ok: !!state.config_api_key_configured,
+      },
+      {
+        label: tl("setup.anthropic_auth_claude_code", "Claude Code CLI", "Claude Code CLI"),
+        ok: !!state.claude_code_available,
+      },
+    ];
+
+    el.innerHTML = `
+      <div style="margin-bottom: 1rem;">
+        <strong>${tl("setup.anthropic_auth_current", "現在の認証方式", "Current auth mode")}:</strong>
+        <code>${escapeHtml(modeLabel)}</code>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <strong>${tl("setup.anthropic_auth_saved", "設定保存済み", "Config saved")}:</strong>
+        <span>${state.config_present ? "\u2705" : "\u274C"}</span>
+      </div>
+      <div style="display:grid; gap:0.5rem; margin-bottom: 1.25rem;">
+        ${runtimeBadges.map(item => `
+          <div style="display:flex; align-items:center; gap:0.75rem;">
+            <span style="font-size:1.1rem;">${item.ok ? "\u2705" : "\u274C"}</span>
+            <span>${escapeHtml(item.label)}</span>
+          </div>
+        `).join("")}
+      </div>
+
+      <form id="anthropicAuthForm" style="display:flex; flex-direction:column; gap:0.75rem; max-width:420px;">
+        <label style="display:flex; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.anthropic_auth_mode_label", "認証方式", "Auth mode")}</span>
+          <select id="anthropicAuthMode">
+            <option value="api_key"${state.auth_mode === "api_key" ? " selected" : ""}>${tl("setup.anthropic_auth_mode_api", "APIキー", "API Key")}</option>
+            <option value="claude_code_login"${state.auth_mode === "claude_code_login" ? " selected" : ""}>${tl("setup.anthropic_auth_mode_subscription", "サブスクリプション認証", "Subscription Auth")}</option>
+          </select>
+        </label>
+        <label id="anthropicApiKeyWrap" style="display:${state.auth_mode === "api_key" ? "flex" : "none"}; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.anthropic_auth_api_key", "Anthropic APIキー", "Anthropic API Key")}</span>
+          <input type="password" id="anthropicApiKeyInput" placeholder="sk-ant-...">
+          <small style="color:var(--text-secondary, #666);">${tl("setup.anthropic_auth_api_key_hint", "空欄で保存すると既存キーを維持します", "Leave empty to keep existing key")}</small>
+        </label>
+        <div id="anthropicAuthResult" class="login-error hidden"></div>
+        <button type="submit" class="btn-login" style="width:auto;">${tl("setup.anthropic_auth_save", "保存", "Save")}</button>
+      </form>
+    `;
+
+    const modeEl = document.getElementById("anthropicAuthMode");
+    const apiKeyWrap = document.getElementById("anthropicApiKeyWrap");
+    modeEl?.addEventListener("change", () => {
+      if (apiKeyWrap) {
+        apiKeyWrap.style.display = modeEl.value === "api_key" ? "flex" : "none";
+      }
+    });
+
+    const form = document.getElementById("anthropicAuthForm");
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const result = document.getElementById("anthropicAuthResult");
+      const authMode = document.getElementById("anthropicAuthMode").value;
+      const apiKey = document.getElementById("anthropicApiKeyInput")?.value || "";
+
+      if (authMode === "api_key" && !apiKey.trim()) {
+        result.style.color = "#ef4444";
+        result.textContent = tl("setup.anthropic_auth_api_key_required", "APIキーを入力してください", "API key is required");
+        result.classList.remove("hidden");
+        return;
+      }
+
+      try {
+        const saveRes = await fetch("/api/settings/anthropic-auth", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            auth_mode: authMode,
+            api_key: apiKey,
+          }),
+        });
+        const saveData = await saveRes.json();
+        if (!saveRes.ok) {
+          result.style.color = "#ef4444";
+          result.textContent = saveData.detail || tl("setup.anthropic_auth_save_failed", "保存に失敗しました", "Failed to save");
+          result.classList.remove("hidden");
+          return;
+        }
+
+        result.style.color = "#22c55e";
+        result.textContent = tl("setup.anthropic_auth_saved_success", "Anthropic認証設定を保存しました", "Anthropic auth settings saved");
+        result.classList.remove("hidden");
+        await _loadConfig();
+        await _loadChecklist();
+        await _loadAnthropicAuthSettings();
+      } catch {
+        result.style.color = "#ef4444";
+        result.textContent = t("setup.network_error");
+        result.classList.remove("hidden");
+      }
+    });
+  } catch {
+    el.innerHTML = `<div class="loading-placeholder">${tl("setup.anthropic_auth_fetch_failed", "Anthropic認証設定を取得できませんでした", "Failed to load Anthropic auth settings")}</div>`;
+  }
+}
+
 // ── CLI tools (read-only detection) ─────────
 
 async function _loadCliToolsAuth() {
@@ -490,24 +624,7 @@ async function _loadOpenAIAuthSettings() {
       }
 
       try {
-        const validateRes = await fetch("/api/setup/validate-key", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            provider: "openai",
-            auth_mode: authMode,
-            api_key: apiKey,
-          }),
-        });
-        const validateData = await validateRes.json();
-        if (!validateRes.ok || !validateData.valid) {
-          result.style.color = "#ef4444";
-          result.textContent = validateData.message || validateData.detail || t("setup.openai_auth_save_failed");
-          result.classList.remove("hidden");
-          return;
-        }
-
+        // Save directly (PUT endpoint validates internally)
         const saveRes = await fetch("/api/settings/openai-auth", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -539,5 +656,151 @@ async function _loadOpenAIAuthSettings() {
     });
   } catch {
     el.innerHTML = `<div class="loading-placeholder">${t("setup.openai_auth_fetch_failed")}</div>`;
+  }
+}
+
+async function _loadLocalLLMSettings() {
+  const el = document.getElementById("localLlmSettings");
+  if (!el) return;
+
+  try {
+    const state = await api("/api/settings/local-llm");
+    const availableOptions = (state.available_models || [])
+      .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+      .join("");
+    const rolePresetRows = Object.entries(state.role_presets || {})
+      .map(([role, preset]) => `
+        <div style="display:flex; gap:0.75rem;">
+          <code style="min-width:7rem;">${escapeHtml(role)}</code>
+          <span>${escapeHtml(preset)}</span>
+        </div>
+      `)
+      .join("");
+
+    el.innerHTML = `
+      <div style="margin-bottom: 1rem;">
+        <strong>${tl("setup.local_llm_base_url", "接続先", "Base URL")}:</strong>
+        <code>${escapeHtml(state.base_url)}</code>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <strong>${tl("setup.local_llm_current_default", "現在の既定モデル", "Current default model")}:</strong>
+        <code>${escapeHtml(state.current_default_model || state.default_model)}</code>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <strong>${tl("setup.local_llm_role_map", "role と preset の対応", "Role to preset mapping")}:</strong>
+        <div style="display:grid; gap:0.35rem; margin-top:0.5rem;">${rolePresetRows}</div>
+      </div>
+      <div style="display:grid; gap:0.5rem; margin-bottom: 1.25rem;">
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <span style="font-size:1.1rem;">${state.reachable ? "\u2705" : "\u274C"}</span>
+          <span>${tl("setup.local_llm_runtime", "Ollama 接続", "Ollama connectivity")}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <span style="font-size:1.1rem;">${state.configured ? "\u2705" : "\u274C"}</span>
+          <span>${tl("setup.local_llm_default_applied", "既定モデルに適用済み", "Applied as default model")}</span>
+        </div>
+      </div>
+      ${state.error ? `<div style="margin-bottom:1rem; color:#ef4444;">${escapeHtml(state.error)}</div>` : ""}
+      <form id="localLlmForm" style="display:flex; flex-direction:column; gap:0.75rem; max-width:560px;">
+        <label style="display:flex; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.local_llm_base_url", "接続先", "Base URL")}</span>
+          <input type="text" id="localLlmBaseUrl" value="${escapeHtml(state.base_url)}" placeholder="http://127.0.0.1:11434">
+        </label>
+        <label style="display:flex; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.local_llm_default_model", "既定モデル", "Default model")}</span>
+          <input list="localLlmModelOptions" type="text" id="localLlmDefaultModel" value="${escapeHtml(state.default_model)}">
+        </label>
+        <label style="display:flex; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.local_llm_preset_coding", "Coding プリセット", "Coding preset")}</span>
+          <input list="localLlmModelOptions" type="text" id="localLlmPresetCoding" value="${escapeHtml(state.presets?.coding || "")}">
+        </label>
+        <label style="display:flex; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.local_llm_preset_reasoning", "Reasoning プリセット", "Reasoning preset")}</span>
+          <input list="localLlmModelOptions" type="text" id="localLlmPresetReasoning" value="${escapeHtml(state.presets?.reasoning || "")}">
+        </label>
+        <label style="display:flex; flex-direction:column; gap:0.35rem;">
+          <span>${tl("setup.local_llm_preset_general", "General プリセット", "General preset")}</span>
+          <input list="localLlmModelOptions" type="text" id="localLlmPresetGeneral" value="${escapeHtml(state.presets?.general || "")}">
+        </label>
+        <datalist id="localLlmModelOptions">${availableOptions}</datalist>
+        <small style="color:var(--text-secondary, #666);">
+          ${tl("setup.local_llm_hint", "保存すると Ollama が既定モデルになり、role 別 preset が新規作成と role 変更に反映されます。", "Saving makes Ollama the default model and applies role-based presets to new animas and role changes.")}
+        </small>
+        <div id="localLlmResult" class="login-error hidden"></div>
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+          <button type="submit" class="btn-login" style="width:auto;">${tl("setup.local_llm_save", "ローカルLLM設定を保存", "Save local LLM settings")}</button>
+          <button type="button" id="localLlmApplyExisting" class="btn-login" style="width:auto;">${tl("setup.local_llm_apply_existing", "既存Animaへ適用", "Apply to existing animas")}</button>
+        </div>
+      </form>
+    `;
+
+    const form = document.getElementById("localLlmForm");
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const result = document.getElementById("localLlmResult");
+      const payload = {
+        base_url: document.getElementById("localLlmBaseUrl").value,
+        default_model: document.getElementById("localLlmDefaultModel").value,
+        presets: {
+          coding: document.getElementById("localLlmPresetCoding").value,
+          reasoning: document.getElementById("localLlmPresetReasoning").value,
+          general: document.getElementById("localLlmPresetGeneral").value,
+        },
+      };
+
+      try {
+        const saveRes = await fetch("/api/settings/local-llm", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify(payload),
+        });
+        const saveData = await saveRes.json();
+        if (!saveRes.ok) {
+          result.style.color = "#ef4444";
+          result.textContent = saveData.detail || tl("setup.local_llm_save_failed", "ローカルLLM設定の保存に失敗しました", "Failed to save local LLM settings");
+          result.classList.remove("hidden");
+          return;
+        }
+
+        result.style.color = "#22c55e";
+        result.textContent = tl("setup.local_llm_saved_success", "ローカルLLM設定を保存しました", "Local LLM settings saved");
+        result.classList.remove("hidden");
+        await _loadConfig();
+        await _loadChecklist();
+        await _loadLocalLLMSettings();
+      } catch {
+        result.style.color = "#ef4444";
+        result.textContent = t("setup.network_error");
+        result.classList.remove("hidden");
+      }
+    });
+
+    const applyButton = document.getElementById("localLlmApplyExisting");
+    applyButton?.addEventListener("click", async () => {
+      const result = document.getElementById("localLlmResult");
+      try {
+        const res = await fetch("/api/settings/local-llm/apply-role-presets", {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          result.style.color = "#ef4444";
+          result.textContent = data.detail || tl("setup.local_llm_apply_failed", "既存Animaへの適用に失敗しました", "Failed to apply to existing animas");
+          result.classList.remove("hidden");
+          return;
+        }
+        result.style.color = "#22c55e";
+        result.textContent = tl("setup.local_llm_apply_success", "既存Animaへ適用しました", "Applied to existing animas") + ` (${data.count})`;
+        result.classList.remove("hidden");
+      } catch {
+        result.style.color = "#ef4444";
+        result.textContent = t("setup.network_error");
+        result.classList.remove("hidden");
+      }
+    });
+  } catch {
+    el.innerHTML = `<div class="loading-placeholder">${tl("setup.local_llm_fetch_failed", "ローカルLLM設定を取得できませんでした", "Failed to load local LLM settings")}</div>`;
   }
 }

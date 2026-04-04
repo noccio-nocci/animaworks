@@ -14,6 +14,7 @@ assets using the ImageGenPipeline with ``skip_existing=True``.
 
 import asyncio
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -239,6 +240,18 @@ async def reconcile_anima_assets(
         )
         return {"anima": anima_name, "skipped": True, "reason": "locked"}
 
+    # Skip if an active remake-preview session exists (backup dir present).
+    # Generating during a remake session causes duplicate work and step-count
+    # confusion because the user's slider settings are not used here.
+    active_backups = list(anima_dir.glob("assets_backup_*"))
+    if active_backups:
+        logger.debug(
+            "Skipping reconciliation for %s — active remake session detected (%s)",
+            anima_name,
+            active_backups[0].name,
+        )
+        return {"anima": anima_name, "skipped": True, "reason": "remake_active"}
+
     async with lock:
         check = check_anima_assets(
             anima_dir,
@@ -273,10 +286,15 @@ async def reconcile_anima_assets(
             steps = ["fullbody", "bustup", "chibi"]
 
         try:
-            from core.config.models import ImageGenConfig
+            from core.config.models import ImageGenConfig, load_config
             from core.tools.image_gen import ImageGenPipeline
 
-            image_config = ImageGenConfig(image_style=image_style, enable_3d=enable_3d)
+            try:
+                image_config = load_config().image_gen.model_copy(
+                    update={"image_style": image_style, "enable_3d": enable_3d}
+                )
+            except Exception:
+                image_config = ImageGenConfig(image_style=image_style, enable_3d=enable_3d)
             pipeline = ImageGenPipeline(anima_dir, config=image_config)
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
@@ -412,6 +430,13 @@ def _resolve_prompt(anima_dir: Path, style: str) -> str | None:
         text = prompt_path.read_text(encoding="utf-8").strip()
         if text:
             return text
+    # Fallback: convert realistic prompt to anime-friendly tags
+    realistic_path = assets_dir / "prompt_realistic.txt"
+    if realistic_path.exists():
+        text = realistic_path.read_text(encoding="utf-8").strip()
+        if text:
+            logger.debug("Falling back to realistic prompt for anime style: %s", anima_dir.name)
+            return text
     return None
 
 
@@ -500,17 +525,6 @@ async def _synthesize_prompt_via_llm(
     """
     anima_name = anima_dir.name
 
-    try:
-        from core.config.models import load_model_config
-
-        load_model_config(anima_dir)
-    except Exception:
-        logger.warning(
-            "Cannot load model config for %s — skipping LLM synthesis",
-            anima_name,
-        )
-        return None
-
     if style == "realistic":
         system_prompt_name = "fragments/asset_synthesis_system_realistic"
         user_prompt_key = "asset_reconciler.llm_user_prompt_realistic"
@@ -522,9 +536,18 @@ async def _synthesize_prompt_via_llm(
 
     system_content = load_prompt(system_prompt_name)
     user_content = t(user_prompt_key, character_text=character_text)
+    model = _resolve_prompt_synthesis_model(anima_dir)
 
     try:
-        result = (await one_shot_completion(user_content, system_prompt=system_content, max_tokens=256) or "").strip()
+        result = (
+            await one_shot_completion(
+                user_content,
+                system_prompt=system_content,
+                model=model or "",
+                max_tokens=256,
+            )
+            or ""
+        ).strip()
     except Exception as exc:
         logger.warning(
             "LLM prompt synthesis failed for %s (%s): %s",
@@ -552,6 +575,31 @@ async def _synthesize_prompt_via_llm(
         logger.debug("Failed to cache %s for %s", cache_filename, anima_name)
 
     return result
+
+
+def _resolve_prompt_synthesis_model(anima_dir: Path) -> str | None:
+    """Choose a prompt-synthesis model that avoids Anthropic API-key hard dependency.
+
+    Priority:
+      1. Configured local Ollama default model
+      2. The anima's own configured model (e.g. ``codex/...``)
+      3. ``None`` to let one_shot_completion fall back to consolidation model
+    """
+    try:
+        from core.config.models import load_config, load_model_config
+
+        cfg = load_config()
+        local_model = getattr(getattr(cfg, "local_llm", None), "default_model", "") or ""
+        local_base = getattr(getattr(cfg, "local_llm", None), "base_url", "") or ""
+        if local_model and (local_base or os.environ.get("OLLAMA_SERVERS")):
+            return local_model
+
+        model_config = load_model_config(anima_dir)
+        if getattr(model_config, "model", ""):
+            return str(model_config.model)
+    except Exception:
+        logger.debug("Prompt synthesis model resolution failed for %s", anima_dir.name, exc_info=True)
+    return None
 
 
 def _summarise_result(result: Any) -> dict[str, list[str]]:

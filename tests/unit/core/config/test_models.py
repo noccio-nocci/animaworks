@@ -16,12 +16,19 @@ from core.config.models import (
     AnimaDefaults,
     AnimaModelConfig,
     AnimaWorksConfig,
+    CommandsPermission,
     CredentialConfig,
+    DEFAULT_LOCAL_LLM_MODEL,
+    ExternalToolsPermission,
     GatewaySystemConfig,
     ImageGenConfig,
+    LocalLLMConfig,
+    PermissionsConfig,
     RAGConfig,
     SystemConfig,
+    ToolCreationPermission,
     WorkerSystemConfig,
+    _format_permissions_for_prompt,
     _match_pattern_table,
     _pattern_specificity,
     get_config_path,
@@ -102,6 +109,7 @@ class TestAnimaWorksConfig:
         assert isinstance(config.system, SystemConfig)
         assert "anthropic" in config.credentials
         assert config.animas == {}
+        assert config.local_llm.default_model == DEFAULT_LOCAL_LLM_MODEL
 
     def test_roundtrip_json(self):
         config = AnimaWorksConfig()
@@ -110,6 +118,27 @@ class TestAnimaWorksConfig:
         restored = AnimaWorksConfig.model_validate(data)
         assert restored.animas["alice"].supervisor == "bob"
         assert restored.animas["alice"].speciality == "engineer"
+
+
+class TestLocalLLMConfig:
+    def test_defaults(self):
+        config = LocalLLMConfig()
+        assert config.base_url == "http://127.0.0.1:11434"
+        assert config.default_model == "ollama/qwen2.5-coder:14b"
+        assert config.presets["coding"] == "ollama/qwen2.5-coder:14b"
+        assert config.presets["reasoning"] == "ollama/deepseek-r1:8b"
+        assert config.role_presets["engineer"] == "coding"
+        assert config.role_presets["manager"] == "reasoning"
+
+    def test_missing_presets_are_backfilled(self):
+        config = LocalLLMConfig(
+            presets={"coding": "ollama/gemma3:12b"},
+            role_presets={"engineer": "coding", "writer": "general"},
+        )
+        assert config.presets["coding"] == "ollama/gemma3:12b"
+        assert config.presets["general"] == "ollama/glm4:9b"
+        assert config.role_presets["engineer"] == "coding"
+        assert config.role_presets["researcher"] == "reasoning"
 
 
 class TestImageGenConfig:
@@ -142,6 +171,24 @@ class TestImageGenConfig:
         config = AnimaWorksConfig()
         assert isinstance(config.image_gen, ImageGenConfig)
         assert config.image_gen.style_reference is None
+
+
+class TestFormatPermissionsForPrompt:
+    def test_windows_prompt_mentions_native_runtime(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr("core.config.schemas.sys.platform", "win32")
+        config = PermissionsConfig(
+            file_roots=[r"E:\OneDriveBiz\Tools\General"],
+            file_roots_readonly=[r"E:\OneDriveBiz\Tools\abconfig\Cnct_Env.py"],
+            commands=CommandsPermission(allow_all=True),
+            external_tools=ExternalToolsPermission(allow_all=True),
+            tool_creation=ToolCreationPermission(personal=True, shared=False),
+        )
+
+        prompt = _format_permissions_for_prompt(config, "sora")
+
+        assert "native Windows environment" in prompt
+        assert "read_file for absolute paths" in prompt
+        assert "PowerShell-compatible shell via execute_command" in prompt
 
 
 class TestRAGConfig:
@@ -458,6 +505,18 @@ class TestResolveAnimaConfig:
         resolved, _ = resolve_anima_config(config, "bob", anima_dir=tmp_path)
         assert resolved.supervisor == "sakura"
 
+    def test_local_llm_role_preset_applies_when_model_is_not_explicit(self, tmp_path):
+        status = {"role": "engineer"}
+        (tmp_path / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        config = AnimaWorksConfig()
+        config.credentials["ollama"] = CredentialConfig(type="ollama", base_url="http://127.0.0.1:11434")
+        config.anima_defaults.credential = "ollama"
+        config.local_llm.default_model = "ollama/qwen2.5-coder:14b"
+        resolved, credential = resolve_anima_config(config, "bob", anima_dir=tmp_path)
+        assert resolved.model == "ollama/qwen2.5-coder:14b"
+        assert resolved.credential == "ollama"
+        assert credential.base_url == "http://127.0.0.1:11434"
+
 
 # ── Pattern specificity ───────────────────────────────────
 
@@ -581,6 +640,10 @@ class TestResolveExecutionModeWildcard:
         assert resolve_execution_mode(config, "zai/zai-model") == "A"
         assert resolve_execution_mode(config, "minimax/some-model") == "A"
         assert resolve_execution_mode(config, "moonshot/kimi") == "A"
+
+    def test_openai_codex_provider_routes_to_c(self):
+        config = AnimaWorksConfig()
+        assert resolve_execution_mode(config, "openai-codex/gpt-5.3-codex") == "C"
 
     def test_ollama_a_models(self):
         config = AnimaWorksConfig()

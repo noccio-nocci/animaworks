@@ -62,15 +62,18 @@ class TestPromptFileFallback:
         executor = _make_executor(model_config, anima_dir)
         small_prompt = "You are a helpful assistant."
         with patch_agent_sdk():
-            options, prompt_file = executor._build_sdk_options(
+            options, temp_files = executor._build_sdk_options(
                 small_prompt, 5, 200000, {},
             )
-        assert prompt_file is None
+        prompt_files = [f for f in temp_files if f.suffix == ".txt"]
+        assert not prompt_files
         # ClaudeAgentOptions was called with system_prompt=small_prompt
         call_kwargs = options.call_args if hasattr(options, 'call_args') else None
         # MagicMock records the kwargs; verify system_prompt was passed
         if call_kwargs:
             assert call_kwargs.kwargs.get("system_prompt") == small_prompt
+        for f in temp_files:
+            f.unlink(missing_ok=True)
 
     def test_large_prompt_creates_file(self, model_config, anima_dir):
         """Prompts over threshold are written to a temp file."""
@@ -78,10 +81,12 @@ class TestPromptFileFallback:
         # 120KB prompt (over 100KB threshold)
         large_prompt = "A" * 120_000
         with patch_agent_sdk():
-            options, prompt_file = executor._build_sdk_options(
+            options, temp_files = executor._build_sdk_options(
                 large_prompt, 5, 200000, {},
             )
-        assert prompt_file is not None
+        prompt_files = [f for f in temp_files if f.suffix == ".txt"]
+        assert len(prompt_files) == 1
+        prompt_file = prompt_files[0]
         assert prompt_file.exists()
         assert prompt_file.read_text(encoding="utf-8") == large_prompt
         # Verify system_prompt is None (SDK will emit --system-prompt "")
@@ -89,7 +94,8 @@ class TestPromptFileFallback:
             assert options.call_args.kwargs.get("system_prompt") is None
             assert "system-prompt-file" in options.call_args.kwargs.get("extra_args", {})
         # Cleanup
-        prompt_file.unlink(missing_ok=True)
+        for f in temp_files:
+            f.unlink(missing_ok=True)
 
     def test_large_prompt_file_content_utf8(self, model_config, anima_dir):
         """Non-ASCII prompts are correctly written as UTF-8."""
@@ -97,14 +103,17 @@ class TestPromptFileFallback:
         # Japanese text that exceeds threshold (each char ~3 bytes in UTF-8)
         large_prompt = "あ" * 40_000  # 40K chars × 3 bytes = 120KB
         with patch_agent_sdk():
-            options, prompt_file = executor._build_sdk_options(
+            options, temp_files = executor._build_sdk_options(
                 large_prompt, 5, 200000, {},
             )
-        assert prompt_file is not None
+        prompt_files = [f for f in temp_files if f.suffix == ".txt"]
+        assert len(prompt_files) == 1
+        prompt_file = prompt_files[0]
         assert prompt_file.exists()
         content = prompt_file.read_text(encoding="utf-8")
         assert content == large_prompt
-        prompt_file.unlink(missing_ok=True)
+        for f in temp_files:
+            f.unlink(missing_ok=True)
 
     def test_threshold_boundary_no_file(self, model_config, anima_dir):
         """Prompt at exactly the threshold does not trigger file fallback."""
@@ -113,10 +122,13 @@ class TestPromptFileFallback:
         # ASCII: 1 byte per char
         boundary_prompt = "X" * _PROMPT_FILE_THRESHOLD
         with patch_agent_sdk():
-            options, prompt_file = executor._build_sdk_options(
+            options, temp_files = executor._build_sdk_options(
                 boundary_prompt, 5, 200000, {},
             )
-        assert prompt_file is None
+        prompt_files = [f for f in temp_files if f.suffix == ".txt"]
+        assert not prompt_files
+        for f in temp_files:
+            f.unlink(missing_ok=True)
 
     def test_threshold_boundary_plus_one_creates_file(self, model_config, anima_dir):
         """Prompt one byte over the threshold triggers file fallback."""
@@ -124,11 +136,13 @@ class TestPromptFileFallback:
         from core.execution.agent_sdk import _PROMPT_FILE_THRESHOLD
         over_prompt = "X" * (_PROMPT_FILE_THRESHOLD + 1)
         with patch_agent_sdk():
-            options, prompt_file = executor._build_sdk_options(
+            options, temp_files = executor._build_sdk_options(
                 over_prompt, 5, 200000, {},
             )
-        assert prompt_file is not None
-        prompt_file.unlink(missing_ok=True)
+        prompt_files = [f for f in temp_files if f.suffix == ".txt"]
+        assert len(prompt_files) == 1
+        for f in temp_files:
+            f.unlink(missing_ok=True)
 
 
 # ── Tests: cleanup ────────────────────────────────────────────
@@ -172,10 +186,9 @@ class TestPromptFileCleanup:
         original_build = executor._build_sdk_options
 
         def _tracking_build(*args, **kwargs):
-            opts, pf = original_build(*args, **kwargs)
-            if pf:
-                created_files.append(pf)
-            return opts, pf
+            opts, tfs = original_build(*args, **kwargs)
+            created_files.extend(tfs)
+            return opts, tfs
 
         with patch_agent_sdk():
             executor._build_sdk_options = _tracking_build
@@ -203,10 +216,9 @@ class TestPromptFileCleanup:
         original_build = executor._build_sdk_options
 
         def _tracking_build(*args, **kwargs):
-            opts, pf = original_build(*args, **kwargs)
-            if pf:
-                created_files.append(pf)
-            return opts, pf
+            opts, tfs = original_build(*args, **kwargs)
+            created_files.extend(tfs)
+            return opts, tfs
 
         with patch_agent_sdk_streaming():
             executor._build_sdk_options = _tracking_build

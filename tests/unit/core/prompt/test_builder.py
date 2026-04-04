@@ -190,6 +190,59 @@ class TestBuildMessagingSection:
             template_names = [c[0][0] for c in mock_lp.call_args_list]
             assert "messaging_s" in template_names
 
+    def test_prefers_restricted_team_channel_for_reports(self, tmp_path):
+        anima_dir = tmp_path / "animas" / "alice"
+        anima_dir.mkdir(parents=True)
+        shared_dir = tmp_path / "shared" / "channels"
+        shared_dir.mkdir(parents=True)
+        (shared_dir / "property.jsonl").write_text("", encoding="utf-8")
+        (shared_dir / "general.jsonl").write_text("", encoding="utf-8")
+        (shared_dir / "ops.jsonl").write_text("", encoding="utf-8")
+        (shared_dir / "property.meta.json").write_text(
+            '{"members":["alice","bob"]}',
+            encoding="utf-8",
+        )
+
+        def _mock_lp(name: str, **kwargs) -> str:
+            if name == "builder/fallbacks":
+                return _MOCK_FALLBACKS
+            return kwargs["board_channel_guidance"]
+
+        with (
+            patch("core.tooling.prompt_db.get_prompt_store", return_value=None),
+            patch("core.prompt.sections.load_prompt", side_effect=_mock_lp),
+            patch("core.prompt.messaging.load_prompt", side_effect=_mock_lp),
+        ):
+            result = _build_messaging_section(anima_dir, ["bob"])
+
+        assert "#property" in result
+        assert "#general" in result
+        assert "限定チャネル" in result
+
+    def test_open_channels_only_when_no_restricted_team_channel(self, tmp_path):
+        anima_dir = tmp_path / "animas" / "alice"
+        anima_dir.mkdir(parents=True)
+        shared_dir = tmp_path / "shared" / "channels"
+        shared_dir.mkdir(parents=True)
+        (shared_dir / "general.jsonl").write_text("", encoding="utf-8")
+        (shared_dir / "ops.jsonl").write_text("", encoding="utf-8")
+
+        def _mock_lp(name: str, **kwargs) -> str:
+            if name == "builder/fallbacks":
+                return _MOCK_FALLBACKS
+            return kwargs["board_channel_guidance"]
+
+        with (
+            patch("core.tooling.prompt_db.get_prompt_store", return_value=None),
+            patch("core.prompt.sections.load_prompt", side_effect=_mock_lp),
+            patch("core.prompt.messaging.load_prompt", side_effect=_mock_lp),
+        ):
+            result = _build_messaging_section(anima_dir, ["bob"])
+
+        assert "#general" in result
+        assert "#ops" in result
+        assert "限定チャネルが見当たらない" in result
+
 
 # ── build_system_prompt ───────────────────────────────────
 
@@ -450,8 +503,8 @@ class TestBuildSystemPrompt:
             assert "Bash" in result
             assert "animaworks-tool" in result
 
-    def test_s_mode_injects_external_tools_hint_with_bash(self, tmp_path, data_dir):
-        """S mode injects External Tools hint mentioning Bash."""
+    def test_s_mode_injects_external_tools_hint_with_direct_tool_priority(self, tmp_path, data_dir):
+        """S mode should prefer dedicated MCP tools over Bash CLI."""
         anima_dir = tmp_path / "animas" / "alice"
         anima_dir.mkdir(parents=True)
         (anima_dir / "identity.md").write_text("I am Alice", encoding="utf-8")
@@ -480,12 +533,13 @@ class TestBuildSystemPrompt:
         with patch("core.prompt.builder.load_prompt", return_value="section"):
             result = build_system_prompt(
                 memory,
-                tool_registry=["chatwork"],
+                tool_registry=["chatwork", "slack_channel_post"],
                 execution_mode="s",
             )
             assert "External Tools" in result
-            assert "Bash" in result
-            assert "animaworks-tool" in result
+            assert "call it directly by tool name" in result
+            assert "slack_channel_post" in result
+            assert "Prefer direct tools" in result
 
     def test_b_mode_injects_external_tools_hint_with_bash_cli(self, tmp_path, data_dir):
         """B mode injects External Tools hint mentioning Bash + animaworks-tool."""

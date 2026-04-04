@@ -345,6 +345,7 @@ class GeminiCLIExecutor(BaseExecutor):
         pending_tools: dict[str, dict[str, Any]] = {}
         usage: TokenUsage | None = None
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -439,6 +440,18 @@ class GeminiCLIExecutor(BaseExecutor):
             logger.exception("Gemini CLI execution error")
             return ExecutionResult(text=f"[Gemini CLI Error: {e}]")
         finally:
+            # Ensure the subprocess is killed on CancelledError or any
+            # other exception that bypasses the normal exit path.
+            if proc is not None and proc.returncode is None:
+                logger.warning("Killing orphaned gemini CLI subprocess (PID %s)", proc.pid)
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:  # noqa: BLE001
+                    pass
             self._cleanup_prompt_files()
 
         return ExecutionResult(
@@ -492,6 +505,7 @@ class GeminiCLIExecutor(BaseExecutor):
         pending_tools: dict[str, dict[str, Any]] = {}
         usage: TokenUsage | None = None
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -597,6 +611,18 @@ class GeminiCLIExecutor(BaseExecutor):
             yield {"type": "text_delta", "text": err}
             accumulated_text = err
         finally:
+            # Ensure the subprocess is killed on CancelledError or any
+            # other exception that bypasses the normal exit path.
+            if proc is not None and proc.returncode is None:
+                logger.warning("Killing orphaned gemini CLI subprocess (PID %s)", proc.pid)
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:  # noqa: BLE001
+                    pass
             self._cleanup_prompt_files()
 
         yield {

@@ -789,6 +789,7 @@ class CycleMixin:
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
         }
+        terminal_error_message = ""
         current_prompt = prompt
         current_system_prompt = system_prompt
         retry_count = 0
@@ -868,7 +869,8 @@ class CycleMixin:
                 if not is_stream_error:
                     # Non-stream errors: log and break
                     logger.exception("Agent SDK streaming error (non-retryable)")
-                    yield {"type": "error", "message": f"[Agent SDK Error: {e}]"}
+                    terminal_error_message = f"[Agent SDK Error: {e}]"
+                    yield {"type": "error", "message": terminal_error_message}
                     break
 
                 # ── Stream disconnect: attempt retry ──────────
@@ -877,6 +879,7 @@ class CycleMixin:
                     full_text_parts.append(partial_text)
 
                 if retry_count >= max_retries:
+                    terminal_error_message = t("agent.stream_retry_exhausted", retry_count=retry_count)
                     logger.error(
                         "Stream retry exhausted (%d/%d)",
                         retry_count,
@@ -884,7 +887,7 @@ class CycleMixin:
                     )
                     yield {
                         "type": "error",
-                        "message": t("agent.stream_retry_exhausted", retry_count=retry_count),
+                        "message": terminal_error_message,
                     }
                     break
 
@@ -1019,6 +1022,8 @@ class CycleMixin:
 
         full_text = "\n".join(full_text_parts)
         thinking_text = "".join(thinking_text_parts)
+        final_action = "error" if terminal_error_message else "responded"
+        final_summary = full_text or terminal_error_message
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
             "run_cycle_streaming END trigger=%s duration_ms=%d response_len=%d chained=%s retries=%d",
@@ -1044,8 +1049,8 @@ class CycleMixin:
             "type": "cycle_done",
             "cycle_result": CycleResult(
                 trigger=trigger,
-                action="responded",
-                summary=full_text,
+                action=final_action,
+                summary=final_summary,
                 thinking_text=thinking_text[:10000],
                 duration_ms=duration_ms,
                 context_usage_ratio=tracker.usage_ratio,

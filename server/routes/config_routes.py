@@ -8,19 +8,57 @@ import logging
 import os
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.config.models import CredentialConfig, load_config, save_config
+from core.config.local_llm import (
+    apply_local_llm_presets_to_animas,
+    normalize_ollama_base_url,
+    normalize_ollama_model_name,
+)
+from core.config.models import (
+    CredentialConfig,
+    DEFAULT_LOCAL_LLM_BASE_URL,
+    DEFAULT_LOCAL_LLM_PRESETS,
+    DEFAULT_LOCAL_LLM_ROLE_PRESETS,
+    KNOWN_MODELS,
+    LocalLLMConfig,
+    load_config,
+    save_config,
+)
 from core.i18n import t
+from core.paths import get_animas_dir
+from core.platform.claude_code import is_claude_code_available
 from core.platform.codex import is_codex_cli_available, is_codex_login_available
 
 logger = logging.getLogger("animaworks.routes.config")
 
 
+def _known_codex_models() -> list[str]:
+    """Return UI-visible Codex model ids from the shared known-model catalog."""
+    return [
+        str(item["name"])
+        for item in KNOWN_MODELS
+        if item.get("mode") == "C" and str(item.get("name", "")).startswith("codex/")
+    ]
+
+
+class UpdateAnthropicAuthRequest(BaseModel):
+    auth_mode: str = "api_key"
+    api_key: str = ""
+
+
 class UpdateOpenAIAuthRequest(BaseModel):
     auth_mode: str = "api_key"
     api_key: str = ""
+
+
+class UpdateLocalLLMRequest(BaseModel):
+    base_url: str = DEFAULT_LOCAL_LLM_BASE_URL
+    default_model: str = DEFAULT_LOCAL_LLM_PRESETS["coding"]
+    presets: dict[str, str] = {}
+    role_presets: dict[str, str] = {}
 
 
 def _mask_secrets(obj: object) -> object:
@@ -71,6 +109,110 @@ def _serialize_openai_auth() -> dict[str, object]:
     }
 
 
+def _serialize_anthropic_auth() -> dict[str, object]:
+    """Return current Anthropic auth config and runtime availability."""
+    config = load_config()
+    credential = config.credentials.get("anthropic", CredentialConfig())
+    auth_mode = credential.type or "api_key"
+    config_present = "anthropic" in config.credentials
+    config_api_key_configured = bool(credential.api_key)
+    env_api_key_configured = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    claude_code_available = is_claude_code_available()
+
+    configured = False
+    if auth_mode == "claude_code_login":
+        configured = claude_code_available
+    elif auth_mode == "api_key":
+        configured = config_api_key_configured or env_api_key_configured
+
+    return {
+        "auth_mode": auth_mode,
+        "config_present": config_present,
+        "config_api_key_configured": config_api_key_configured,
+        "env_api_key_configured": env_api_key_configured,
+        "claude_code_available": claude_code_available,
+        "configured": configured,
+    }
+
+
+def _list_nanogpt_models(base_url: str, api_key: str) -> list[str]:
+    """Fetch available model IDs from a nanoGPT-compatible /models endpoint."""
+    response = httpx.get(
+        f"{base_url}/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=httpx.Timeout(10.0, connect=5.0),
+    )
+    response.raise_for_status()
+    data = response.json()
+    return sorted(
+        {
+            str(item.get("id", "")).strip()
+            for item in data.get("data", [])
+            if item.get("id")
+        }
+    )
+
+
+def _list_ollama_models(base_url: str) -> list[str]:
+    response = httpx.get(
+        f"{base_url}/api/tags",
+        timeout=httpx.Timeout(10.0, connect=5.0),
+    )
+    response.raise_for_status()
+    data = response.json()
+    models = sorted(
+        {
+            normalize_ollama_model_name(str(item.get("name", "")).strip())
+            for item in data.get("models", [])
+            if item.get("name")
+        }
+    )
+    return [model for model in models if model]
+
+
+def _serialize_local_llm() -> dict[str, object]:
+    config = load_config()
+    local_llm = LocalLLMConfig.model_validate(config.local_llm.model_dump())
+    base_url = normalize_ollama_base_url(local_llm.base_url)
+    default_model = normalize_ollama_model_name(local_llm.default_model)
+    presets = {
+        name: normalize_ollama_model_name(model)
+        for name, model in local_llm.presets.items()
+    }
+
+    available_models: list[str] = []
+    reachable = False
+    error: str | None = None
+    try:
+        available_models = _list_ollama_models(base_url)
+        reachable = True
+    except Exception as exc:  # pragma: no cover
+        error = str(exc)
+
+    ollama_credential = config.credentials.get("ollama")
+    configured = (
+        config.anima_defaults.credential == "ollama"
+        and normalize_ollama_model_name(config.anima_defaults.model) == default_model
+        and ollama_credential is not None
+        and normalize_ollama_base_url(ollama_credential.base_url) == base_url
+    )
+
+    return {
+        "base_url": base_url,
+        "default_model": default_model,
+        "presets": presets,
+        "role_presets": dict(local_llm.role_presets),
+        "recommended_presets": dict(DEFAULT_LOCAL_LLM_PRESETS),
+        "recommended_role_presets": dict(DEFAULT_LOCAL_LLM_ROLE_PRESETS),
+        "available_models": available_models,
+        "reachable": reachable,
+        "error": error,
+        "configured": configured,
+        "current_default_model": config.anima_defaults.model,
+        "current_default_credential": config.anima_defaults.credential,
+    }
+
+
 def create_config_router() -> APIRouter:
     router = APIRouter()
 
@@ -103,8 +245,13 @@ def create_config_router() -> APIRouter:
                 if d.is_dir() and (d / "identity.md").exists():
                     animas_count += 1
 
-        # Check API keys from environment
-        has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        # Check API keys / subscription auth
+        has_anthropic_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        anthropic_cred = load_config().credentials.get("anthropic", CredentialConfig())
+        has_anthropic_subscription = (
+            anthropic_cred.type == "claude_code_login" and is_claude_code_available()
+        )
+        has_anthropic = has_anthropic_key or has_anthropic_subscription
         has_openai = bool(os.environ.get("OPENAI_API_KEY"))
         has_codex_login = is_codex_login_available()
         has_openai_auth = has_openai or has_codex_login
@@ -122,7 +269,7 @@ def create_config_router() -> APIRouter:
                     "detail": t("config.anima_count_detail", count=animas_count),
                 },
                 {"label": t("config.shared_dir"), "ok": shared_dir.exists()},
-                {"label": t("config.anthropic_api_key"), "ok": has_anthropic},
+                {"label": t("config.anthropic_auth"), "ok": has_anthropic},
                 {"label": t("config.openai_auth"), "ok": has_openai_auth},
                 {"label": t("config.google_api_key"), "ok": has_google},
                 {"label": t("config.init_complete"), "ok": initialized},
@@ -139,10 +286,174 @@ def create_config_router() -> APIRouter:
             "initialized": initialized,
         }
 
+    @router.get("/settings/anthropic-auth")
+    async def get_anthropic_auth(request: Request):
+        """Return current Anthropic auth mode and runtime availability."""
+        return _serialize_anthropic_auth()
+
     @router.get("/settings/openai-auth")
     async def get_openai_auth(request: Request):
         """Return current OpenAI auth mode and runtime availability."""
         return _serialize_openai_auth()
+
+    @router.get("/settings/local-llm")
+    async def get_local_llm(request: Request):
+        """Return local Ollama-backed model settings and runtime availability."""
+        return _serialize_local_llm()
+
+    @router.get("/system/available-models")
+    async def get_available_models(request: Request):
+        """Return all available models (cloud + local) for UI dropdowns."""
+        config = load_config()
+        models: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        # Cloud providers
+        for provider, cred in config.credentials.items():
+            if not cred.api_key and cred.type not in ("claude_code_login", "codex_login"):
+                continue
+            if provider == "anthropic":
+                for m in ("claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"):
+                    if m not in seen:
+                        models.append({"id": m, "label": m, "credential": "anthropic"})
+                        seen.add(m)
+            elif provider == "openai":
+                for m in (
+                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+                    "gpt-4o", "gpt-4o-mini",
+                    "o3", "o4-mini",
+                ):
+                    if m not in seen:
+                        models.append({"id": m, "label": m, "credential": "openai"})
+                        seen.add(m)
+                # Codex CLI models (codex_login or api_key)
+                if cred.type == "codex_login" or cred.api_key:
+                    for m in _known_codex_models():
+                        if m not in seen:
+                            models.append({"id": m, "label": m, "credential": "openai"})
+                            seen.add(m)
+            elif provider in ("google", "gemini"):
+                for m in ("gemini-2.5-flash",):
+                    if m not in seen:
+                        models.append({"id": m, "label": m, "credential": "google"})
+                        seen.add(m)
+
+        # Codex CLI models (standalone — no openai credential entry needed)
+        if is_codex_login_available():
+            for m in _known_codex_models():
+                if m not in seen:
+                    models.append({"id": m, "label": m, "credential": "codex"})
+                    seen.add(m)
+
+        # nanoGPT models (dynamic fetch)
+        nanogpt_cred = config.credentials.get("nanogpt")
+        if nanogpt_cred and nanogpt_cred.api_key:
+            try:
+                ngpt_base = nanogpt_cred.base_url or "https://nano-gpt.com/api/subscription/v1"
+                for m in _list_nanogpt_models(ngpt_base, nanogpt_cred.api_key):
+                    mid = f"nanogpt/{m}"
+                    if mid not in seen:
+                        models.append({"id": mid, "label": f"nanoGPT: {m}", "credential": "nanogpt"})
+                        seen.add(mid)
+            except Exception:
+                pass
+
+        # Local Ollama models
+        try:
+            local_llm = LocalLLMConfig.model_validate(config.local_llm.model_dump())
+            base_url = normalize_ollama_base_url(local_llm.base_url)
+            for m in _list_ollama_models(base_url):
+                mid = f"ollama/{m}" if not m.startswith("ollama/") else m
+                label = m.removeprefix("ollama/") if m.startswith("ollama/") else m
+                if mid not in seen:
+                    models.append({"id": mid, "label": label, "credential": "ollama"})
+                    seen.add(mid)
+        except Exception:
+            pass
+
+        return {"models": models}
+
+    @router.get("/system/available-tools")
+    async def get_available_tools(request: Request):
+        """Return available external tool module names (minus disabled services)."""
+        try:
+            from core.tools import TOOL_MODULES
+            from core.tooling.permissions import _disabled_service_tools
+
+            tools = sorted(set(TOOL_MODULES.keys()) - _disabled_service_tools())
+        except Exception:
+            tools = []
+        return {"tools": tools}
+
+    @router.get("/system/org-info")
+    async def get_org_info(request: Request):
+        """Return existing departments, titles, and anima names for team builder."""
+        animas_dir = get_animas_dir()
+        departments: set[str] = set()
+        titles: set[str] = set()
+        animas: list[dict[str, str]] = []
+
+        if animas_dir.exists():
+            for d in sorted(animas_dir.iterdir()):
+                if not d.is_dir() or not (d / "identity.md").exists():
+                    continue
+                name = d.name
+                status_path = d / "status.json"
+                dept = ""
+                title = ""
+                if status_path.exists():
+                    try:
+                        sdata = json.loads(status_path.read_text(encoding="utf-8"))
+                        dept = sdata.get("department", "")
+                        title = sdata.get("title", "")
+                    except Exception:
+                        pass
+                if dept:
+                    departments.add(dept)
+                if title:
+                    titles.add(title)
+                animas.append({"name": name, "department": dept, "title": title})
+
+        return {
+            "departments": sorted(departments),
+            "titles": sorted(titles),
+            "animas": animas,
+        }
+
+    @router.put("/settings/anthropic-auth")
+    async def update_anthropic_auth(body: UpdateAnthropicAuthRequest, request: Request):
+        """Persist Anthropic auth mode in config.json for the settings UI."""
+        auth_mode = body.auth_mode.strip()
+        if auth_mode not in ("api_key", "claude_code_login"):
+            raise HTTPException(status_code=400, detail="Invalid auth mode. Must be 'api_key' or 'claude_code_login'.")
+
+        config = load_config()
+        current = config.credentials.get("anthropic", CredentialConfig())
+
+        if auth_mode == "claude_code_login":
+            if not is_claude_code_available():
+                raise HTTPException(status_code=400, detail="Claude Code CLI is not installed.")
+            config.credentials["anthropic"] = CredentialConfig(
+                type="claude_code_login",
+                api_key="",
+                base_url=current.base_url,
+                keys=dict(current.keys),
+            )
+            config.anima_defaults.mode_s_auth = "max"
+            logger.info("Anthropic auth set to subscription (claude_code_login), mode_s_auth=max")
+        else:
+            api_key = body.api_key.strip()
+            if not api_key:
+                raise HTTPException(status_code=400, detail="API key is required for api_key mode.")
+            config.credentials["anthropic"] = CredentialConfig(
+                type="api_key",
+                api_key=api_key,
+                base_url=current.base_url,
+                keys=dict(current.keys),
+            )
+
+        save_config(config)
+        return _serialize_anthropic_auth()
 
     @router.put("/settings/openai-auth")
     async def update_openai_auth(body: UpdateOpenAIAuthRequest, request: Request):
@@ -178,5 +489,56 @@ def create_config_router() -> APIRouter:
 
         save_config(config)
         return _serialize_openai_auth()
+
+    @router.put("/settings/local-llm")
+    async def update_local_llm(body: UpdateLocalLLMRequest, request: Request):
+        """Persist local LLM settings and make Ollama the default execution target."""
+        base_url = normalize_ollama_base_url(body.base_url)
+        config = load_config()
+        current_local_llm = LocalLLMConfig.model_validate(config.local_llm.model_dump())
+
+        default_model = normalize_ollama_model_name(body.default_model)
+        presets = dict(current_local_llm.presets)
+        for name, model in body.presets.items():
+            if name in presets and model.strip():
+                presets[name] = normalize_ollama_model_name(model)
+
+        role_presets = dict(current_local_llm.role_presets)
+        for role_name, preset_name in body.role_presets.items():
+            if role_name in role_presets and preset_name in presets:
+                role_presets[role_name] = preset_name
+
+        available_models = set(_list_ollama_models(base_url))
+        requested_models = {default_model, *presets.values()}
+        missing = sorted(model for model in requested_models if model not in available_models)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ollama models not found on {base_url}: {', '.join(missing)}",
+            )
+
+        config.local_llm = LocalLLMConfig(
+            base_url=base_url,
+            default_model=default_model,
+            presets=presets,
+            role_presets=role_presets,
+        )
+        config.credentials["ollama"] = CredentialConfig(
+            type="ollama",
+            api_key="",
+            base_url=base_url,
+        )
+        config.anima_defaults.model = default_model
+        config.anima_defaults.credential = "ollama"
+
+        save_config(config)
+        return _serialize_local_llm()
+
+    @router.post("/settings/local-llm/apply-role-presets")
+    async def apply_local_llm_role_presets(request: Request):
+        """Apply the configured role-based local LLM presets to existing animas."""
+        config = load_config()
+        updated = apply_local_llm_presets_to_animas(get_animas_dir(), config)
+        return {"updated": updated, "count": len(updated)}
 
     return router

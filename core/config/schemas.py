@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -63,6 +64,8 @@ class AnimaModelConfig(BaseModel):
     supervisor: str | None = None
     speciality: str | None = None
     model: str | None = None
+    aliases: list[str] = []
+    """Alternative names (e.g. Japanese) that resolve to this anima's canonical name."""
 
 
 # ── Default model names (single source of truth) ─────────────────────────────
@@ -95,6 +98,51 @@ class AnimaDefaults(BaseModel):
     max_outbound_per_day: int | None = None
     max_recipients_per_run: int | None = None
     default_workspace: str = ""
+
+
+# ── Local LLM defaults ───────────────────────────────────────────────────────
+DEFAULT_LOCAL_LLM_BASE_URL: str = "http://127.0.0.1:11434"
+DEFAULT_LOCAL_LLM_MODEL: str = "ollama/qwen2.5-coder:14b"
+DEFAULT_LOCAL_LLM_PRESETS: dict[str, str] = {
+    "coding": "ollama/qwen2.5-coder:14b",
+    "reasoning": "ollama/deepseek-r1:8b",
+    "general": "ollama/glm4:9b",
+}
+DEFAULT_LOCAL_LLM_ROLE_PRESETS: dict[str, str] = {
+    "engineer": "coding",
+    "researcher": "reasoning",
+    "manager": "reasoning",
+    "writer": "general",
+    "ops": "general",
+    "general": "general",
+}
+
+
+class LocalLLMConfig(BaseModel):
+    """User-facing defaults for local Ollama-backed models."""
+
+    base_url: str = DEFAULT_LOCAL_LLM_BASE_URL
+    default_model: str = DEFAULT_LOCAL_LLM_MODEL
+    presets: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_LOCAL_LLM_PRESETS))
+    role_presets: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_LOCAL_LLM_ROLE_PRESETS))
+
+    @model_validator(mode="after")
+    def ensure_required_presets(self) -> "LocalLLMConfig":
+        merged_presets = dict(DEFAULT_LOCAL_LLM_PRESETS)
+        for key, value in self.presets.items():
+            if value:
+                merged_presets[key] = value
+        self.presets = merged_presets
+
+        merged_role_presets = dict(DEFAULT_LOCAL_LLM_ROLE_PRESETS)
+        for key, value in self.role_presets.items():
+            if value in merged_presets:
+                merged_role_presets[key] = value
+        self.role_presets = merged_role_presets
+
+        if not self.default_model:
+            self.default_model = merged_presets["coding"]
+        return self
 
 
 # ── Outbound budget defaults per role ─────────────────────────────────────────
@@ -202,6 +250,7 @@ class ConsolidationConfig(BaseModel):
 class ImageGenConfig(BaseModel):
     """Configuration for image generation and style consistency."""
 
+    backend: Literal["api", "diffusers"] = "api"
     image_style: Literal["anime", "realistic"] = "realistic"
     style_reference: str | None = None  # Path to organization-wide style reference image
     style_prefix: str = ""  # Common style tags prepended to character prompt
@@ -210,6 +259,17 @@ class ImageGenConfig(BaseModel):
     vibe_strength: float = 0.6  # Vibe Transfer strength (0.0-1.0)
     vibe_info_extracted: float = 0.8  # Vibe Transfer information extraction (0.0-1.0)
     enable_3d: bool = True  # Enable 3D model generation (Meshy API)
+    diffusers_text2img_model: str = "auto"
+    diffusers_img2img_model: str = "auto"
+    diffusers_text2img_model_realistic: str = ""  # Override for realistic style
+    diffusers_text2img_model_anime: str = ""  # Override for anime style
+    diffusers_device: Literal["auto", "cuda", "cpu"] = "auto"
+    diffusers_torch_dtype: Literal["auto", "float16", "float32", "bfloat16"] = "auto"
+    diffusers_local_files_only: bool = True
+    diffusers_num_inference_steps: int = 28
+    diffusers_img2img_strength: float = 0.55
+    ip_adapter_model: str = "h94/IP-Adapter"
+    ip_adapter_scale: float = 0.6  # IP-Adapter face reference blend weight (0.0-1.0)
 
 
 class NotificationChannelConfig(BaseModel):
@@ -242,6 +302,8 @@ class ExternalMessagingChannelConfig(BaseModel):
     anima_mapping: dict[str, str] = {}  # channel_id → anima_name
     default_anima: str = ""  # fallback anima for unmapped channels
     app_id_mapping: dict[str, str] = {}  # api_app_id → anima_name (per-Anima webhook routing)
+    auto_response: bool = True  # auto-post LLM responses back to originating platform
+    board_mapping: dict[str, str] = {}  # channel_id → animaworks_board_name (auto-populated)
 
 
 class ExternalMessagingConfig(BaseModel):
@@ -283,6 +345,8 @@ class ServerConfig(BaseModel):
     stream_retry_max: int = 3  # max automatic retries on stream disconnect
     stream_retry_delay_s: float = 5.0  # delay between retries (seconds)
     llm_num_retries: int = 3  # retries for LLM API calls (429/5xx/network)
+    ollama_keep_alive: str = "5m"  # Ollama model keep-alive after a request (e.g. "5m", "0", "1h")
+    ollama_total_timeout: int = 7200  # Hard upper bound (seconds) on a single Ollama generation call (default: 2h)
     media_proxy: MediaProxyConfig = MediaProxyConfig()
 
     @model_validator(mode="after")
@@ -543,6 +607,7 @@ class PermissionsConfig(BaseModel):
 
     version: int = 1
     file_roots: list[str] = Field(default_factory=lambda: ["/"])
+    file_roots_readonly: list[str] = Field(default_factory=list)
     commands: CommandsPermission = Field(default_factory=CommandsPermission)
     external_tools: ExternalToolsPermission = Field(default_factory=ExternalToolsPermission)
     tool_creation: ToolCreationPermission = Field(default_factory=ToolCreationPermission)
@@ -586,12 +651,23 @@ def load_permissions(anima_dir: Path) -> PermissionsConfig:
 def _format_permissions_for_prompt(config: PermissionsConfig, anima_name: str) -> str:
     """Convert PermissionsConfig to a human/LLM-readable text block."""
     lines = [f"## Permissions: {anima_name}"]
+    if sys.platform == "win32":
+        lines.extend(
+            [
+                "- Runtime: native Windows environment (not a Linux container and not WSL unless explicitly stated)",
+                "- File reading is available via read_file for absolute paths and read_memory_file for files inside your own memory directory",
+                "- Command execution runs through a PowerShell-compatible shell via execute_command; do not assume Bash-only behavior unless a command actually fails",
+            ]
+        )
     if config.file_roots == ["/"]:
         lines.append("- File access: unrestricted")
-    elif not config.file_roots:
+    elif not config.file_roots and not config.file_roots_readonly:
         lines.append("- File access: own directory and shared framework directories only")
     else:
-        lines.append(f"- File access limited to: {', '.join(config.file_roots)}")
+        if config.file_roots:
+            lines.append(f"- Read/write access: {', '.join(config.file_roots)}")
+        if config.file_roots_readonly:
+            lines.append(f"- Read-only access: {', '.join(config.file_roots_readonly)}")
     if config.commands.allow_all:
         lines.append("- Commands: all allowed (global permission blocks still apply)")
     else:
@@ -643,6 +719,7 @@ class AnimaWorksConfig(BaseModel):
     voice: VoiceConfig = VoiceConfig()
     housekeeping: HousekeepingConfig = HousekeepingConfig()
     machine: MachineConfig = MachineConfig()
+    local_llm: LocalLLMConfig = LocalLLMConfig()
     workspaces: dict[str, str] = {}  # alias → absolute path
     activity_level: int = Field(
         default=100,
@@ -669,6 +746,10 @@ __all__ = [
     "CredentialConfig",
     "DEFAULT_ANIMA_MODEL",
     "DEFAULT_CONSOLIDATION_MODEL",
+    "DEFAULT_LOCAL_LLM_BASE_URL",
+    "DEFAULT_LOCAL_LLM_MODEL",
+    "DEFAULT_LOCAL_LLM_PRESETS",
+    "DEFAULT_LOCAL_LLM_ROLE_PRESETS",
     "ElevenLabsVoiceConfig",
     "ExternalMessagingChannelConfig",
     "ExternalMessagingConfig",
@@ -677,6 +758,7 @@ __all__ = [
     "HousekeepingConfig",
     "HumanNotificationConfig",
     "ImageGenConfig",
+    "LocalLLMConfig",
     "MachineConfig",
     "MediaProxyConfig",
     "NotificationChannelConfig",

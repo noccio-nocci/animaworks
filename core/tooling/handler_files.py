@@ -11,6 +11,7 @@ import logging
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -142,7 +143,8 @@ class CommandRunner:
         self._output_path = output_dir / f"{self.cmd_id}.txt"
         self._start_time = time.monotonic()
 
-        use_shell = bool(_NEEDS_SHELL_RE.search(self.command))
+        _is_windows = sys.platform == "win32"
+        use_shell = bool(_NEEDS_SHELL_RE.search(self.command)) or _is_windows
         try:
             if use_shell:
                 self.process = subprocess.Popen(
@@ -152,11 +154,14 @@ class CommandRunner:
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=str(self.cwd),
-                    executable="/bin/bash",
+                    # On Windows use cmd.exe (the default); on Unix use bash.
+                    executable=None if _is_windows else "/bin/bash",
                     **subprocess_session_kwargs(),
                 )
             else:
-                argv = shlex.split(self.command)
+                # posix=True (the shlex default) treats backslashes as escape
+                # characters, which destroys Windows paths like C:\Users\...
+                argv = shlex.split(self.command, posix=not _is_windows)
                 self.process = subprocess.Popen(
                     argv,
                     stdout=subprocess.PIPE,
@@ -590,10 +595,16 @@ class FileToolsMixin:
 
         timeout = args.get("timeout", 30)
 
-        use_shell = bool(_NEEDS_SHELL_RE.search(command))
+        import platform as _platform
+
+        _is_windows = _platform.system() == "Windows"
+        use_shell = bool(_NEEDS_SHELL_RE.search(command)) or _is_windows
 
         try:
             if use_shell:
+                shell_kwargs: dict[str, Any] = {}
+                if not _is_windows:
+                    shell_kwargs["executable"] = "/bin/bash"
                 proc = subprocess.run(
                     command,
                     shell=True,
@@ -601,7 +612,7 @@ class FileToolsMixin:
                     text=True,
                     timeout=timeout,
                     cwd=str(self._task_cwd or self._anima_dir),
-                    executable="/bin/bash",
+                    **shell_kwargs,
                 )
             else:
                 try:

@@ -15,12 +15,25 @@ import time
 from typing import TYPE_CHECKING
 
 from core.config.models import load_config
+from core.schemas import EXTERNAL_PLATFORM_SOURCES
 
 if TYPE_CHECKING:
     from core.anima import DigitalAnima
     from core.supervisor.scheduler_manager import SchedulerManager
 
 logger = logging.getLogger(__name__)
+
+
+def _is_immediately_actionable_intent(intent: str, source: str, actionable_intents: list[str]) -> bool:
+    """Return True when an inbox message should wake the anima immediately.
+
+    Internal delegation DMs are treated as actionable even though they are not
+    listed in config.json, because delegated work should not wait for the next
+    scheduled heartbeat.
+    """
+    if intent in actionable_intents:
+        return True
+    return intent == "delegation" and source not in {"human", *EXTERNAL_PLATFORM_SOURCES}
 
 
 class InboxRateLimiter:
@@ -53,6 +66,25 @@ class InboxRateLimiter:
     def is_in_cooldown(self) -> bool:
         """Return True if a message-triggered heartbeat finished too recently."""
         return (time.monotonic() - self._last_msg_heartbeat_end) < self._cooldown_sec
+
+    def _has_external_platform_message(self) -> bool:
+        """Peek at inbox for external platform messages (Slack, etc.).
+
+        When a human sends a DM via Slack, the cooldown (designed to
+        prevent Anima-to-Anima cascade loops) should NOT block immediate
+        processing.  This helper lets callers bypass cooldown when such
+        messages are present.
+        """
+        try:
+            from core.schemas import EXTERNAL_PLATFORM_SOURCES
+
+            messages = self._anima.messenger.receive()
+            return any(
+                m.source in EXTERNAL_PLATFORM_SOURCES and m.intent
+                for m in messages
+            )
+        except Exception:
+            return False
 
     # ── Cascade Detection ────────────────────────────────────────
 
@@ -144,7 +176,8 @@ class InboxRateLimiter:
             return
         if self._pending_trigger:
             return
-        if self.is_in_cooldown():
+        # Bypass cooldown when external platform messages are waiting
+        if self.is_in_cooldown() and not self._has_external_platform_message():
             self.schedule_deferred_trigger()
             return
         if self._anima._inbox_lock.locked():
@@ -176,12 +209,17 @@ class InboxRateLimiter:
         # ── Intent-based trigger filtering ──
         # Only trigger immediate heartbeat for actionable messages or human messages.
         # Non-actionable messages (ack, thanks, FYI) wait for the scheduled heartbeat.
-        from core.schemas import EXTERNAL_PLATFORM_SOURCES
-
         cfg = load_config()
         has_human = any(m.source == "human" for m in inbox_messages)
         has_external_directed = any(m.source in EXTERNAL_PLATFORM_SOURCES and m.intent for m in inbox_messages)
-        has_actionable = any(m.intent in cfg.heartbeat.actionable_intents for m in inbox_messages)
+        has_actionable = any(
+            _is_immediately_actionable_intent(
+                m.intent,
+                m.source,
+                cfg.heartbeat.actionable_intents,
+            )
+            for m in inbox_messages
+        )
         if not has_human and not has_external_directed and not has_actionable:
             logger.info(
                 "Intent filter: %s — no actionable messages, deferring to scheduled heartbeat",
@@ -190,7 +228,13 @@ class InboxRateLimiter:
             self._pending_trigger = False
             return
 
-        if senders and self.check_cascade(senders):
+        # Cascade detection applies only to Anima-to-Anima communication,
+        # NOT to messages from external platforms (Slack DMs from humans).
+        cascade_senders = {
+            m.from_person for m in inbox_messages
+            if m.source not in EXTERNAL_PLATFORM_SOURCES
+        }
+        if cascade_senders and self.check_cascade(cascade_senders):
             self._pending_trigger = False
             return
 
@@ -207,8 +251,8 @@ class InboxRateLimiter:
             self._scheduler_mgr.heartbeat_running = False
             self._pending_trigger = False
             self._last_msg_heartbeat_end = time.monotonic()
-            if senders:
-                self.record_pair_heartbeat(senders)
+            if cascade_senders:
+                self.record_pair_heartbeat(cascade_senders)
 
     # ── Inbox Watcher Loop ───────────────────────────────────────
 
@@ -231,7 +275,9 @@ class InboxRateLimiter:
                 if not self._anima.messenger.has_unread():
                     await asyncio.sleep(2.0)
                     continue
-                if self.is_in_cooldown():
+                # Bypass cooldown for external platform messages (Slack DMs
+                # from humans should never wait up to 5 minutes).
+                if self.is_in_cooldown() and not self._has_external_platform_message():
                     self.schedule_deferred_trigger()
                     await asyncio.sleep(2.0)
                     continue

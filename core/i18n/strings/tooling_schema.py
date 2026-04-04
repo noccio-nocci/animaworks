@@ -311,10 +311,18 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "schema.ping_subordinate.desc": {
         "ja": (
-            "配下のAnimaの生存確認を行う。name を省略すると全配下を一括 ping する。指定すると単一Animaのみ確認する。プロセス状態・最終アクティビティ時刻・経過時間を返す。"
+            "部下Animaが稼働しているか確認する唯一の正しいツール。"
+            "部下の存在確認・生死確認・稼働確認・パス確認はすべてこのツールを使う。"
+            "dir / find / search_memory / ReadMemoryFile など他ツールで部下を探してはいけない。"
+            "nameを省略すると全部下を一括ping。指定すると単一Animaのみ確認。"
+            "プロセス状態・最終アクティビティ時刻・経過時間を返す。"
         ),
         "en": (
-            "Check if subordinate Animas are alive. Omit name to ping all subordinates at once. Specify a name to check a single Anima. Returns process status, last activity time, and elapsed time."
+            "The ONLY correct tool to verify whether a subordinate Anima is running. "
+            "Use this for all subordinate existence checks, liveness checks, and status checks. "
+            "Do NOT use dir, find, search_memory, or ReadMemoryFile to look for subordinates. "
+            "Omit name to ping all subordinates; specify a name to check one Anima. "
+            "Returns process status, last activity time, and elapsed time."
         ),
     },
     "schema.ping_subordinate.name": {
@@ -322,15 +330,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Anima name to check (omit to ping all subordinates)",
     },
     "schema.post_channel.channel": {
-        "ja": "チャネル名 (general=全体共有, ops=運用系)",
-        "en": "Channel name (general=team-wide, ops=operations)",
+        "ja": "チャネル名（所属している部門/チームのBoardチャネル名。general=全体共有, ops=運用系）",
+        "en": "Channel name (your team/department Board channel, or general for org-wide, ops for operations)",
     },
     "schema.post_channel.desc": {
         "ja": (
-            "Boardの共有チャネルにメッセージを投稿する。チーム全体に共有すべき情報はgeneralチャネルに、運用・インフラ関連はopsチャネルに投稿する。全Animaが閲覧できるため、解決済み情報の共有やお知らせに使うこと。1対1の連絡にはsend_messageを使う。"
+            "Boardチャネルにメッセージを投稿する。通常の作業報告・完了報告は、まず所属している部門/チームのチャネルに投稿する。generalは全体共有、opsは部門横断の運用・インフラ共有に使う。1対1の連絡にはsend_messageを使う。"
         ),
         "en": (
-            "Post a message to a Board shared channel. Use the general channel for team-wide information and the ops channel for operations/infrastructure topics. All Animas can read shared channels, so use them for resolved info and announcements. For 1-on-1 communication, use send_message instead."
+            "Post a message to a Board channel. Routine work reports and completion updates should go to your team/department channel first. Use general for org-wide sharing and ops for cross-team operations or infrastructure topics. Use send_message for 1-to-1 communication."
         ),
     },
     "schema.post_channel.text": {
@@ -340,15 +348,15 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "schema.read_channel.channel": {
-        "ja": "チャネル名 (general, ops)",
-        "en": "Channel name (general, ops)",
+        "ja": "チャネル名（所属しているBoardチャネル名）",
+        "en": "Channel name (any Board channel you belong to)",
     },
     "schema.read_channel.desc": {
         "ja": (
-            "Boardの共有チャネルの直近メッセージを読む。他のAnimaやユーザーが共有した情報を確認できる。human_only=trueでユーザー発言のみフィルタリング可能。inbox はチャネルではないため指定不可（inbox はシステムが自動処理）。"
+            "Boardチャネルの直近メッセージを読む。他のAnimaやユーザーが共有した情報を確認できる。所属している部門/チームチャネルや general / ops を必要に応じて参照する。human_only=trueでユーザー発言のみフィルタリング可能。inbox はチャネルではないため指定不可（inbox はシステムが自動処理）。"
         ),
         "en": (
-            "Read recent messages from a Board shared channel. View information shared by other Animas and users. Set human_only=true to filter for human messages only. 'inbox' is not a channel and cannot be specified (inbox is processed automatically by the system)."
+            "Read recent messages from a Board channel. Review information shared by other Animas and users in your team/department channels or in general/ops as needed. Set human_only=true to filter for human messages only. 'inbox' is not a channel and cannot be specified (it is processed automatically by the system)."
         ),
     },
     "schema.read_channel.human_only": {

@@ -205,10 +205,10 @@ class TestBypassPermissionsConfig:
                     "force_chain": False,
                 }
 
-                options, pf = executor._build_sdk_options(
+                options, temp_files = executor._build_sdk_options(
                     "test prompt", 5, 200000, session_stats,
                 )
 
                 assert options.permission_mode == "bypassPermissions"
-                if pf:
-                    pf.unlink(missing_ok=True)
+                for f in temp_files:
+                    f.unlink(missing_ok=True)

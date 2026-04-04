@@ -550,7 +550,8 @@ class TestLoadPermittedCategories:
         """Without permissions.md, all tools are returned."""
         from core.mcp.server import _load_permitted_categories
 
-        with patch("core.tools.TOOL_MODULES", {"chatwork": "core.tools.chatwork", "slack": "core.tools.slack"}):
+        with patch("core.tools.TOOL_MODULES", {"chatwork": "core.tools.chatwork", "slack": "core.tools.slack"}), \
+             patch("core.tooling.permissions._disabled_service_tools", return_value=set()):
             result = _load_permitted_categories(tmp_path)
         assert result == {"chatwork", "slack"}
 
@@ -561,7 +562,8 @@ class TestLoadPermittedCategories:
         perms = tmp_path / "permissions.md"
         perms.write_text("## 実行できるコマンド\n- git: OK\n", encoding="utf-8")
 
-        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x"}):
+        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x"}), \
+             patch("core.tooling.permissions._disabled_service_tools", return_value=set()):
             result = _load_permitted_categories(tmp_path)
         assert result == {"chatwork", "slack"}
 
@@ -575,7 +577,8 @@ class TestLoadPermittedCategories:
             encoding="utf-8",
         )
 
-        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x", "gmail": "x"}):
+        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x", "gmail": "x"}), \
+             patch("core.tooling.permissions._disabled_service_tools", return_value=set()):
             result = _load_permitted_categories(tmp_path)
         assert result == {"chatwork", "slack"}
         assert "gmail" not in result
@@ -587,7 +590,8 @@ class TestLoadPermittedCategories:
         perms = tmp_path / "permissions.md"
         perms.write_text("## 外部ツール\n- all: yes\n", encoding="utf-8")
 
-        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x", "gmail": "x"}):
+        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x", "gmail": "x"}), \
+             patch("core.tooling.permissions._disabled_service_tools", return_value=set()):
             result = _load_permitted_categories(tmp_path)
         assert result == {"chatwork", "slack", "gmail"}
 
@@ -598,7 +602,8 @@ class TestLoadPermittedCategories:
         perms = tmp_path / "permissions.md"
         perms.write_text("## 外部ツール\n- all: yes\n- gmail: no\n", encoding="utf-8")
 
-        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x", "gmail": "x"}):
+        with patch("core.tools.TOOL_MODULES", {"chatwork": "x", "slack": "x", "gmail": "x"}), \
+             patch("core.tooling.permissions._disabled_service_tools", return_value=set()):
             result = _load_permitted_categories(tmp_path)
         assert result == {"chatwork", "slack"}
         assert "gmail" not in result

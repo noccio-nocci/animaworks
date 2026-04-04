@@ -31,6 +31,7 @@ class TestMessagingTemplates:
         """S mode template must have the required format placeholders."""
         content = (_JA_PROMPTS / "messaging_s.md").read_text(encoding="utf-8")
         assert "{animas_line}" in content
+        assert "{board_channel_guidance}" in content
 
     def test_messaging_a_template_exists(self):
         """Standard messaging template (for A mode) must still exist."""
@@ -41,6 +42,18 @@ class TestMessagingTemplates:
         """A mode template should still reference send_message tool."""
         content = (_JA_PROMPTS / "messaging.md").read_text(encoding="utf-8")
         assert "send_message" in content
+
+    def test_a_reflection_template_uses_mode_a_tool_names(self):
+        """A mode reflection template should use read_file/search_code/list_directory names."""
+        content = (_JA_PROMPTS / "a_reflection.md").read_text(encoding="utf-8")
+        assert "ネイティブWindows環境" in content
+        assert "read_file" in content
+        assert "search_code" in content
+        assert "list_directory" in content
+        assert "`Read`" not in content
+        assert "`Grep`" not in content
+        assert "`Glob`" not in content
+        assert "`Bash`" not in content
 
 
 class TestHeartbeatDefaultChecklist:

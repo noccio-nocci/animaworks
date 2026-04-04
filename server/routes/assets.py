@@ -9,13 +9,60 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
 from server.events import emit
 from server.routes.media_proxy import proxy_external_image
 
 logger = logging.getLogger("animaworks.routes.assets")
+
+_UNSET = object()
+
+# ── Slack avatar helper ──────────────────────────────────────────────
+
+_SLACK_AVATAR_DIR = Path(__file__).resolve().parents[2] / "assets" / "slack-avatars"
+_SLACK_ICON_SIZE = 512
+
+_BUSTUP_CANDIDATES = [
+    "avatar_bustup_realistic.png",
+    "avatar_bustup.png",
+]
+
+
+def _update_slack_avatar(anima_name: str, assets_dir: Path) -> bool:
+    """Crop bustup image to square and save to slack-avatars/ directory.
+
+    Returns True if the avatar was updated, False if no source image found.
+    """
+    src: Path | None = None
+    for candidate in _BUSTUP_CANDIDATES:
+        p = assets_dir / candidate
+        if p.is_file():
+            src = p
+            break
+    if src is None:
+        return False
+
+    from PIL import Image
+
+    with Image.open(src) as img:
+        img = img.convert("RGB")
+        w, h = img.size
+        if h > w:
+            cropped = img.crop((0, 0, w, w))
+        elif w > h:
+            offset = (w - h) // 2
+            cropped = img.crop((offset, 0, offset + h, h))
+        else:
+            cropped = img
+        resized = cropped.resize((_SLACK_ICON_SIZE, _SLACK_ICON_SIZE), Image.LANCZOS)
+
+    _SLACK_AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = _SLACK_AVATAR_DIR / f"{anima_name}.png"
+    resized.save(out_path, format="PNG", optimize=True)
+    logger.info("Slack avatar updated: %s (%s -> %s)", anima_name, src.name, out_path)
+    return True
 
 _ASSET_CONTENT_TYPES = {
     ".png": "image/png",
@@ -65,6 +112,31 @@ class RemakePreviewRequest(BaseModel):
     seed: int | None = None
     image_style: str | None = None
     backup_id: str | None = None
+    face_reference_url: str | None = None  # URL of a face photo for IP-Adapter
+    import_as_is: bool = False  # Import face reference directly as avatar
+    num_inference_steps: int = 25  # Diffusers inference step count (quality vs speed)
+
+    @field_validator("face_reference_url")
+    @classmethod
+    def validate_face_ref_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from urllib.parse import urlparse
+
+        parsed = urlparse(v)
+        if parsed.scheme.lower() != "https":
+            raise ValueError("Only HTTPS URLs are allowed for face_reference_url")
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise ValueError("Invalid URL: missing hostname")
+        if host in ("localhost", "127.0.0.1", "::1") or host.startswith(("10.", "192.168.", "172.")):
+            raise ValueError("Private network URLs are not allowed")
+        return v
+
+    @field_validator("num_inference_steps")
+    @classmethod
+    def validate_steps(cls, v: int) -> int:
+        return max(5, min(100, v))
 
     @field_validator("vibe_strength", "vibe_info_extracted")
     @classmethod
@@ -85,6 +157,7 @@ class RemakeConfirmRequest(BaseModel):
     backup_id: str
     image_style: str | None = None
     preview_file: str | None = None
+    fullbody_only: bool = False
 
     @field_validator("backup_id")
     @classmethod
@@ -107,6 +180,36 @@ def _next_preview_counter(assets_dir: Path, is_realistic: bool) -> int:
         if p.isdigit():
             return int(p) + 1
     return len(existing) + 1
+
+
+def _effective_image_config(
+    *,
+    image_style: str | None = None,
+    enable_3d: bool | None = None,
+    style_reference: object = _UNSET,
+):
+    """Load image generation config and apply per-request overrides."""
+    from core.config.models import ImageGenConfig, load_config
+
+    try:
+        base_config = load_config().image_gen
+        updates: dict[str, object] = {}
+        if image_style is not None:
+            updates["image_style"] = image_style
+        if enable_3d is not None:
+            updates["enable_3d"] = enable_3d
+        if style_reference is not _UNSET:
+            updates["style_reference"] = style_reference
+        return base_config.model_copy(update=updates)
+    except Exception:
+        kwargs: dict[str, object] = {}
+        if image_style is not None:
+            kwargs["image_style"] = image_style
+        if enable_3d is not None:
+            kwargs["enable_3d"] = enable_3d
+        if style_reference is not _UNSET:
+            kwargs["style_reference"] = style_reference
+        return ImageGenConfig(**kwargs)
 
 
 def create_assets_router() -> APIRouter:
@@ -175,19 +278,21 @@ def create_assets_router() -> APIRouter:
             for key, filename_ in anime_asset_files.items():
                 path = assets_dir / filename_
                 if path.exists():
+                    st = path.stat()
                     result["assets"][key] = {
                         "filename": filename_,
-                        "url": f"{base_url}/{filename_}",
-                        "size": path.stat().st_size,
+                        "url": f"{base_url}/{filename_}?v={int(st.st_mtime)}",
+                        "size": st.st_size,
                     }
 
             for key, filename_ in realistic_asset_files.items():
                 path = assets_dir / filename_
                 if path.exists():
+                    st = path.stat()
                     result["assets_realistic"][key] = {
                         "filename": filename_,
-                        "url": f"{base_url}/{filename_}",
-                        "size": path.stat().st_size,
+                        "url": f"{base_url}/{filename_}?v={int(st.st_mtime)}",
+                        "size": st.st_size,
                     }
 
             # Icon: before icon_realistic.png existed, pipeline wrote only icon.png — use it as fallback
@@ -217,10 +322,11 @@ def create_assets_router() -> APIRouter:
                 fname = f"avatar_bustup_{emotion}.png"
                 path = assets_dir / fname
                 if path.exists():
+                    st = path.stat()
                     expressions[emotion] = {
                         "filename": fname,
-                        "url": f"{base_url}/{fname}",
-                        "size": path.stat().st_size,
+                        "url": f"{base_url}/{fname}?v={int(st.st_mtime)}",
+                        "size": st.st_size,
                     }
             result["expressions"] = expressions
 
@@ -231,20 +337,22 @@ def create_assets_router() -> APIRouter:
                 fname = f"avatar_bustup_{emotion}_realistic.png"
                 path = assets_dir / fname
                 if path.exists():
+                    st = path.stat()
                     realistic_expressions[emotion] = {
                         "filename": fname,
-                        "url": f"{base_url}/{fname}",
-                        "size": path.stat().st_size,
+                        "url": f"{base_url}/{fname}?v={int(st.st_mtime)}",
+                        "size": st.st_size,
                     }
             result["expressions_realistic"] = realistic_expressions
 
             for f in sorted(assets_dir.iterdir()):
                 if f.is_file() and f.name.startswith("anim_") and f.suffix == ".glb":
                     anim_name = f.stem[len("anim_") :]
+                    st = f.stat()
                     result["animations"][anim_name] = {
                         "filename": f.name,
-                        "url": f"{base_url}/{f.name}",
-                        "size": f.stat().st_size,
+                        "url": f"{base_url}/{f.name}?v={int(st.st_mtime)}",
+                        "size": st.st_size,
                     }
 
         # Extract image_color from identity.md
@@ -261,7 +369,12 @@ def create_assets_router() -> APIRouter:
             except OSError:
                 pass
 
-        return result
+        from starlette.responses import JSONResponse as _StlJSONResponse
+
+        return _StlJSONResponse(
+            content=result,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @router.api_route("/animas/{name}/assets/{filename}", methods=["GET", "HEAD"])
     async def get_asset(name: str, filename: str, request: Request):
@@ -271,46 +384,26 @@ def create_assets_router() -> APIRouter:
         if not anima_dir.exists():
             raise HTTPException(status_code=404, detail=f"Anima not found: {name}")
 
-        # Validate filename (prevent path traversal)
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
         safe_name = Path(filename).name
-        if safe_name != filename or ".." in filename:
+        if safe_name != filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
 
-        file_path = anima_dir / "assets" / safe_name
+        assets_dir = anima_dir / "assets"
+        file_path = (assets_dir / safe_name).resolve()
+        if not file_path.is_relative_to(assets_dir.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid path")
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="Asset not found")
 
         suffix = file_path.suffix.lower()
         content_type = _ASSET_CONTENT_TYPES.get(suffix, "application/octet-stream")
 
-        # Generate ETag from file metadata
-        stat = file_path.stat()
-        etag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
-
-        # Return 304 Not Modified if ETag matches
-        if_none_match = request.headers.get("if-none-match")
-        if if_none_match and (
-            if_none_match == etag
-            or etag in [t.strip() for t in if_none_match.split(",")]
-            or if_none_match.strip() == "*"
-        ):
-            from starlette.responses import Response
-
-            return Response(
-                status_code=304,
-                headers={
-                    "ETag": etag,
-                    "Cache-Control": "public, max-age=300, stale-while-revalidate=3600",
-                },
-            )
-
         return FileResponse(
             file_path,
             media_type=content_type,
-            headers={
-                "Cache-Control": "public, max-age=300, stale-while-revalidate=3600",
-                "ETag": etag,
-            },
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.api_route("/animas/{name}/attachments/{filename}", methods=["GET", "HEAD"])
@@ -336,29 +429,10 @@ def create_assets_router() -> APIRouter:
         suffix = file_path.suffix.lower()
         content_type = _ASSET_CONTENT_TYPES.get(suffix, "application/octet-stream")
 
-        stat = file_path.stat()
-        etag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
-        if_none_match = request.headers.get("if-none-match")
-        if if_none_match and (
-            if_none_match == etag
-            or etag in [t.strip() for t in if_none_match.split(",")]
-            or if_none_match.strip() == "*"
-        ):
-            return Response(
-                status_code=304,
-                headers={
-                    "ETag": etag,
-                    "Cache-Control": "public, no-cache",
-                },
-            )
-
         return FileResponse(
             file_path,
             media_type=content_type,
-            headers={
-                "Cache-Control": "public, no-cache",
-                "ETag": etag,
-            },
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.get("/media/proxy")
@@ -386,12 +460,7 @@ def create_assets_router() -> APIRouter:
 
         pipeline_kwargs: dict = {}
         if body.image_style:
-            try:
-                from core.config.models import ImageGenConfig
-
-                pipeline_kwargs["config"] = ImageGenConfig(image_style=body.image_style)
-            except Exception:
-                pass
+            pipeline_kwargs["config"] = _effective_image_config(image_style=body.image_style)
 
         pipeline = ImageGenPipeline(anima_dir, **pipeline_kwargs)
 
@@ -462,13 +531,12 @@ def create_assets_router() -> APIRouter:
 
         reference_bytes = reference_path.read_bytes()
 
-        from core.config.models import ImageGenConfig
         from core.tools.image_gen import ImageGenPipeline
 
         style = body.image_style or "anime"
         pipeline = ImageGenPipeline(
             anima_dir,
-            config=ImageGenConfig(image_style=style),
+            config=_effective_image_config(image_style=style),
         )
 
         loop = asyncio.get_running_loop()
@@ -670,17 +738,78 @@ def create_assets_router() -> APIRouter:
                 )
             vibe_image = style_fullbody.read_bytes()
 
-        # Resolve prompt (style-aware)
-        prompt = body.prompt
-        if not prompt:
-            from core.asset_reconciler import _resolve_prompt
-
-            prompt = _resolve_prompt(anima_dir, style="realistic" if is_realistic else "anime")
-            if not prompt:
+        # Download face reference image if URL is provided
+        face_reference_bytes: bytes | None = None
+        if body.face_reference_url:
+            logger.info("Downloading face reference from: %s", body.face_reference_url)
+            try:
+                face_resp = await proxy_external_image(body.face_reference_url, request)
+                face_reference_bytes = face_resp.body
+                import hashlib as _hashlib
+                _ref_hash = _hashlib.md5(face_reference_bytes).hexdigest()[:8]
+                logger.info(
+                    "Face reference downloaded: %d bytes (md5prefix=%s)",
+                    len(face_reference_bytes), _ref_hash,
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
                 raise HTTPException(
                     status_code=400,
-                    detail="No prompt available. Provide prompt or create assets/prompt.txt.",
-                )
+                    detail=f"Failed to download face reference image: {exc}",
+                ) from exc
+
+            # Note: face cropping for IP-Adapter is handled inside the image backend
+            # (diffusers_local._crop_to_face via SCRFD) to avoid double-cropping.
+            # A coarse server-side pre-crop caused partial face cut-off which made
+            # IP-Adapter produce non-human faces.
+
+        # Resolve prompt (style-aware) — try cached first, then LLM synthesis, then fallback
+        prompt = body.prompt
+        if not prompt:
+            from core.asset_reconciler import _extract_prompt, _resolve_prompt
+
+            # Fast path: check cached prompt files
+            prompt = _resolve_prompt(anima_dir, style="realistic" if is_realistic else "anime")
+            if not prompt:
+                # Slow path: extract from identity.md / character_sheet.md via LLM
+                logger.info("No cached prompt for '%s', attempting LLM synthesis…", name)
+                try:
+                    import asyncio as _asyncio
+                    prompt = await _asyncio.wait_for(
+                        _extract_prompt(anima_dir, style="realistic" if is_realistic else "anime"),
+                        timeout=45.0,
+                    )
+                except _asyncio.TimeoutError:
+                    logger.warning("LLM prompt synthesis timed out for '%s', using default prompt", name)
+                    prompt = None
+            if not prompt:
+                # Fallback: generate a default prompt from the anima name
+                logger.info("No appearance data for '%s', using default prompt", name)
+                if is_realistic:
+                    prompt = (
+                        f"realistic full-length full-body photo of a professional young Japanese person "
+                        f"named {name}, solo, single subject, one person only, standing naturally, "
+                        f"centered composition, facing camera, plain modern office lobby background, "
+                        f"minimal background clutter, friendly approachable expression, neat appearance, "
+                        f"clean professional attire, polished office style, natural lighting, high detail, "
+                        f"no other people, no crowd, no duplicate body, no extra limbs"
+                    )
+                else:
+                    prompt = (
+                        f"1girl, {name}, solo, standing, full body, simple background, "
+                        f"office lady, professional attire, neat hair, smile, looking at viewer, "
+                        f"high quality, detailed"
+                    )
+                # Cache for future use
+                try:
+                    cache_dir = anima_dir / "assets"
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    cache_name = "prompt_realistic.txt" if is_realistic else "prompt.txt"
+                    (cache_dir / cache_name).write_text(prompt + "\n", encoding="utf-8")
+                    logger.info("Cached default %s prompt for '%s'", "realistic" if is_realistic else "anime", name)
+                except OSError:
+                    pass
 
         # Reuse existing backup or create a new one
         assets_dir = anima_dir / "assets"
@@ -700,12 +829,14 @@ def create_assets_router() -> APIRouter:
                 shutil.copytree(assets_dir, backup_dir)
                 logger.info("Backup created: %s", backup_dir)
 
-        from core.config.models import ImageGenConfig
         from core.tools.image_gen import ImageGenPipeline
 
         pipeline = ImageGenPipeline(
             anima_dir,
-            config=ImageGenConfig(image_style=style or "realistic"),
+            config=_effective_image_config(
+                image_style=style or "realistic",
+                style_reference=None,
+            ),
         )
 
         gen_kwargs: dict = {
@@ -716,60 +847,208 @@ def create_assets_router() -> APIRouter:
         }
         if vibe_image is not None:
             gen_kwargs["vibe_image"] = vibe_image
+        if face_reference_bytes is not None:
+            gen_kwargs["face_reference_image"] = face_reference_bytes
+        # Pass strength sliders whenever any reference (style or face) is active
+        if vibe_image is not None or face_reference_bytes is not None:
             gen_kwargs["vibe_strength"] = body.vibe_strength
             gen_kwargs["vibe_info_extracted"] = body.vibe_info_extracted
+        gen_kwargs["num_inference_steps"] = body.num_inference_steps
 
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: pipeline.generate_all(**gen_kwargs),
-        )
+        ws_manager = getattr(request.app.state, "ws_manager", None)
 
-        if result.errors:
-            if not body.backup_id and backup_dir.exists():
-                if assets_dir.exists():
-                    shutil.rmtree(assets_dir)
-                backup_dir.rename(assets_dir)
-                logger.info("Assets restored from backup after failure: %s", name)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Preview generation failed: {'; '.join(result.errors)}",
-            )
+        # Detect low-VRAM mode so the UI can warn before starting
+        _low_vram_mode = False
+        try:
+            import torch as _torch
+            if _torch.cuda.is_available():
+                _free_vram, _ = _torch.cuda.mem_get_info()
+                _low_vram_mode = _free_vram < 7 * 1024 ** 3
+        except Exception:
+            pass
 
-        # Save preview as numbered file for history navigation
-        output_filename = "avatar_fullbody_realistic.png" if is_realistic else "avatar_fullbody.png"
-        source_path = assets_dir / output_filename
-        counter = _next_preview_counter(assets_dir, is_realistic)
-        if is_realistic:
-            preview_filename = f"_preview_{counter:03d}_realistic.png"
-        else:
-            preview_filename = f"_preview_{counter:03d}.png"
-
-        if source_path.exists():
-            import shutil as _sh
-
-            _sh.copy2(source_path, assets_dir / preview_filename)
-
-        preview_url = f"/api/animas/{name}/assets/{preview_filename}"
-
+        # Emit start event immediately so UI shows spinner
         await emit(
             request,
-            "anima.remake_preview_ready",
+            "anima.image_gen_progress",
             {
                 "name": name,
-                "preview_url": preview_url,
-                "preview_file": preview_filename,
-                "seed_used": body.seed,
-                "backup_id": backup_id,
+                "step": "fullbody",
+                "current": 0,
+                "total": 0,
+                "pct": 0,
+                "low_vram": _low_vram_mode,
             },
         )
 
-        return {
-            "preview_url": preview_url,
-            "preview_file": preview_filename,
-            "seed_used": body.seed,
-            "backup_id": backup_id,
-        }
+        # Capture everything needed for the background task before returning HTTP
+        _backup_id_original = body.backup_id
+        _seed_used = body.seed
+        _app_state = request.app.state
+
+        async def _bg_generate() -> None:
+            import shutil as _shutil
+            import time as _time
+
+            bg_loop = asyncio.get_running_loop()
+
+            def _on_step(current: int, total: int) -> None:
+                _ws = getattr(_app_state, "ws_manager", None)
+                if _ws is None:
+                    return
+                pct = int(current * 100 / total) if total > 0 else 0
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        _ws.broadcast({
+                            "type": "anima.image_gen_progress",
+                            "data": {
+                                "name": name,
+                                "step": "fullbody",
+                                "current": current,
+                                "total": total,
+                                "pct": pct,
+                            },
+                        }),
+                        bg_loop,
+                    )
+                except Exception:
+                    pass
+
+            gen_kwargs["fullbody_step_callback"] = _on_step
+
+            async def _ws_emit(etype: str, data: dict) -> None:
+                _ws = getattr(_app_state, "ws_manager", None)
+                if _ws:
+                    try:
+                        await _ws.broadcast({"type": etype, "data": data})
+                    except Exception:
+                        pass
+
+            async def _emit_ready(source_bytes: bytes) -> None:
+                """Save source_bytes as a numbered preview only, then emit ready event.
+
+                The canonical avatar file (avatar_fullbody_realistic.png) is NOT
+                updated here — it is only written when the user explicitly confirms
+                via remake-confirm.  Writing it during preview caused a feedback loop:
+                the Face Reference URL could point to the avatar file, so each retry
+                would use the previous generation as input and progressively degrade.
+                """
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                counter = _next_preview_counter(assets_dir, is_realistic)
+                preview_filename = (
+                    f"_preview_{counter:03d}_realistic.png" if is_realistic else f"_preview_{counter:03d}.png"
+                )
+                (assets_dir / preview_filename).write_bytes(source_bytes)
+                preview_url = f"/api/animas/{name}/assets/{preview_filename}?v={int(_time.time())}"
+                await _ws_emit("anima.remake_preview_ready", {
+                    "name": name,
+                    "preview_url": preview_url,
+                    "preview_file": preview_filename,
+                    "seed_used": _seed_used,
+                    "backup_id": backup_id,
+                })
+
+            # ── Import as-is: use face reference directly as avatar ──
+            if body.import_as_is and face_reference_bytes is not None:
+                try:
+                    import io as _io
+
+                    from PIL import Image as _Img
+
+                    img = _Img.open(_io.BytesIO(face_reference_bytes)).convert("RGB")
+                    # Fit within max dimensions while preserving aspect ratio
+                    max_w, max_h = (512, 768) if is_realistic else (512, 512)
+                    img.thumbnail((max_w, max_h), _Img.LANCZOS)
+                    buf = _io.BytesIO()
+                    img.save(buf, format="PNG", optimize=True)
+                    logger.info("Import-as-is used for '%s'", name)
+                    await _emit_ready(buf.getvalue())
+                    return
+                except Exception as _import_exc:
+                    logger.warning("Import-as-is failed (%s), falling back to generation", _import_exc)
+
+            # ── Fast path: PIL resize when a reference image is available ──
+            # When vibe_image (style_from fullbody) is provided and VRAM is low,
+            # skip SDXL entirely — just resize the reference to target dimensions.
+            # This is instant and produces a usable preview without any GPU work.
+            if _low_vram_mode and vibe_image is not None:
+                try:
+                    import io as _io
+                    from PIL import Image as _Img
+                    img = _Img.open(_io.BytesIO(vibe_image)).convert("RGB")
+                    target_w, target_h = (512, 768) if is_realistic else (512, 512)
+                    img = img.resize((target_w, target_h), _Img.LANCZOS)
+                    buf = _io.BytesIO()
+                    img.save(buf, format="PNG", optimize=True)
+                    logger.info("Fast PIL resize used for '%s' (low-VRAM, vibe reference available)", name)
+                    await _emit_ready(buf.getvalue())
+                    return
+                except Exception as _pil_exc:
+                    logger.warning("PIL fast path failed (%s), falling back to SDXL", _pil_exc)
+
+            try:
+                result = await bg_loop.run_in_executor(
+                    None,
+                    lambda: pipeline.generate_all(**gen_kwargs),
+                )
+
+                if result.errors:
+                    if not _backup_id_original and backup_dir.exists():
+                        if assets_dir.exists():
+                            _shutil.rmtree(assets_dir)
+                        backup_dir.rename(assets_dir)
+                        logger.info("Assets restored from backup after failure: %s", name)
+                    await _ws_emit("anima.image_gen_progress", {
+                        "name": name,
+                        "step": "fullbody",
+                        "current": -1,
+                        "total": -1,
+                        "pct": -1,
+                        "error": "; ".join(result.errors),
+                    })
+                    return
+
+                # Save preview via shared helper
+                output_filename = "avatar_fullbody_realistic.png" if is_realistic else "avatar_fullbody.png"
+                source_path = assets_dir / output_filename
+                if source_path.exists():
+                    generated_bytes = source_path.read_bytes()
+
+                    # Restore the canonical avatar BEFORE emitting the preview
+                    # notification.  The WebSocket message triggers the UI to
+                    # display the result, and the user may click Retry immediately.
+                    # That retry request re-downloads face_reference_url, which may
+                    # point to the avatar file — restoring first ensures it always
+                    # gets the original image, not the freshly generated one.
+                    original_avatar = backup_dir / output_filename
+                    if original_avatar.exists():
+                        source_path.write_bytes(original_avatar.read_bytes())
+                        logger.info("Restored canonical avatar from backup after preview")
+                    else:
+                        logger.debug(
+                            "No original avatar in backup — skipping restore (%s)", original_avatar
+                        )
+
+                    await _emit_ready(generated_bytes)
+
+            except Exception as exc:
+                logger.exception("Background fullbody generation failed for %s", name)
+                await _ws_emit("anima.image_gen_progress", {
+                    "name": name,
+                    "step": "fullbody",
+                    "current": -1,
+                    "total": -1,
+                    "pct": -1,
+                    "error": str(exc),
+                })
+
+        asyncio.create_task(_bg_generate())
+
+        # Return 202 immediately — result arrives via WebSocket
+        return JSONResponse(
+            status_code=202,
+            content={"status": "generating", "backup_id": backup_id},
+        )
 
     @router.post("/animas/{name}/assets/remake-confirm")
     async def remake_confirm(
@@ -827,6 +1106,47 @@ def create_assets_router() -> APIRouter:
                 detail=f"No {fullbody_filename} preview found. Run remake-preview first.",
             )
 
+        # ── Fullbody-only mode: copy fullbody to all other slots ──
+        if body.fullbody_only:
+            app = request.app
+
+            async def _run_fullbody_copy() -> None:
+                try:
+                    import shutil as _sh2
+
+                    # Determine target files
+                    bustup_name = "avatar_bustup_realistic.png" if is_realistic else "avatar_bustup.png"
+                    _sh2.copy2(fullbody_path, assets_dir / bustup_name)
+                    await _emit_ws("anima.remake_progress", {"name": name, "step": "bustup", "status": "completed", "progress_pct": 100})
+
+                    # Copy fullbody to all expression variants
+                    style_suffix = "_realistic" if is_realistic else ""
+                    expressions = ["smile", "laugh", "troubled", "surprised", "thinking", "embarrassed"]
+                    for i, expr in enumerate(expressions):
+                        expr_name = f"avatar_bustup_{expr}{style_suffix}.png"
+                        _sh2.copy2(fullbody_path, assets_dir / expr_name)
+                        await _emit_ws("anima.remake_progress", {"name": name, "step": f"expression:{expr}", "status": "completed", "progress_pct": 100})
+
+                    # Clean up backup
+                    if backup_dir.exists():
+                        _sh2.rmtree(backup_dir, ignore_errors=True)
+                        logger.info("Removed backup after fullbody-only copy: %s", backup_dir.name)
+
+                    await _emit_ws("anima.remake_complete", {"name": name, "steps_completed": ["fullbody_copy"], "errors": []})
+                except Exception:
+                    logger.exception("Fullbody-only copy failed for %s", name)
+                    await _emit_ws("anima.remake_complete", {"name": name, "steps_completed": [], "errors": ["Internal error during fullbody copy"]})
+
+            async def _emit_ws(event_type: str, data: dict) -> None:
+                ws = getattr(app.state, "ws_manager", None)
+                if ws:
+                    await ws.broadcast({"type": event_type, "data": data})
+
+            remaining_steps = ["bustup"] + [f"expression:{e}" for e in ["smile", "laugh", "troubled", "surprised", "thinking", "embarrassed"]]
+            asyncio.create_task(_run_fullbody_copy())
+            return {"status": "started", "steps": remaining_steps, "mode": "fullbody_only"}
+
+        # ── Normal cascade rebuild ──
         # Resolve prompt (style-aware)
         from core.asset_reconciler import _resolve_prompt
 
@@ -848,12 +1168,11 @@ def create_assets_router() -> APIRouter:
         else:
             remaining_steps = ["bustup", "chibi", "3d", "rigging", "animations"]
 
-        from core.config.models import ImageGenConfig
         from core.tools.image_gen import ImageGenPipeline
 
         pipeline = ImageGenPipeline(
             anima_dir,
-            config=ImageGenConfig(image_style=style or "realistic"),
+            config=_effective_image_config(image_style=style or "realistic"),
         )
 
         app = request.app
@@ -897,6 +1216,23 @@ def create_assets_router() -> APIRouter:
                     completed.append("rigging")
                 if result.animation_paths:
                     completed.append("animations")
+
+                # Clean up backup after successful rebuild — the new assets
+                # are canonical now; keeping the backup would let a stale
+                # DELETE /remake-preview restore outdated files.
+                if backup_dir.exists():
+                    import shutil as _sh2
+                    _sh2.rmtree(backup_dir, ignore_errors=True)
+                    logger.info("Removed backup after successful rebuild: %s", backup_dir.name)
+
+                # Regenerate Slack avatar (cropped square icon) and upload to XSERVER
+                try:
+                    if _update_slack_avatar(name, assets_dir):
+                        from server.slack_avatar_upload import upload_avatar
+
+                        upload_avatar(name)
+                except Exception:
+                    logger.debug("Slack avatar update/upload failed for %s", name, exc_info=True)
 
                 await _emit_ws(
                     "anima.remake_complete",

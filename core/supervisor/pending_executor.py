@@ -40,6 +40,26 @@ _SENTINEL_CANCELLED = "(cancelled)"
 _SENTINEL_EXPIRED = "(expired)"
 
 
+def _detect_task_auth_failure(result: str) -> str | None:
+    """Return an auth-failure summary when the result is a terminal auth error."""
+    text = (result or "").strip()
+    if not text:
+        return None
+
+    folded = text.casefold()
+    auth_markers = (
+        "failed to authenticate",
+        "invalid authentication credentials",
+        "authentication_error",
+        "not authenticated",
+    )
+    if not any(marker in folded for marker in auth_markers):
+        return None
+    if not any(marker in folded for marker in ("401", "api error", "unauthorized", "auth")):
+        return None
+    return text[:200]
+
+
 def _classify_task_result(result: str) -> tuple[str, str]:
     """Map _run_llm_task return value to (queue_status, summary).
 
@@ -49,6 +69,9 @@ def _classify_task_result(result: str) -> tuple[str, str]:
         return "cancelled", "cancelled before execution"
     if result == _SENTINEL_EXPIRED:
         return "cancelled", "expired (TTL exceeded)"
+    auth_failure = _detect_task_auth_failure(result)
+    if auth_failure:
+        return "failed", f"FAILED: {auth_failure}"
     return "done", (result or "")[:200]
 
 
@@ -731,6 +754,7 @@ class PendingTaskExecutor:
         self._anima.agent.reset_read_paths()
         accumulated_text = ""
         result_summary = ""
+        task_failed_reason = ""
         had_error = False
         error_message = ""
 
@@ -761,6 +785,8 @@ class PendingTaskExecutor:
                         "summary",
                         accumulated_text[:500],
                     )
+                    if cycle_result.get("action") == "error":
+                        task_failed_reason = result_summary or "task execution failed"
                     journal.finalize(summary=result_summary[:500])
         finally:
             journal.close()
@@ -768,9 +794,15 @@ class PendingTaskExecutor:
 
         if had_error:
             raise TaskExecError(f"Task {task_id} encountered streaming error: {error_message}")
+        if task_failed_reason:
+            raise RuntimeError(task_failed_reason)
 
         if not result_summary:
             result_summary = accumulated_text[:500] or t("pending_executor.task_completed")
+
+        auth_failure = _detect_task_auth_failure(result_summary or accumulated_text)
+        if auth_failure:
+            raise TaskExecError(auth_failure)
 
         activity.log(
             "task_exec_end",

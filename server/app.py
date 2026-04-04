@@ -17,8 +17,8 @@ from pathlib import Path
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
@@ -183,8 +183,30 @@ async def _startup_animas_background(app: FastAPI) -> None:
         except Exception:
             logger.exception("Frontmatter migration failed (non-fatal)")
 
-        # Start all anima processes (parallel internally)
-        await app.state.supervisor.start_all(app.state.anima_names)
+        # Exclude governor-suspended animas from startup.
+        # The governor will resume them automatically when usage recovers.
+        _gov_excluded: set[str] = set()
+        try:
+            from core.paths import get_data_dir as _get_dd
+            import json as _json
+
+            _gsp = _get_dd() / "usage_governor_state.json"
+            if _gsp.is_file():
+                _gsd = _json.loads(_gsp.read_text("utf-8"))
+                _gov_excluded = set(_gsd.get("suspended_animas", []))
+                if _gov_excluded:
+                    logger.info(
+                        "Startup: skipping %d governor-suspended animas: %s",
+                        len(_gov_excluded),
+                        ", ".join(sorted(_gov_excluded)),
+                    )
+        except Exception:
+            logger.debug("Failed to read governor state at startup", exc_info=True)
+
+        _names_to_start = [n for n in app.state.anima_names if n not in _gov_excluded]
+
+        # Start anima processes (parallel internally)
+        await app.state.supervisor.start_all(_names_to_start)
 
         # Sync org structure from identity.md/status.json → config.json
         try:
@@ -197,16 +219,59 @@ async def _startup_animas_background(app: FastAPI) -> None:
         # Reconcile missing anima assets (fallback for failed bootstrap)
         asyncio.create_task(_reconcile_assets_at_startup(app.state.animas_dir))
 
+        # ── Slack: ensure .env slots + warn about missing tokens ──
+        try:
+            from core.config.env_slots import check_missing_slack_tokens, ensure_all_anima_slots
+
+            ensure_all_anima_slots()
+            missing = check_missing_slack_tokens()
+            if missing:
+                logger.warning(
+                    "Slack tokens missing for: %s — edit .env and restart",
+                    ", ".join(missing),
+                )
+        except Exception:
+            logger.debug("Slack env slot check failed", exc_info=True)
+
         # ── Slack Socket Mode ─────────────────────────────────
         try:
             from server.slack_socket import SlackSocketModeManager
 
             socket_manager = SlackSocketModeManager()
-            await socket_manager.start()
+            await asyncio.wait_for(socket_manager.start(), timeout=30)
             app.state.slack_socket_manager = socket_manager
-        except Exception:
-            logger.exception("Slack Socket Mode startup failed")
+        except asyncio.TimeoutError:
+            logger.error("Slack Socket Mode startup timed out (30s)")
             app.state.slack_socket_manager = None
+        except Exception as exc:
+            logger.error(
+                "Slack Socket Mode startup failed: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            app.state.slack_socket_manager = None
+
+        # ── Slack avatar upload to XSERVER ───────────────────
+        try:
+            from server.slack_avatar_upload import upload_all_avatars
+
+            upload_all_avatars()
+        except Exception:
+            logger.debug("Slack avatar upload failed", exc_info=True)
+
+        # ── Slack channel → board sync (initial) ──────────────
+        if app.state.slack_socket_manager is not None:
+            try:
+                from server.slack_channel_sync import SlackChannelSync
+
+                channel_sync = SlackChannelSync()
+                await channel_sync.sync(app.state.slack_socket_manager)
+                app.state.slack_channel_sync = channel_sync
+            except Exception:
+                logger.warning("Initial Slack channel sync failed", exc_info=True)
+                app.state.slack_channel_sync = None
+        else:
+            app.state.slack_channel_sync = None
 
         # ── ConfigReloadManager ───────────────────────────────
         from server.reload_manager import ConfigReloadManager
@@ -346,6 +411,26 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
+        # ── Slack channel → board periodic resync ─────────
+        async def _slack_channel_resync() -> None:
+            try:
+                sync = getattr(app.state, "slack_channel_sync", None)
+                mgr = getattr(app.state, "slack_socket_manager", None)
+                if sync is not None and mgr is not None:
+                    await sync.sync(mgr)
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Periodic Slack channel sync failed", exc_info=True)
+
+        msg_log_scheduler.add_job(
+            _slack_channel_resync,
+            IntervalTrigger(minutes=5),
+            id="slack_channel_sync",
+            name="System: Slack Channel → Board Sync",
+            replace_existing=True,
+        )
+
         msg_log_scheduler.start()
         app.state.msg_log_scheduler = msg_log_scheduler
 
@@ -365,6 +450,15 @@ async def lifespan(app: FastAPI):
         app.state._anima_startup_task = asyncio.create_task(
             _startup_animas_background(app),
         )
+
+        # ── Usage Governor (throttles cloud-provider animas based on quota) ──
+        from server.usage_governor import UsageGovernor
+
+        from core.paths import get_data_dir
+
+        governor = UsageGovernor(app, get_data_dir(), app.state.animas_dir)
+        app.state.usage_governor = governor
+        await governor.start()
 
         logger.info("Server started (anima processes launching in background)")
     else:
@@ -387,6 +481,9 @@ async def lifespan(app: FastAPI):
         await app.state.stream_registry.stop_cleanup_loop()
         if getattr(app.state, "slack_socket_manager", None):
             await app.state.slack_socket_manager.stop()
+        governor = getattr(app.state, "usage_governor", None)
+        if governor:
+            await governor.stop()
         await app.state.supervisor.shutdown_all()
         if hasattr(app.state, "msg_log_scheduler"):
             app.state.msg_log_scheduler.shutdown(wait=False)
@@ -493,7 +590,7 @@ def create_app(animas_dir: Path, shared_dir: Path) -> FastAPI:
     async def static_cache_control(request: Request, call_next):  # type: ignore[no-untyped-def]
         response = await call_next(request)
         path = request.url.path
-        if path.endswith((".js", ".css", ".html")) or path == "/" or path == "/workspace":
+        if path.endswith((".js", ".css", ".html")) or path == "/" or path.startswith("/workspace"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 
@@ -596,8 +693,56 @@ def create_app(animas_dir: Path, shared_dir: Path) -> FastAPI:
     app.include_router(create_router())
     app.include_router(create_setup_router())
 
-    # ── Static files ───────────────────────────────────────
-    setup_static_dir = Path(__file__).parent / "static" / "setup"
+    # ── Version stamp (changes on every server start) ────
+    _app_version = str(int(time.time()))
+    static_dir = Path(__file__).parent / "static"
+
+    # ── Serve index.html as template with version injection ─
+    # Replace __AW_VERSION__ so all resource URLs (CSS, JS, import-map)
+    # include the server-start timestamp.  This guarantees the browser
+    # loads fresh resources after every restart — no manual cache-clear
+    # needed, even on plain HTTP (where Clear-Site-Data is ignored).
+    from fastapi.responses import HTMLResponse
+
+    _index_raw = (static_dir / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/", include_in_schema=False)
+    async def _serve_index():
+        html = _index_raw.replace("__AW_VERSION__", _app_version)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+    # ── Versioned static file route ───────────────────────
+    # Serves /_v/{version}/path → static/path with no-store.
+    # All CSS <link> hrefs, JS module imports, and the import-map use
+    # this prefix so the browser fetches fresh files after restart.
+    _MIME_MAP = {
+        ".js": "application/javascript",
+        ".mjs": "application/javascript",
+        ".css": "text/css",
+        ".html": "text/html",
+        ".json": "application/json",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".woff2": "font/woff2",
+        ".woff": "font/woff",
+        ".ttf": "font/ttf",
+    }
+
+    @app.get("/_v/{version}/{path:path}", include_in_schema=False)
+    async def _serve_versioned_static(version: str, path: str):
+        # Prevent path traversal
+        safe = Path(path)
+        if ".." in safe.parts:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        file = static_dir / safe
+        if not file.exists() or not file.is_file():
+            raise HTTPException(status_code=404)
+        media = _MIME_MAP.get(file.suffix.lower(), "application/octet-stream")
+        return FileResponse(str(file), media_type=media, headers={"Cache-Control": "no-store"})
+
+    # ── Static files (fallback for non-versioned paths) ───
+    setup_static_dir = static_dir / "setup"
     if setup_static_dir.exists():
         app.mount(
             "/setup",
@@ -605,8 +750,15 @@ def create_app(animas_dir: Path, shared_dir: Path) -> FastAPI:
             name="setup_static",
         )
 
-    static_dir = Path(__file__).parent / "static"
+    workspace_static_dir = static_dir / "workspace"
+    if workspace_static_dir.exists():
+        app.mount(
+            "/workspace",
+            StaticFiles(directory=str(workspace_static_dir), html=True),
+            name="workspace_static",
+        )
+
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        app.mount("/", StaticFiles(directory=str(static_dir), html=False), name="static")
 
     return app

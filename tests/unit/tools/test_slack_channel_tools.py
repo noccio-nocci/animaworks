@@ -69,6 +69,13 @@ class TestToolSchemas:
         assert "channel_id" in required
         assert "text" in required
 
+    def test_channel_post_supports_optional_thread_ts(self):
+        from core.tools.slack import get_tool_schemas
+
+        schema = next(s for s in get_tool_schemas() if s["name"] == "slack_channel_post")
+        properties = schema["input_schema"]["properties"]
+        assert "thread_ts" in properties
+
     def test_channel_update_required_fields(self):
         from core.tools.slack import get_tool_schemas
 
@@ -125,6 +132,24 @@ class TestDispatchChannelPost:
         _, kwargs = mock_client.post_message.call_args
         assert kwargs["username"] == "mei"
         assert kwargs["icon_url"] == "https://cdn/mei.png"
+
+    @patch("core.tools.slack._resolve_slack_identity", return_value=("mei", "https://cdn/mei.png"))
+    @patch("core.tools.slack._resolve_slack_token", return_value="xoxb-test")
+    @patch("core.tools.slack.SlackClient")
+    def test_passes_thread_ts(self, mock_cls, mock_token, mock_identity):
+        from core.tools.slack import dispatch
+
+        mock_client = MagicMock()
+        mock_client.post_message.return_value = {"ok": True, "ts": "123"}
+        mock_cls.return_value = mock_client
+
+        dispatch(
+            "slack_channel_post",
+            {"channel_id": "C1", "text": "hi", "thread_ts": "1774610064.894259"},
+        )
+
+        _, kwargs = mock_client.post_message.call_args
+        assert kwargs["thread_ts"] == "1774610064.894259"
 
 
 class TestDispatchChannelUpdate:

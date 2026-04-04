@@ -66,6 +66,8 @@ class ChannelMeta:
     created_by: str = ""
     created_at: str = ""
     description: str = ""
+    slack_sync_disabled: bool = False
+    slack_deleted_at: str = ""
 
 
 def load_channel_meta(shared_dir: Path, channel: str) -> ChannelMeta | None:
@@ -83,6 +85,8 @@ def load_channel_meta(shared_dir: Path, channel: str) -> ChannelMeta | None:
             created_by=data.get("created_by", ""),
             created_at=data.get("created_at", ""),
             description=data.get("description", ""),
+            slack_sync_disabled=bool(data.get("slack_sync_disabled", False)),
+            slack_deleted_at=data.get("slack_deleted_at", ""),
         )
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to load channel meta for %s: %s", channel, exc)
@@ -99,6 +103,8 @@ def save_channel_meta(shared_dir: Path, channel: str, meta: ChannelMeta) -> None
         "created_by": meta.created_by,
         "created_at": meta.created_at,
         "description": meta.description,
+        "slack_sync_disabled": meta.slack_sync_disabled,
+        "slack_deleted_at": meta.slack_deleted_at,
     }
     meta_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
