@@ -842,7 +842,7 @@ class StreamingMixin:
                             timeout=_total_timeout_s,
                         ),
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "Ollama LLM call hard-timeout after %.0fs (trigger=%s model=%s)",
                         _total_timeout_s,
@@ -852,9 +852,8 @@ class StreamingMixin:
                     from core.exceptions import LLMAPIError
 
                     raise LLMAPIError(
-                        f"Ollama request timed out after {_total_timeout_s:.0f}s "
-                        f"(model={self._model_config.model})"
-                    )
+                        f"Ollama request timed out after {_total_timeout_s:.0f}s (model={self._model_config.model})"
+                    ) from None
 
                 choice = response.choices[0]
                 message = choice.message
@@ -944,6 +943,7 @@ class StreamingMixin:
                     # Build a synthetic tool_calls list so the existing
                     # processing path below handles execution normally.
                     from types import SimpleNamespace
+
                     _syn_fn = SimpleNamespace(name=_ol_tc_name, arguments=_ol_tc_args_json)
                     _syn_tc = SimpleNamespace(id=_ol_tc_id, function=_syn_fn)
                     tool_calls = [_syn_tc]

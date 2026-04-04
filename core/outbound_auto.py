@@ -172,11 +172,13 @@ class SlackAutoResponder:
             if ext_uid:
                 mention = f"<@{ext_uid}> "
 
-            targets.append({
-                "channel_id": channel_id,
-                "thread_ts": thread_ts,
-                "mention_prefix": mention,
-            })
+            targets.append(
+                {
+                    "channel_id": channel_id,
+                    "thread_ts": thread_ts,
+                    "mention_prefix": mention,
+                }
+            )
         return targets
 
     @staticmethod

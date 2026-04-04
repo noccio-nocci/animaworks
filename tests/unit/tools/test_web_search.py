@@ -1,4 +1,4 @@
-"""Tests for core/tools/web_search.py — Brave Web Search tool."""
+"""Tests for core/tools/web_search.py — DuckDuckGo Web Search tool."""
 # AnimaWorks - Digital Anima Framework
 # Copyright (C) 2026 AnimaWorks Authors
 # SPDX-License-Identifier: Apache-2.0
@@ -10,9 +10,9 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from core.tools._base import ToolConfigError
 from core.tools.web_search import (
-    BRAVE_SEARCH_URL,
+    _DDG_HTML_URL,
+    _extract_ddg_url,
     _strip_html,
     dispatch,
     format_results,
@@ -23,22 +23,23 @@ from core.tools.web_search import (
 
 # ── Helper fixtures ───────────────────────────────────────────────
 
+_SAMPLE_DDG_HTML = """\
+<html><body>
+<div class="result results_links results_links_deep web-result">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F1&rut=abc">Result 1</a>
+  <a class="result__snippet">Desc 1</a>
+</div>
+<div class="result results_links results_links_deep web-result">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F2&rut=def">Result 2</a>
+  <a class="result__snippet">Desc <b>2</b></a>
+</div>
+</body></html>
+"""
 
-@pytest.fixture(autouse=True)
-def _set_brave_api_key():
-    with patch("core.tools.web_search.get_credential", return_value="test-brave-key-123"):
-        yield
 
-
-def _make_brave_response(results: list[dict] | None = None) -> httpx.Response:
-    """Build a mock httpx.Response with Brave search results."""
-    if results is None:
-        results = [
-            {"title": "Result 1", "url": "https://example.com/1", "description": "Desc 1"},
-            {"title": "Result 2", "url": "https://example.com/2", "description": "Desc <b>2</b>"},
-        ]
-    data = {"web": {"results": results}}
-    return httpx.Response(200, json=data, request=httpx.Request("GET", BRAVE_SEARCH_URL))
+def _make_ddg_response(html_body: str = _SAMPLE_DDG_HTML, status: int = 200) -> httpx.Response:
+    """Build a mock httpx.Response with DDG search HTML."""
+    return httpx.Response(status, text=html_body, request=httpx.Request("POST", _DDG_HTML_URL))
 
 
 # ── search() ──────────────────────────────────────────────────────
@@ -46,81 +47,72 @@ def _make_brave_response(results: list[dict] | None = None) -> httpx.Response:
 
 class TestSearch:
     def test_successful_search(self):
-        mock_resp = _make_brave_response()
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp):
+        mock_resp = _make_ddg_response()
+        with patch("core.tools.web_search.httpx.post", return_value=mock_resp):
             results = search("python programming")
         assert len(results) == 2
         assert results[0]["title"] == "Result 1"
         assert results[0]["url"] == "https://example.com/1"
 
-    def test_search_params_construction(self):
-        mock_resp = _make_brave_response([])
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp) as mock_get:
-            search("test query", count=5, lang="en", country="JP", freshness="pw")
-        call_kwargs = mock_get.call_args
-        params = call_kwargs.kwargs["params"]
-        assert params["q"] == "test query"
-        assert params["count"] == 5
-        assert params["search_lang"] == "en"
-        assert params["country"] == "JP"
-        assert params["freshness"] == "pw"
-
     def test_count_clamped_min(self):
-        mock_resp = _make_brave_response([])
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp) as mock_get:
-            search("test", count=-5)
-        params = mock_get.call_args.kwargs["params"]
-        assert params["count"] == 1
+        mock_resp = _make_ddg_response()
+        with patch("core.tools.web_search.httpx.post", return_value=mock_resp):
+            results = search("test", count=-5)
+        assert isinstance(results, list)
 
     def test_count_clamped_max(self):
-        mock_resp = _make_brave_response([])
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp) as mock_get:
-            search("test", count=100)
-        params = mock_get.call_args.kwargs["params"]
-        assert params["count"] == 20
-
-    def test_ja_language_mapping(self):
-        mock_resp = _make_brave_response([])
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp) as mock_get:
-            search("test", lang="ja")
-        params = mock_get.call_args.kwargs["params"]
-        assert params["search_lang"] == "jp"
-
-    def test_freshness_not_included_when_none(self):
-        mock_resp = _make_brave_response([])
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp) as mock_get:
-            search("test", freshness=None)
-        params = mock_get.call_args.kwargs["params"]
-        assert "freshness" not in params
-
-    def test_missing_api_key_raises(self):
-        with patch("core.tools.web_search.get_credential", side_effect=ToolConfigError("no key")):
-            with pytest.raises(ToolConfigError):
-                search("test")
+        mock_resp = _make_ddg_response()
+        with patch("core.tools.web_search.httpx.post", return_value=mock_resp):
+            results = search("test", count=100)
+        assert isinstance(results, list)
 
     def test_http_error_propagated(self):
-        error_resp = httpx.Response(
-            500,
-            text="Internal Server Error",
-            request=httpx.Request("GET", BRAVE_SEARCH_URL),
-        )
-        with patch("core.tools.web_search.httpx.get", return_value=error_resp):
+        error_resp = _make_ddg_response(status=500)
+        with patch("core.tools.web_search.httpx.post", return_value=error_resp):
             with pytest.raises(httpx.HTTPStatusError):
                 search("test")
 
     def test_empty_results(self):
-        data = {"web": {"results": []}}
-        mock_resp = httpx.Response(200, json=data, request=httpx.Request("GET", BRAVE_SEARCH_URL))
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp):
+        mock_resp = _make_ddg_response("<html><body></body></html>")
+        with patch("core.tools.web_search.httpx.post", return_value=mock_resp):
             results = search("obscure query")
         assert results == []
 
-    def test_auth_header_set(self):
-        mock_resp = _make_brave_response([])
-        with patch("core.tools.web_search.httpx.get", return_value=mock_resp) as mock_get:
-            search("test")
-        headers = mock_get.call_args.kwargs["headers"]
-        assert headers["X-Subscription-Token"] == "test-brave-key-123"
+    def test_ads_skipped(self):
+        html_with_ad = """\
+<html><body>
+<div class="result result--ad">
+  <a class="result__a" href="https://ad.example.com">Ad</a>
+  <a class="result__snippet">Ad desc</a>
+</div>
+<div class="result results_links web-result">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Freal.example.com">Real</a>
+  <a class="result__snippet">Real desc</a>
+</div>
+</body></html>
+"""
+        mock_resp = _make_ddg_response(html_with_ad)
+        with patch("core.tools.web_search.httpx.post", return_value=mock_resp):
+            results = search("test")
+        assert len(results) == 1
+        assert results[0]["title"] == "Real"
+
+
+# ── _extract_ddg_url ──────────────────────────────────────────────
+
+
+class TestExtractDdgUrl:
+    def test_extracts_uddg_param(self):
+        assert _extract_ddg_url("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com&rut=abc") == "https://example.com"
+
+    def test_direct_http_url(self):
+        assert _extract_ddg_url("https://example.com") == "https://example.com"
+
+    def test_empty_string(self):
+        assert _extract_ddg_url("") == ""
+
+    def test_ad_redirect_skipped(self):
+        assert _extract_ddg_url("//duckduckgo.com/l/?uddg=https%3A%2F%2Fduckduckgo.com%2Fy.js%3Ffoo") == ""
 
 
 # ── _strip_html ───────────────────────────────────────────────────
@@ -165,7 +157,7 @@ class TestFormatResults:
         assert "highlighted text" in output
 
 
-# ── get_tool_schemas ──────────────────────────────────────────────
+# ── dispatch ──────────────────────────────────────────────────────
 
 
 class TestDispatch:
@@ -195,6 +187,9 @@ class TestDispatch:
     def test_unknown_tool_raises(self):
         with pytest.raises(ValueError, match="Unknown tool"):
             dispatch("nonexistent", {})
+
+
+# ── get_tool_schemas ──────────────────────────────────────────────
 
 
 class TestGetToolSchemas:

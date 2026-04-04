@@ -37,9 +37,7 @@ _DDG_HTML_URL = "https://html.duckduckgo.com/html/"
 
 # Realistic browser User-Agent
 _USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 
@@ -124,11 +122,13 @@ def _parse_ddg_html(html_text: str, max_results: int) -> list[dict[str, str]]:
         snippet_el = div.select_one(".result__snippet")
         desc = snippet_el.get_text(strip=True) if snippet_el else ""
 
-        results.append({
-            "title": title,
-            "url": url,
-            "description": desc,
-        })
+        results.append(
+            {
+                "title": title,
+                "url": url,
+                "description": desc,
+            }
+        )
 
     return results
 
@@ -189,11 +189,13 @@ def _parse_ddg_regex(html_text: str, max_results: int) -> list[dict[str, str]]:
         snippet_match = snippet_re.search(block)
         desc = _strip_html(snippet_match.group(1)) if snippet_match else ""
 
-        results.append({
-            "title": title,
-            "url": url,
-            "description": desc,
-        })
+        results.append(
+            {
+                "title": title,
+                "url": url,
+                "description": desc,
+            }
+        )
 
     return results
 

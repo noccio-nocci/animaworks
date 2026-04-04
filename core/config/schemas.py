@@ -127,7 +127,7 @@ class LocalLLMConfig(BaseModel):
     role_presets: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_LOCAL_LLM_ROLE_PRESETS))
 
     @model_validator(mode="after")
-    def ensure_required_presets(self) -> "LocalLLMConfig":
+    def ensure_required_presets(self) -> LocalLLMConfig:
         merged_presets = dict(DEFAULT_LOCAL_LLM_PRESETS)
         for key, value in self.presets.items():
             if value:

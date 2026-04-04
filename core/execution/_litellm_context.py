@@ -74,7 +74,7 @@ class ContextMixin:
         # nanoGPT: rewrite nanogpt/ prefix to openai/ for LiteLLM routing
         # (nanoGPT is an OpenAI-compatible API aggregator)
         if _model_name.startswith("nanogpt/"):
-            _model_name = "openai/" + _model_name[len("nanogpt/"):]
+            _model_name = "openai/" + _model_name[len("nanogpt/") :]
         kwargs: dict[str, Any] = {
             "model": _model_name,
             "max_tokens": _eff_max,

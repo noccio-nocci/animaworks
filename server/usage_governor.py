@@ -30,7 +30,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -134,11 +134,7 @@ class GovernorState:
         now = time.time()
         if self._relogin_cooldown_until.get(provider, 0) > now:
             return False
-        recent = [
-            t
-            for t in self._relogin_timestamps.get(provider, [])
-            if now - t < 3600
-        ]
+        recent = [t for t in self._relogin_timestamps.get(provider, []) if now - t < 3600]
         self._relogin_timestamps[provider] = recent
         return len(recent) < _RELOGIN_MAX_PER_HOUR
 
@@ -348,10 +344,7 @@ def _evaluate_hard_floor(
 ) -> tuple[int | None, str]:
     """Absolute safety net: if remaining drops below hard floor, emergency throttle."""
     if remaining < hard_floor:
-        reason = (
-            f"{provider_key}.{window_key} remaining {remaining:.0f}% "
-            f"< hard floor {hard_floor:.0f}% → activity 10%"
-        )
+        reason = f"{provider_key}.{window_key} remaining {remaining:.0f}% < hard floor {hard_floor:.0f}% → activity 10%"
         return 10, reason
     return None, ""
 
@@ -400,27 +393,40 @@ def _evaluate_provider_remaining(
         if isinstance(window_config, list):
             # Threshold mode (backward-compatible list format)
             level, reason = _evaluate_threshold(
-                remaining, window_config, provider_key, window_key,
+                remaining,
+                window_config,
+                provider_key,
+                window_key,
             )
             _update_worst(level, reason)
         elif isinstance(window_config, dict):
             mode = window_config.get("mode", "threshold")
             if mode == "time_proportional":
                 level, reason = _evaluate_time_proportional(
-                    remaining, window, window_config, provider_key, window_key,
+                    remaining,
+                    window,
+                    window_config,
+                    provider_key,
+                    window_key,
                 )
                 _update_worst(level, reason)
             else:
                 # Dict with "rules" key treated as threshold
                 rules = window_config.get("rules", [])
                 level, reason = _evaluate_threshold(
-                    remaining, rules, provider_key, window_key,
+                    remaining,
+                    rules,
+                    provider_key,
+                    window_key,
                 )
                 _update_worst(level, reason)
 
         # Hard floor — always checked regardless of mode
         level, reason = _evaluate_hard_floor(
-            remaining, hard_floor, provider_key, window_key,
+            remaining,
+            hard_floor,
+            provider_key,
+            window_key,
         )
         _update_worst(level, reason)
 
@@ -580,7 +586,9 @@ class UsageGovernor:
                 continue
 
             remaining, _level, reason = _evaluate_provider_remaining(
-                usage_data, policy, provider_key,
+                usage_data,
+                policy,
+                provider_key,
             )
 
             to_suspend = _animas_to_suspend(remaining, policy, provider_animas)

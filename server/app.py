@@ -187,8 +187,9 @@ async def _startup_animas_background(app: FastAPI) -> None:
         # The governor will resume them automatically when usage recovers.
         _gov_excluded: set[str] = set()
         try:
-            from core.paths import get_data_dir as _get_dd
             import json as _json
+
+            from core.paths import get_data_dir as _get_dd
 
             _gsp = _get_dd() / "usage_governor_state.json"
             if _gsp.is_file():
@@ -240,7 +241,7 @@ async def _startup_animas_background(app: FastAPI) -> None:
             socket_manager = SlackSocketModeManager()
             await asyncio.wait_for(socket_manager.start(), timeout=30)
             app.state.slack_socket_manager = socket_manager
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Slack Socket Mode startup timed out (30s)")
             app.state.slack_socket_manager = None
         except Exception as exc:
@@ -452,9 +453,8 @@ async def lifespan(app: FastAPI):
         )
 
         # ── Usage Governor (throttles cloud-provider animas based on quota) ──
-        from server.usage_governor import UsageGovernor
-
         from core.paths import get_data_dir
+        from server.usage_governor import UsageGovernor
 
         governor = UsageGovernor(app, get_data_dir(), app.state.animas_dir)
         app.state.usage_governor = governor

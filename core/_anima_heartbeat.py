@@ -316,8 +316,8 @@ class HeartbeatMixin:
 
         # ── Usage Governor context for COO ──
         try:
-            from server.usage_governor import load_policy
             from core.paths import get_data_dir
+            from server.usage_governor import load_policy
 
             policy = load_policy(get_data_dir())
             coo_name = policy.get("coo_anima", "sakura")
@@ -333,9 +333,9 @@ class HeartbeatMixin:
     def _build_usage_context(self) -> str | None:
         """Build usage status context for the COO anima."""
         try:
+            from core.paths import get_animas_dir, get_data_dir
             from server.routes.usage_routes import _fetch_claude_usage, _fetch_openai_usage
-            from server.usage_governor import load_policy, _classify_animas
-            from core.paths import get_data_dir, get_animas_dir
+            from server.usage_governor import _classify_animas
 
             claude = _fetch_claude_usage()
             openai = _fetch_openai_usage()
@@ -363,6 +363,7 @@ class HeartbeatMixin:
 
             # Governor state
             from server.usage_governor import GovernorState
+
             data_dir = get_data_dir()
             state = GovernorState(data_dir / "usage_governor_state.json")
             if state.suspended_animas:
