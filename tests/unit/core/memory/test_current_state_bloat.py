@@ -209,8 +209,6 @@ class TestHeartbeatPromptCleanup:
         mixin = MagicMock(spec=HeartbeatMixin)
         mixin.name = "test-bloat"
         mixin.anima_dir = anima_dir
-        mixin._CURRENT_STATE_CLEANUP_THRESHOLD = HeartbeatMixin._CURRENT_STATE_CLEANUP_THRESHOLD
-
         memory_mock = MagicMock()
         mixin.memory = memory_mock
 
