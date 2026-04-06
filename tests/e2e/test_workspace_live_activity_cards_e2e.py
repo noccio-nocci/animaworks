@@ -466,10 +466,10 @@ class TestLayoutCompatibility:
         assert gap_y >= 80, "GAP_Y should be large enough for taller cards with stream area"
 
     def test_card_h_unchanged(self):
-        """CARD_H should remain at 80 for tree layout baseline."""
+        """CARD_H should remain at 100 for tree layout baseline (increased for usage info)."""
         match = re.search(r"const CARD_H\s*=\s*(\d+)", self.js)
         assert match
-        assert int(match.group(1)) == 80
+        assert int(match.group(1)) == 100
 
     def test_resize_svg_uses_actual_dimensions(self):
         resize_fn_start = self.js.index("function _resizeSvg")
